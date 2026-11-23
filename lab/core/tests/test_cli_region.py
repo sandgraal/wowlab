@@ -43,7 +43,11 @@ both = hub_cli.both
 kept = kept_cli.kept
 
 runner = CliRunner()
-BETA_REASON = 'the portal setting in WTF/Config.wtf is "test", not one of us, eu, kr, tw'
+BETA_REASON = 'the portal setting in WTF/Config.wtf is "test", not one of us, eu, kr, tw, cn'
+CREW_SOURCE = (
+    "from your game's settings at its last exit; wowlab assumes every player is in your "
+    "region, not yet confirmed"
+)
 
 
 def _json(*args: str) -> dict[str, Any]:
@@ -75,16 +79,20 @@ def test_summary_rows_carry_the_region_and_both_name_forms_constructed(both: Pat
     assert tree_state(both) == before  # read-only (L1)
 
 
-def test_summary_text_names_a_known_region_on_the_account_line_constructed(
+def test_summary_text_says_each_flavors_region_on_one_line_constructed(
     both: Path,
 ) -> None:
     done = runner.invoke(cli.app, ["char", "list", "--summary"], terminal_width=200)
     assert done.exit_code == 0, done.output
     lines = done.stdout.splitlines()
-    assert "Account LABACCOUNTA, region US: 1 character folder" in lines
-    # A flavor with no region says nothing about it on that line.
-    assert any(line.startswith(f"Account {hub_cli.ACCOUNT}: ") for line in lines)
-    assert "region" not in "\n".join(line for line in lines if hub_cli.ACCOUNT in line)
+    # One line per flavor, known or not, before its accounts; as the JSON says.
+    beta = lines.index(f"Flavor {hub_cli.BETA} ({hub_cli.BETA_VERSION})")
+    assert lines[beta + 1] == f"Region: not known: {BETA_REASON}"
+    assert lines[beta + 2].startswith(f"Account {hub_cli.ACCOUNT}: ")
+    launch = lines.index(f"Flavor {hub_cli.FOREVER} ({hub_cli.LAUNCH_VERSION})")
+    assert lines[launch + 1] == "Region: US"
+    assert lines[launch + 2] == "Account LABACCOUNTA: 1 character folder"
+    assert sum(line.startswith("Region: ") for line in lines) == 2
 
 
 def test_a_flavor_whose_config_is_gone_says_so_constructed(both: Path) -> None:
@@ -98,11 +106,19 @@ def test_a_flavor_whose_config_is_gone_says_so_constructed(both: Path) -> None:
     [(b'SET portal "EU"\n', "eu"), (b'SET portal "kr"\n', "kr"), (b'SET portal "tw"\n', "tw")],
     ids=["eu", "kr", "tw"],
 )
-def test_each_region_reaches_the_rows_constructed(both: Path, line: bytes, expected: str) -> None:
+@pytest.mark.parametrize(
+    "extra",
+    [b"", b'SET portal "cn"\n'],
+    ids=["one-line", "cn-last"],
+)
+def test_each_region_reaches_the_rows_constructed(
+    both: Path, line: bytes, expected: str, extra: bytes
+) -> None:
     config = both / hub_cli.FOREVER / "WTF" / "Config.wtf"
-    config.write_bytes(config.read_bytes().replace(b'SET portal "US"\n', line))
+    config.write_bytes(config.read_bytes().replace(b'SET portal "US"\n', line) + extra)
     row = hub_cli.rows_by_path(_json("char", "list", "--summary"))[hub_cli.WARLOCK]
-    assert row["region"] == expected
+    # The last portal line wins.
+    assert row["region"] == ("cn" if extra else expected)
 
 
 # ─── char gear ───────────────────────────────────────────────────────────────
@@ -139,6 +155,13 @@ def test_kept_rows_take_the_region_of_their_flavor_folder_constructed(
     one = _json("char", "kept", "--character", kept_cli.SETT)
     assert one["gear"]["region_absent"] == BETA_REASON
     assert one["gear"]["game_name"] == "Sangraal Sett"
+    # The text says the region is the game folder's now, not the backup's.
+    text = runner.invoke(cli.app, ["char", "kept"], terminal_width=200).stdout
+    assert f"Region: not known: {BETA_REASON}" in text
+    (both_cfg,) = [kept["root"] / hub_cli.BETA / "WTF" / "Config.wtf"]
+    both_cfg.write_bytes(both_cfg.read_bytes().replace(b'"test"', b'"eu"'))
+    text = runner.invoke(cli.app, ["char", "kept", "--character", kept_cli.SETT]).stdout
+    assert "  Region: EU (from the game's settings now)" in text.splitlines()
 
 
 def test_a_kept_row_whose_flavor_folder_is_gone_says_so_constructed(
@@ -163,7 +186,13 @@ def crew_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     redirect_user_dirs(monkeypatch, home)
     folder = tmp_path / "crew"
     folder.mkdir()
-    return install(folder, book({KEY_A: player(rating="good"), KEY_C: player()}))
+    return install(folder, book({KEY_A: player(rating="good"), KEY_C: player(), TAY: player()}))
+
+
+# A Forever player as the owner's launch client named one (2026-11-23):
+# `UnitName` gave "Tay" and "Soulrend", so the lab-addon keys them
+# `<First>-<Second>`. Constructed: a key typed here, not a captured book.
+TAY = "Tay-Soulrend"
 
 
 def _crew(root: Path, *args: str) -> dict[str, Any]:
@@ -175,20 +204,67 @@ def test_crew_rows_carry_the_books_region_and_the_keys_names_constructed(crew_ro
     report = _crew(crew_root, "crew", "list")
     assert report["region"] == "us" and report["region_absent"] is None
     rows = {p["key"]: p for p in report["players"]}
+    # The capture's account holds a `<digits>/<First>-<Second>` folder, so
+    # a key's second part is the second name, and there is no realm.
+    tay = rows[TAY]
+    assert tay["region"] == "us"
+    assert (tay["first_name"], tay["second_name"]) == ("Tay", "Soulrend")
+    assert tay["game_name"] == "Tay Soulrend" and tay["realm"] is None
     a = rows[KEY_A]
-    assert a["region"] == "us"
-    assert (a["game_name"], a["realm"]) == ("Inventeda", "Fakerealm")
-    # The key holds no second name: none is made up.
-    assert (a["first_name"], a["second_name"]) == ("Inventeda", None)
-    assert rows[KEY_C]["realm"] == "Otherfakerealm"
+    assert (a["first_name"], a["second_name"], a["realm"]) == ("Inventeda", "Fakerealm", None)
+    assert a["game_name"] == "Inventeda Fakerealm"
+    assert rows[KEY_C]["second_name"] == "Otherfakerealm"
     shown = _crew(crew_root, "crew", "show", KEY_A)
     assert shown["region"] == "us" and shown["player"]["region"] == "us"
-    assert "  Region: US (your game's region, given to every player)" in shown["lines"]
+    assert f"  Region: US ({CREW_SOURCE})" in shown["lines"]
+    listed = runner.invoke(
+        cli.app, ["crew", "list", "--root", str(crew_root), "--flavor", FLAVOR], terminal_width=200
+    ).stdout.splitlines()
+    assert [line for line in listed if line.startswith("Region")] == [f"Region: US ({CREW_SOURCE})"]
+    matches_text = runner.invoke(
+        cli.app,
+        ["crew", "matches", "--root", str(crew_root), "--flavor", FLAVOR],
+        terminal_width=200,
+    ).stdout.splitlines()
+    assert f"Region: US ({CREW_SOURCE})" in matches_text
     matches = _crew(crew_root, "crew", "matches")
     assert matches["region"] == "us" and matches["region_absent"] is None
     world = _crew(crew_root, "crew", "matches", "--world")
     assert world["region"] == "us"
     assert tree_state(crew_root) == before  # read-only (L1)
+
+
+@pytest.mark.parametrize("command", [["show", KEY_A], ["list"], ["matches"]])
+def test_with_notes_the_region_line_leaves_the_caveat_to_them_constructed(
+    crew_root: Path, command: list[str]
+) -> None:
+    """A report says "not yet confirmed" at most once: the standing notes
+    already do (the role), so the region line leaves it out there."""
+    args = ["crew", *command, "--root", str(crew_root), "--flavor", FLAVOR]
+    plain = runner.invoke(cli.app, args, terminal_width=200).stdout
+    noted = runner.invoke(cli.app, [*args, "--notes"], terminal_width=200).stdout
+    assert f"Region: US ({CREW_SOURCE})" in plain
+    unconfirmed_dropped = CREW_SOURCE.removesuffix(", not yet confirmed")
+    if "Notes:" in noted:
+        assert f"Region: US ({unconfirmed_dropped})\n" in noted
+    else:  # no notes printed (no match listed): the line keeps its caveat
+        assert f"Region: US ({CREW_SOURCE})\n" in noted
+    assert noted.count("not yet confirmed") <= 1
+
+
+def test_a_flavor_without_second_names_keeps_name_and_realm_constructed(
+    crew_root: Path,
+) -> None:
+    """The capture's character folder moved to the retail shape
+    (`<Realm>/<Name>/`, constructed): the key is `<Name>-<Realm>` again."""
+    account = crew_root / FLAVOR / "WTF" / "Account" / "LABACCOUNTA"
+    (account / "Somerealm").mkdir()
+    (account / "1" / "Sandgraal-Rizzen").rename(account / "Somerealm" / "Sandgraal")
+    (account / "1").rmdir()
+    rows = {p["key"]: p for p in _crew(crew_root, "crew", "list")["players"]}
+    tay = rows[TAY]
+    assert (tay["first_name"], tay["second_name"], tay["realm"]) == ("Tay", None, "Soulrend")
+    assert tay["game_name"] == "Tay"
 
 
 def test_a_test_portal_leaves_every_crew_row_without_a_region_constructed(

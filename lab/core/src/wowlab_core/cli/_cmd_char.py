@@ -83,6 +83,7 @@ from wowlab_core.cli._common import (
     _player_copy,
     _plural,
     _region_fields,
+    _region_text,
     _safe,
     _say,
     _say_note,
@@ -437,8 +438,10 @@ class CharSummaryRow(_Out):
     # data spells it. `first_name` and `second_name` are the two names, the
     # folder split at its first hyphen; a folder of the retail shape
     # (`<Realm>/<Name>/`) is the first name alone, `second_name` None.
-    # `region` is the flavor's `portal` setting in its Config.wtf (`us`,
-    # `eu`, `kr` or `tw`); when it is None, `region_absent` says why.
+    # `region` is the flavor's `portal` setting in its Config.wtf as the
+    # client last wrote it (`us`, `eu`, `kr`, `tw` or `cn`); when it is
+    # None, `region_absent` says why. For a kept row, the flavor folder's
+    # setting now, not the backup's.
     first_name: layout.FsText
     second_name: layout.FsText | None
     folder_name: layout.FsText
@@ -988,11 +991,12 @@ def _say_summary(
             elif not rows:
                 heading += _player_copy(": no character folder")
             _say(heading)
+        if rows:
+            # The flavor's region (M21-02): one line, known or not.
+            _say(_region_text(rows[0].region, rows[0].region_absent))
         for account in dict.fromkeys(r.account for r in rows):
             mine = [r for r in rows if r.account == account]
-            # The flavor's region (M21-02), said only when it is known.
-            where = f", region {mine[0].region.upper()}" if mine[0].region else ""
-            _say(f"Account {account}{where}: " + _plural(len(mine), "character folder"))
+            _say(f"Account {account}: " + _plural(len(mine), "character folder"))
             for row in mine:
                 _say(f"  {row.realm_folder}/{row.label}")
                 for line in _summary_lines(row):
@@ -1644,11 +1648,7 @@ def char_gear(
     )
     _say(f"File: {target.path}")
     _say(f"Written: {_local_time(target.mtime_ns)} ({_SAVED_AT})")
-    _say(
-        f"Region: {report.region.upper()}"
-        if report.region is not None
-        else f"Region: not known: {report.region_absent}"
-    )
+    _say(_region_text(report.region, report.region_absent))
     for line in _header_lines(report):
         _say(line)
     _say(
@@ -2728,7 +2728,9 @@ def _kept_lines(row: CharKeptRow) -> list[str]:
         if row.folder_present
         else f"kept in the backup of {day}"
     )
-    lines = [*_summary_lines(row), where]
+    # The region is the game folder's setting today, not the backup's (M21-02).
+    region_line = _region_text(row.region, row.region_absent, "from the game's settings now")
+    lines = [*_summary_lines(row), where, region_line]
     if row.version is not None and row.version != row.snapshot_version:
         lines.append(
             f"names read for game version {row.version}, not the backup's own "

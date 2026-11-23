@@ -1,14 +1,19 @@
 """region: the client's region, from the `portal` CVar (M21-02).
 
-A Forever character has no realm: the game names it by region, first name
-and second name (docs/GLOSSARY.md, "Region (portal)" and "Second name").
-The region is the `portal` CVar in the flavor's `WTF/Config.wtf`, read
-through the WTF reader (`wtfconfig.read_config`, read-only, L1): the last
-`SET portal` line in the file, its name compared without ASCII case.
+A Forever character has no realm the player sees or the armory uses (a
+GUID still carries a server id): the client reports its second name in
+the slot where retail reports the realm. The player and the armory name it
+by region, first name and second name (docs/GLOSSARY.md, "Region
+(portal)" and "Second name"). The region is the `portal` CVar in the
+flavor's `WTF/Config.wtf` as the client last wrote it (at its last exit),
+read through the WTF reader (`wtfconfig.read_config`, read-only, L1): the
+last `SET portal` line in the file, its name compared without ASCII case.
+It is the flavor's setting, not a property of an account.
 
-`region` is one of `us`, `eu`, `kr`, `tw`, the value with its ASCII case
-folded (the launch client writes `"US"`, the beta wrote `"test"`; real
-fixtures `macos-70888` and `macos`). Anything else (`test`, an empty value,
+`region` is one of `us`, `eu`, `kr`, `tw`, `cn`, the value with its ASCII
+case folded (the owner's (US) launch client wrote `"US"`, the beta wrote
+`"test"`; real fixtures `macos-70888` and `macos`). Anything else (`test`,
+an empty value,
 a value with a space, a control byte or a byte that is not ASCII, a region
 this list does not name) is no region: `region` is None and `absent` says
 why in the player's words, quoting the value only when it is a short run
@@ -27,7 +32,7 @@ from pydantic import BaseModel, ConfigDict, model_validator
 from wowlab_core import wtfconfig
 from wowlab_core.errors import WowlabError
 
-Region = Literal["us", "eu", "kr", "tw"]
+Region = Literal["us", "eu", "kr", "tw", "cn"]
 REGIONS: tuple[Region, ...] = get_args(Region)
 
 PORTAL_CVAR = "portal"

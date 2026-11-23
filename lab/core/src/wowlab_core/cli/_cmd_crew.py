@@ -66,6 +66,7 @@ from wowlab_core.cli._common import (
     _Out,
     _plural,
     _region_fields,
+    _region_text,
     _Report,
     _say,
     _say_err,
@@ -163,8 +164,10 @@ class CrewReport(_Out):
     # M20-18: only players met in the open world (from a combat log `crew
     # scan-log` read), latest open-world encounter first.
     world: bool = False
-    # M21-02: the crew book's region, the flavor's `portal` setting (`us`,
-    # `eu`, `kr` or `tw`), which every player row carries as `region`; when
+    # M21-02: the region the flavor's Config.wtf names (its `portal`
+    # setting as the client last wrote it: `us`, `eu`, `kr`, `tw` or `cn`),
+    # which every player row carries as `region`, since wowlab assumes every
+    # player is in your region (not yet confirmed); when
     # it is None, `region_absent` says why. Both None when no book was
     # chosen.
     region: Region | None = None
@@ -346,13 +349,40 @@ def _crew_region(opened: _Opened) -> region.RegionReading | None:
     return region.read(lay.flavor_path, root=lay.install_root)
 
 
-def _crew_region_line(reading: region.RegionReading | None) -> str | None:
-    """The text line that names the book's region; None without a book."""
+_CREW_REGION_SOURCE = (
+    "from your game's settings at its last exit; wowlab assumes every player is in your region"
+)
+
+
+def _crew_region_line(reading: region.RegionReading | None, *, unconfirmed: bool) -> str | None:
+    """The text line that names the book's region, as `crew list`, `crew
+    show` and `crew matches` print it; None without a book. It says the
+    assumption is not yet confirmed (`unconfirmed`) unless the run prints
+    the standing notes, which already say "not yet confirmed" once (the
+    role): a report says it at most once."""
     if reading is None:
         return None
-    if reading.region is not None:
-        return f"Region: {reading.region.upper()} (your game's region, given to every player)"
-    return f"Region: not known: {reading.absent}"
+    source = _CREW_REGION_SOURCE + (", not yet confirmed" if unconfirmed else "")
+    return _region_text(reading.region, reading.absent, source)
+
+
+def _crew_second_names(opened: _Opened) -> bool:
+    """Whether the chosen book's flavor names characters by first and
+    second name (M21-02): a digits-only folder of one of its accounts holds
+    a `<First>-<Second>` character folder, as `layout` reads it. The client
+    then reports a player's second name where retail reports the realm, so
+    a crew key is `<First>-<Second>`. Read from the folders, never from the
+    flavor's name (L6)."""
+    if opened.place is None or opened.where is None:
+        return False
+    _, lay = opened.where
+    return any(
+        c.second_name is not None
+        for acct in lay.wtf_walk().accounts
+        for realm in acct.realms
+        if realm.kind == "numeric"
+        for c in realm.characters
+    )
 
 
 def _from_database(
@@ -373,6 +403,7 @@ def _from_database(
         target.account,
         opened.book,
         region=reading.region if reading is not None else None,
+        second_names=_crew_second_names(opened),
     )
 
 
@@ -678,6 +709,9 @@ def crew_list(
         _say(_row(p))
     for line in _unread_lines(book):
         _say(line)
+    region_line = _crew_region_line(reading, unconfirmed=not notes)
+    if region_line is not None:
+        _say(region_line)
     _say_notes(_CREW_NOTES, notes)
 
 
@@ -791,7 +825,7 @@ def crew_show(
         assert place is not None
         lines = [f"{player.key}, from the crew book of {_place_words(place)}, {_AS_OF}:"]
         lines += _field_lines(player)
-        region_line = _crew_region_line(reading)
+        region_line = _crew_region_line(reading, unconfirmed=not notes)
         if region_line is not None:
             lines.append(f"  {region_line}")
         if player.also_known_as:
@@ -1023,6 +1057,12 @@ def crew_matches(
         _say(caveat)
     for line in lines:
         _say(line)
+    # The notes are printed only under listed matches, so only then do they
+    # carry the caveat.
+    shown_notes = notes and bool(lines)
+    region_line = None if never_on else _crew_region_line(reading, unconfirmed=not shown_notes)
+    if region_line is not None:
+        _say(region_line)
     if lines:
         _say_notes(_WORLD_NOTES if world else _MATCH_NOTES, notes)
 

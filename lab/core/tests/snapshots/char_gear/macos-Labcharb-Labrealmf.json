@@ -280,7 +280,7 @@
   "folder_name": "Labcharb-Labrealmf",
   "game_name": "Labcharb Labrealmf",
   "region": null,
-  "region_absent": "the portal setting in WTF/Config.wtf is \"test\", not one of us, eu, kr, tw",
+  "region_absent": "the portal setting in WTF/Config.wtf is \"test\", not one of us, eu, kr, tw, cn",
   "flavor_folder": "_classic_beta_",
   "dressing": {
     "items": [

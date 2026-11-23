@@ -48,7 +48,7 @@ def test_the_beta_portal_test_is_no_region() -> None:
     reading = region.read(BETA / "forever", root=BETA)
     assert reading.region is None
     assert reading.absent == (
-        'the portal setting in WTF/Config.wtf is "test", not one of us, eu, kr, tw'
+        'the portal setting in WTF/Config.wtf is "test", not one of us, eu, kr, tw, cn'
     )
 
 
@@ -89,7 +89,8 @@ def test_the_capture_folder_names_split_into_first_and_second() -> None:
         ("tw", "tw"),
         ("tW", "tw"),
         ("test", None),
-        ("cn", None),
+        ("cn", "cn"),
+        ("CN", "cn"),
         ("", None),
         (" us", None),
         ("us ", None),
@@ -125,7 +126,8 @@ def _config(tmp_path: Path, data: bytes) -> Path:
         (b'SET portal "us"\nSET portal "tw"\n', "tw", None),  # the last line wins
         (b'SET portal "tw"\nSET portal "test"\n', None, '"test"'),
         (b'SET portal ""\n', None, "is empty"),
-        (b'SET portal "cn"\n', None, '"cn", not one of us, eu, kr, tw'),
+        (b'SET portal "cn"\n', "cn", None),
+        (b'SET portal "jp"\n', None, '"jp", not one of us, eu, kr, tw, cn'),
         (b'SET portal " us"\n', None, "is not one of"),
         (b'SET portal "\xff\xfe"\n', None, "is not one of"),
         (b'SET portal "us\x1b[31m"\n', None, "is not one of"),
@@ -234,3 +236,26 @@ def test_numeric_folder_is_ascii_digits_only_constructed() -> None:
     assert not charname.is_numeric_folder("١٢")  # Arabic-Indic digits
     assert not charname.is_numeric_folder("")
     assert charname.game_name("A", None) == "A" and charname.game_name("A", "B") == "A B"
+
+
+@pytest.mark.parametrize(
+    ("name", "other", "second_names", "expected"),
+    [
+        # Forever: the client reports the second name where retail reports the realm.
+        ("Tay", "Soulrend", True, ("Tay", "Soulrend", "Tay Soulrend", None)),
+        ("Tay", "", True, ("Tay", None, "Tay", None)),
+        # Retail: Name-Realm as it is.
+        ("Tay", "Soulrend", False, ("Tay", None, "Tay", "Soulrend")),
+        # A name part that already holds a space is split there, on either.
+        ("Tay Soulrend", "Fakerealm", True, ("Tay", "Soulrend", "Tay Soulrend", "Fakerealm")),
+        ("Tay Soulrend", "Fakerealm", False, ("Tay", "Soulrend", "Tay Soulrend", "Fakerealm")),
+    ],
+    ids=["forever", "forever-no-second", "retail", "spaced-forever", "spaced-retail"],
+)
+def test_key_names_constructed(
+    name: str,
+    other: str,
+    second_names: bool,
+    expected: tuple[str, str | None, str, str | None],
+) -> None:
+    assert tuple(charname.key_names(name, other, second_names=second_names)) == expected

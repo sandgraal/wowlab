@@ -1,7 +1,13 @@
 """charname: a character's names in the forms wowlab reports (M21-02).
 
 A Forever character has a player-chosen first and second name and no realm
-(docs/GLOSSARY.md, "Second name"). wowlab meets the names in two forms:
+the player sees or the armory uses (docs/GLOSSARY.md, "Second name"). The
+client reports the second name in the slot where retail reports the realm:
+on the owner's launch client (US, 2026-11-23), `UnitName("target")` gave
+the first and the second name as its two values, and
+`GetPlayerInfoByGUID` gave the name `"<First> <Second>"` and an empty
+realm (docs/DATA_SOURCES.md, breakage log). wowlab meets the names in
+these forms:
 
 - **The folder form**, `<First>-<Second>`: the character folder under a
   digits-only folder (`WTF/Account/<ACCOUNT>/<digits>/<First>-<Second>/`).
@@ -10,19 +16,32 @@ A Forever character has a player-chosen first and second name and no realm
   not yet confirmed), as `layout` splits it. A folder of the retail shape
   (`<Realm>/<Name>/`), or one with no hyphen, is the first name alone.
 - **The in-game form**, `<First> <Second>`: the two names joined by one
-  space, as addon data spells a Forever character (Syndicator, DBM;
-  docs/LAB_FORMATS.md, 2026-09-22). wowlab derives it from the folder.
-
-A crew-book key is `Name-Realm` (docs/LAB_PLAN.md §20.1): its name part is
-the in-game form as the client gave it for another player. Whether the
-client gives a Forever player's second name there is not yet confirmed (the
-combat log names the first name alone), so a key's name is split at its
-first space and has no second name when it holds none.
+  space, as addon data and `GetPlayerInfoByGUID` spell a Forever
+  character. wowlab derives it from the folder or the key.
+- **The crew-book key**, `Name-Realm` as the lab-addon builds it from
+  `UnitName`'s two values (docs/LAB_PLAN.md §20.1). On a flavor whose
+  characters have second names (a digits-only folder holds `<First>-<Second>`
+  folders, as `layout` reads the account), the key is `<First>-<Second>`:
+  its "realm" part is the second name. On any other flavor it is the
+  retail `<Name>-<Realm>`. A name part that already holds a space is split
+  there instead, its other part then kept as the realm.
 
 Pure: no file is read.
 """
 
 from __future__ import annotations
+
+from typing import NamedTuple
+
+
+class KeyNames(NamedTuple):
+    """A crew key's names: first and second name, the in-game form, and the
+    realm (None when the key's second part is the second name)."""
+
+    first_name: str
+    second_name: str | None
+    game_name: str
+    realm: str | None
 
 
 def is_numeric_folder(realm_folder: str) -> bool:
@@ -54,3 +73,17 @@ def split_game_name(name: str) -> tuple[str, str | None]:
     if sep and first and second:
         return first, second
     return name, None
+
+
+def key_names(name: str, other: str, *, second_names: bool) -> KeyNames:
+    """The names in a crew key's two parts (`name`, before the first hyphen,
+    and `other`, after it). With `second_names` (the flavor's characters
+    have second names), `other` is the second name and there is no realm;
+    else it is the realm. A `name` that already holds a space is the
+    in-game form: split there, `other` kept as the realm."""
+    first, second = split_game_name(name)
+    if second is not None:
+        return KeyNames(first, second, game_name(first, second), other or None)
+    if second_names and other:
+        return KeyNames(name, other, game_name(name, other), None)
+    return KeyNames(name, None, name, other or None)

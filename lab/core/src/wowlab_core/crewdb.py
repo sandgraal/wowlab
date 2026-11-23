@@ -452,19 +452,24 @@ class CrewRow(crewbook.CrewPlayer):
     world_first: int | None = None
     world_last: int | None = None
     world_zone: str | None = None
-    # Links out (M21-02): the key's two parts and the player's names and
-    # region. `game_name` is the key's name part, the player's name as the
-    # client gave it (the in-game form), and `realm` its realm part as
-    # stored. `first_name` and `second_name` split the in-game form at its
-    # first space; with none, `second_name` is None (whether the client
-    # gives a Forever player's second name there is not yet confirmed).
-    # `region` (`us`, `eu`, `kr` or `tw`; None when there is none) is the
-    # crew book's own: the flavor's `portal` setting (the report's
-    # `region_absent` says why it is None). The database keeps no region
-    # from the combat log, which writes it empty on every Forever name, and
-    # Forever has no cross-region play (not yet confirmed).
+    # Links out (M21-02): the player's names and region, from the key
+    # (`charname.key_names`). The client reports a Forever character's
+    # second name in the slot where retail reports the realm, so on a
+    # flavor whose characters have second names the key is
+    # `<First>-<Second>`: `first_name` and `second_name` are its two parts
+    # and `realm` is None. Elsewhere the key is `<Name>-<Realm>`:
+    # `first_name` is the name, `second_name` None and `realm` the realm
+    # part as stored. A name part that already holds a space is split
+    # there. `game_name` is the in-game form, `<First> <Second>` or the name.
+    # `region` (`us`, `eu`, `kr`, `tw` or `cn`; None when there is none) is
+    # the region the flavor's Config.wtf names (its `portal` setting as the
+    # client last wrote it; the report's `region_absent` says why it is
+    # None): wowlab assumes every player is in your region (not yet
+    # confirmed). The database keeps no region part from the combat log:
+    # it was empty on the owner's own unit name, the only player in the one
+    # log fixture (beta).
     game_name: str = ""
-    realm: str = ""
+    realm: str | None = None
     first_name: str = ""
     second_name: str | None = None
     region: Region | None = None
@@ -933,11 +938,12 @@ def _public(
     aliases: dict[str, list[str]] | None = None,
     world: dict[str, _WorldPart] | None = None,
     region: Region | None = None,
+    second_names: bool = False,
 ) -> CrewRow:
     kept = {p.key: p for p in book.players} if book is not None else {}
     held = kept.get(row.key)
     part = (world or {}).get(row.key) or _WorldPart()
-    first, second = charname.split_game_name(row.name)
+    names = charname.key_names(row.name, row.realm, second_names=second_names)
     return CrewRow(
         key=row.key,
         class_token=row.class_token,
@@ -979,10 +985,10 @@ def _public(
         world_first=part.first,
         world_last=part.last,
         world_zone=part.zone,
-        game_name=row.name,
-        realm=row.realm,
-        first_name=first,
-        second_name=second,
+        game_name=names.game_name,
+        realm=names.realm,
+        first_name=names.first_name,
+        second_name=names.second_name,
         region=region,
     )
 
@@ -993,13 +999,15 @@ def read(
     book: crewbook.CrewBook | None = None,
     *,
     region: Region | None = None,
+    second_names: bool = False,
 ) -> list[CrewRow]:
     """Every player wowlab's crew database keeps for this book; empty when
     there is no database yet. Writes nothing but what SQLite itself needs
     to finish a change an earlier run left half done. `book`, when given,
     lends each player still in it its saved-file-only facts (in the group
     at the last save, unknown fields). `region` is the book's own region,
-    given to every row (M21-02)."""
+    given to every row, and `second_names` says the flavor's characters
+    have second names, so a key's second part is one (M21-02)."""
     path = database_path(flavor_folder, account)
     try:
         conn = _open(path, create=False)
@@ -1011,7 +1019,7 @@ def read(
         rows = list(_rows(conn).values())
         aliases = _aliases(rows)
         world = _world_parts(conn)
-        return [_public(r, book, aliases, world, region) for r in rows]
+        return [_public(r, book, aliases, world, region, second_names) for r in rows]
     except sqlite3.Error as exc:
         raise CrewDbError(f"The crew database {path} cannot be read ({exc}).") from exc
     finally:
