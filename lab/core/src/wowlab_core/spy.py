@@ -31,6 +31,7 @@ the CLI shows it only through its control-character escaping path.
 
 from __future__ import annotations
 
+import json
 import math
 import unicodedata
 from collections.abc import Callable, Iterable, Sequence
@@ -84,19 +85,35 @@ class SpySource(_Model):
 
 
 class SpyPlayer(_Model):
-    """One `PlayerData` row: a player Spy saw. `key` is the table key, as
+    """One `PlayerData` row: a player Spy still keeps. Spy keeps hostile
+    players only, and drops a row after 90 days or once the player is seen
+    as friendly, unless it holds wins or losses. `key` is the table key, as
     stored (`<First>-<Second>` on Forever); `name` is the row's own `name`
-    field. The place (`zone`, `sub_zone`, `map_id`, `map_x`, `map_y`) is
-    where the character recording was when Spy last saw this player, not
-    the player's own position: Spy cannot read another player's position.
-    In an instance Spy keeps the instance's name as the zone, an empty sub
-    zone and no map. `time` is when it last saw them (Unix seconds).
-    `wins` and `loses` are Spy's counts of fights won and lost against
-    them, absent until a fight is counted. `reasons` are the
-    kill-on-sight reasons the player chose (a reason's text, or True).
-    `kos` and `kos_added` come from the same file's `KOSData`, `ignored`
-    from its `IgnoreData`. `other` keeps every field this reader does not
-    know, and every known field whose value is of another type, as read."""
+    field.
+
+    `time` is when Spy last saw them (Unix seconds). The place is the one
+    Spy last recorded, which can be from another moment: Spy records the
+    recording character's own position, never the other player's. `zone`
+    and `sub_zone` are updated with `time` outside an instance; inside one
+    Spy writes the instance's name as `zone` and "" as `sub_zone` and leaves
+    `map_id`, `map_x` and `map_y` as they were, so the map position can be
+    older than `time`. A row another Spy user shared (only when the
+    character's Spy profile takes shared data, off by default) carries the
+    sender's place, `is_enemy` True and the time it arrived.
+
+    `is_enemy` is whether the game called the player hostile to the
+    recording character when Spy last looked (`UnitIsEnemy`), not their
+    faction; marking a player kill on sight, or a shared row, sets it too.
+    `wins` is Spy's count of your killing blows on them; `loses` the deaths
+    Spy put on them (some guessed from who had you targeted); both absent
+    until counted. `rank` is a Classic-client field the Forever port never
+    writes. `reasons` are the kill-on-sight reasons the player chose (a
+    reason's text, or True). `kos` and `kos_added` come from the same
+    file's `KOSData`, `ignored` from its `IgnoreData`; Spy's own `kos`
+    mark on the row (1 while on the list) is kept in `other`. `other` keeps
+    every field this reader does not know, and every known field whose
+    value is of another type, as read, each key written once
+    (`_key_text`)."""
 
     key: str
     source: SpySource
@@ -145,7 +162,8 @@ class SpyEncounter(_Model):
     """One `Encounters` entry, a fight Spy counted: when (`time`), against
     whom (`name`), the result (`result`: Spy's letter W, L or P as a word;
     None for a letter this reader does not know, kept in `result_code`),
-    how it was counted (`how`: kill, group, probable, recap or targeting),
+    how it was counted (`how`: kill, pet, group, probable, recap or
+    targeting),
     the opponent's class, level (when Spy knew it) and guild, and where the
     recording character stood (`map_id`, `x`, `y`). `position` is the
     entry's place in the list, from 1."""
@@ -169,8 +187,9 @@ class SpyEncounter(_Model):
 class SpySharedKos(_Model):
     """One entry of `SpyDB.kosData`: a player on the kill-on-sight list
     that one of the account's characters shares through the account file.
-    `kept_under` is the list's first key (Spy's realm label; on Forever
-    `Region <realm type>`), `faction` the sharing character's faction and
+    `kept_under` is the list's first key: Spy's realm label, which is
+    `Region <realm type>` when the client reports region-wide unique names
+    and the realm's name otherwise; `faction` the sharing character's faction and
     `character` the sharing character as Spy names it ("First Second")."""
 
     key: str
@@ -236,10 +255,14 @@ class SpyAccountData(_Model):
     """The account's `SpyDB`: the shared kill-on-sight lists, the player's
     notes and tags. `present` is False when the file holds no `SpyDB`.
     `other_keys` names the top-level keys read only by name (Spy's
-    settings and its own lists, such as `profiles` and `watchData`)."""
+    settings and its own lists, such as `profiles` and `watchData`).
+    `uses_shared_data` names each character (as Spy names it, "First
+    Second") whose Spy profile takes the rows other Spy users share
+    (`UseData`, off by default): their rows' places may be other users'."""
 
     source: SpySource
     present: bool
+    uses_shared_data: list[str] = Field(default_factory=list)
     shared_kos: list[SpySharedKos] = Field(default_factory=list)
     notes: list[SpyNote] = Field(default_factory=list)
     tags: list[SpyPlayerTag] = Field(default_factory=list)
@@ -304,9 +327,14 @@ def _flag(value: object) -> bool | None:
 
 
 def _key_text(key: object) -> str:
-    """A table key as text: a string as it is, a number or boolean as `[n]`."""
+    """A table key as text, one text per key (L4: no two keys of a table
+    share one): a string as it is, unless it starts with `[`, when it is
+    written as `["..."]` with its text JSON-quoted; a number as `[n]`; a
+    boolean as `[true]` or `[false]`. A number's or boolean's text starts
+    with `[` and a digit, `-`, `t` or `f`, an escaped string's with `["`, so
+    the key `[1]` and the string key `"[1]"` stay apart."""
     if isinstance(key, str):
-        return key
+        return f"[{json.dumps(key, ensure_ascii=False)}]" if key.startswith("[") else key
     if isinstance(key, bool):
         return "[true]" if key else "[false]"
     return f"[{key!r}]" if isinstance(key, (int, float)) else "[?]"
@@ -469,11 +497,15 @@ def _version_warning(version: object) -> str | None:
         )
     if version not in KNOWN_VERSIONS:
         known = ", ".join(KNOWN_VERSIONS)
-        shown = version if isinstance(version, str) else "a value that is not text"
+        said = (
+            f"as version {version:.40}"
+            if isinstance(version, str)
+            else "with a version that is not text"
+        )
         return (
-            f"Spy saved this character's data as version {shown!s:.40}, which wowlab does not "
-            f"know (it knows {known}); it was read as version {KNOWN_VERSIONS[-1]} is, so a "
-            "field may be misread."
+            f"Spy saved this character's data {said}, which wowlab does not know (it knows "
+            f"{known}); it was read as version {KNOWN_VERSIONS[-1]} is, so a field may be "
+            "misread."
         )
     return None
 
@@ -560,6 +592,41 @@ def parse_character(data: bytes, source: SpySource) -> SpyCharacterData:
 _ACCOUNT_TABLES: Final = ("kosData", "playerNotes", "playerTags")
 
 
+def _uses_shared_data(value: dict[object, object]) -> list[str]:
+    """The characters (as `profileKeys` names them) whose Spy profile has
+    `UseData` set true: Spy takes the rows other Spy users share. Spy's
+    default is off, so a profile that does not set it does not take them."""
+    keys = value.get("profileKeys")
+    profiles = value.get("profiles")
+    if not isinstance(keys, dict) or not isinstance(profiles, dict):
+        return []
+    out: list[str] = []
+    for character, profile_name in keys.items():
+        profile = profiles.get(profile_name) if isinstance(profile_name, str) else None
+        if (
+            isinstance(character, str)
+            and isinstance(profile, dict)
+            and profile.get("UseData") is True
+        ):
+            out.append(character)
+    return out
+
+
+def uses_shared_data(accounts: Sequence[SpyAccountData], source: SpySource) -> bool:
+    """Whether the character of `source` takes rows other Spy users share,
+    by its account's `SpyDB` (the character's folder name and Spy's name
+    for it compared folded, "First-Second" and "First Second" alike)."""
+    if source.character is None:
+        return False
+    label = fold(source.character.rsplit("/", 1)[-1])
+    return any(
+        a.source.account == source.account
+        and a.source.flavor_folder == source.flavor_folder
+        and any(fold(c) == label for c in a.uses_shared_data)
+        for a in accounts
+    )
+
+
 def load_account(value: object, source: SpySource) -> SpyAccountData:
     """`SpyDB` as `luadata.LuaDocument.to_python` gives it (None when the
     file does not assign it)."""
@@ -635,6 +702,7 @@ def load_account(value: object, source: SpySource) -> SpyAccountData:
     return SpyAccountData(
         source=source,
         present=True,
+        uses_shared_data=_uses_shared_data(value),
         shared_kos=shared,
         notes=notes,
         tags=tags,

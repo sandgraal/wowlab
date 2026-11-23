@@ -60,6 +60,7 @@ function spyView() {
     heads: table.all().filter((e) => e.tagName === "th").map((e) => e.textContent),
     rows: rows.map((tr) => tr.children.map((c) => c.textContent)),
     warnings: ids["spy-warnings"].children.map((c) => c.textContent),
+    notes: ids["spy-notes"].children.map((c) => c.textContent),
     warningsHidden: ids["spy-warnings"].hidden,
     player: { hidden: ids["spy-player"].hidden, title: ids["spy-player-title"].textContent,
       lines: ids["spy-player-lines"].children.map((c) => c.textContent) },
@@ -228,11 +229,20 @@ def test_the_panel_reads_only_when_asked_and_draws_the_list(served: Any, tmp_pat
     assert spy_runs == view["newRequests"]
     assert _bodies(view) == [{"command": ["spy", "list"], "params": {"sort": "last"}}]
     assert view["status"] == report["words"]
-    assert view["heads"] == ["Player", "Who", "Guild", "Last seen", "Where", "Seen by"]
+    assert view["heads"] == [
+        "Player",
+        "Who",
+        "Guild",
+        "Last seen",
+        "Place Spy last recorded",
+        "Seen by",
+    ]
+    # The standing notes, under the panel, as the command gives them.
+    assert view["notes"] == report["notes"] and len(view["notes"]) == 8
     assert len(view["rows"]) == 24
     assert [r[0] for r in view["rows"]] == [p["key"] for p in report["players"]]
     first = view["rows"][0]
-    assert first[1] == "level 24 Gnome Warlock, Alliance, enemy"
+    assert first[1] == "level 24 Gnome Warlock, Alliance, hostile when Spy last looked"
     assert first[2] == "The Beef Covenant"
     assert first[4] == "The Barrens: Ratchet" and first[5] == "Sandgraal-Rizzen"
     sonja = next(r for r in view["rows"] if r[0] == "Sonja-Frayle")
@@ -256,7 +266,7 @@ def test_the_filters_are_the_commands_options(served: Any, tmp_path: Path) -> No
     assert _bodies(kos) == [
         {"command": ["spy", "list"], "params": {"kos_only": True, "sort": "last"}}
     ]
-    assert kos["rows"] == [] and kos["status"] == "No player matches." and kos["tableHidden"]
+    assert kos["rows"] == [] and kos["status"] == "No row matches." and kos["tableHidden"]
     assert _bodies(level) == [
         {"command": ["spy", "list"], "params": {"kos_only": True, "sort": "level"}}
     ]
@@ -270,7 +280,7 @@ def test_the_filters_are_the_commands_options(served: Any, tmp_path: Path) -> No
             "params": {"search": "living", "enemies": True, "sort": "level"},
         }
     ]
-    assert len(search["rows"]) == 5 and search["status"] == "Showing 5 of 24 players."
+    assert len(search["rows"]) == 5 and search["status"] == "Showing 5 of 24 rows."
 
 
 def test_a_row_opens_what_spy_show_prints(served: Any, tmp_path: Path) -> None:

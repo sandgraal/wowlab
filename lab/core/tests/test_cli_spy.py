@@ -122,19 +122,25 @@ def test_list_reads_every_player_newest_first_with_who_saw_them(env: Env) -> Non
     assert result.exit_code == 0, result.output
     lines = result.stdout.splitlines()
     assert lines[0] == (
-        "Spy saw 24 players, as of your last logout or /reload "
+        "24 enemy players Spy still keeps, as of your last logout or /reload "
         "(Sandgraal-Rizzen 24, Tyrone-Hamberglar 0)."
     )
-    assert lines[1].startswith("Nefzik-Spoonz: level 24 Gnome WARLOCK, Alliance, enemy, ")
-    assert lines[1].endswith("in The Barrens: Ratchet (by Sandgraal-Rizzen)")
-    assert len(lines) == 1 + 24 + 1 and lines[-1] == "6 notes: --notes shows them"
+    assert lines[1].startswith(
+        "Nefzik-Spoonz: level 24 Gnome WARLOCK, Alliance, hostile when Spy last looked, "
+    )
+    assert lines[1].endswith(
+        "; place Spy last recorded: The Barrens: Ratchet (by Sandgraal-Rizzen)"
+    )
+    assert "; last seen 20" in lines[1]
+    assert len(lines) == 1 + 24 + 1 and lines[-1] == "8 notes: --notes shows them"
     sonja = next(line for line in lines if line.startswith("Sonja-Frayle"))
-    assert "in Wailing Caverns (by Sandgraal-Rizzen)" in sonja
+    assert sonja.endswith("place Spy last recorded: Wailing Caverns (by Sandgraal-Rizzen)")
 
 
 def test_list_json_carries_each_row_with_its_file_and_character(env: Env) -> None:
     report = env.json("spy", "list")
-    assert report["total"] == 24 and len(report["players"]) == 24
+    assert report["total"] == 24 and report["distinct"] == 24 and len(report["players"]) == 24
+    assert report["caveat"] is None
     assert report["warnings"] == [] and report["unread"] == []
     assert [(f["scope"], f["character"], f["players"]) for f in report["files"]] == [
         ("account", None, 0),
@@ -161,9 +167,16 @@ def test_list_filters_and_orders_through_its_options(env: Env) -> None:
     assert len(env.json("spy", "list", "--enemies")["players"]) == 24
     levels = [p["level"] for p in env.json("spy", "list", "--sort", "level")["players"]]
     assert levels == sorted(levels, reverse=True)
-    assert env.json("spy", "list", "--character", "tyrone-hamberglar")["players"] == []
+    tyrone = env.json("spy", "list", "--character", "tyrone-hamberglar")
+    assert tyrone["players"] == [] and tyrone["total"] == 0 and tyrone["distinct"] == 0
+    # The headline counts the characters listed, and says no "0 of 0".
+    text = env.run("spy", "list", "--character", "tyrone-hamberglar").stdout.splitlines()
+    assert text[0] == (
+        "0 enemy players Spy still keeps, as of your last logout or /reload (Tyrone-Hamberglar 0)."
+    )
+    assert not any("match" in line for line in text)
     text = env.run("spy", "list", "--search", "Tala").stdout.splitlines()
-    assert text[1] == "1 of 24 players match."
+    assert text[1] == "1 of 24 rows match."
 
 
 def test_list_refuses_an_empty_search_and_an_unknown_character(env: Env) -> None:
@@ -177,17 +190,26 @@ def test_list_refuses_an_empty_search_and_an_unknown_character(env: Env) -> None
 def test_show_prints_what_each_character_saw(env: Env) -> None:
     result = env.run("spy", "show", "sonja frayle")
     assert result.exit_code == 0, result.output
-    assert result.stdout.splitlines()[:3] == [
+    lines = result.stdout.splitlines()
+    assert lines[:2] == [
         "Sonja-Frayle, from Spy's saved data, as of your last logout or /reload:",
-        "  Seen by Sandgraal-Rizzen: level 26 Undead PALADIN, Horde, enemy, guild Doomhammer",
-        result.stdout.splitlines()[2],
+        "  Seen by Sandgraal-Rizzen: level 26 Undead PALADIN, Horde, hostile to your character "
+        "when Spy last looked, guild Doomhammer",
     ]
-    assert result.stdout.splitlines()[2].endswith("in Wailing Caverns")
+    assert lines[2].startswith("    Last seen: 20")
+    assert lines[3] == "    Place Spy last recorded: Wailing Caverns"
+    # No map position was ever recorded for her: no map line.
+    assert not any("map position" in line for line in lines)
     report = env.json("spy", "show", "Goruthuz-Mugstout")
     assert report["typed"] == "Goruthuz-Mugstout"
     assert [p["key"] for p in report["players"]] == ["Goruthuz-Mugstout"]
     assert report["lines"][2].startswith("    Last seen: ")
-    assert report["lines"][3] == "    Map 1413 at 0.62, 0.37 (where your character stood)"
+    assert report["lines"][3] == "    Place Spy last recorded: The Barrens: Ratchet"
+    assert report["lines"][4] == (
+        "    The last map position Spy recorded: map 1413 at 0.62, 0.37 (where your character "
+        "stood; Spy does not update it inside an instance, so it can be older than the date "
+        "above)"
+    )
 
 
 def test_show_of_a_player_spy_never_saw_exits_1(env: Env) -> None:
@@ -209,14 +231,17 @@ def test_constructed_kill_on_sight_fights_and_counts_show_in_list_and_show(env: 
     )
     assert [k["key"] for k in listed["kos"]] == [KEY]
     text = env.run("spy", "list", "--kos").stdout.splitlines()
-    assert text[2].startswith(f"{KEY} [kill on sight]: level 29? Gnome ROGUE, Alliance, enemy;")
+    assert text[2].startswith(
+        f"{KEY} [kill on sight]: level 29? Gnome ROGUE, Alliance, hostile when Spy last looked;"
+    )
     shown = env.json("spy", "show", KEY)
     assert [e["result"] for e in shown["encounters"]] == ["win"]
     lines = shown["lines"]
-    assert "    Fights Spy counted: 2 won, 1 lost" in lines
+    assert "    Your killing blows on them (Spy's count): 2" in lines
+    assert "    Your deaths Spy put on them: 1 (some from who had you targeted)" in lines
     assert any(line.startswith("    Kill on sight: yes, added ") for line in lines)
     assert "  Fights Spy counted against them: 1" in lines
-    assert any(line.endswith(": won (kill) (by Tyrone-Hamberglar)") for line in lines)
+    assert any(line.endswith(": won (your killing blow) (by Tyrone-Hamberglar)") for line in lines)
 
 
 def test_constructed_notes_and_tags_from_the_account_file(env: Env) -> None:
@@ -313,3 +338,53 @@ def test_constructed_an_entry_that_is_not_a_row_is_named_and_the_rest_listed(env
     assert "Sandgraal-Rizzen 24" in result.stdout
     (unread,) = env.json("spy", "list")["unread"]
     assert (unread["table"], unread["key"]) == ("PlayerData", KEY)
+
+
+def test_constructed_rows_and_players_are_counted_apart(env: Env) -> None:
+    """A player two characters saw is one player with two rows."""
+    row = NL.join(
+        [
+            '["Goruthuz-Mugstout"] = {',
+            '["name"] = "Goruthuz-Mugstout",',
+            '["level"] = 44,',
+            '["time"] = 1795500000,',
+            "},",
+        ]
+    )
+    env.put(TYRONE, _char_file(f'["PlayerData"] = {{{NL}{row}{NL}}},'))
+    report = env.json("spy", "list")
+    assert report["total"] == 25 and report["distinct"] == 24
+    assert report["words"] == (
+        "25 rows for 24 enemy players Spy still keeps (one per character that saw them), as "
+        "of your last logout or /reload (Sandgraal-Rizzen 24, Tyrone-Hamberglar 1)."
+    )
+
+
+def test_constructed_a_character_that_takes_shared_rows_gets_the_caveat(env: Env) -> None:
+    account = (
+        NL.join(
+            [
+                "",
+                "SpyDB = {",
+                '["profileKeys"] = {',
+                '["Sandgraal Rizzen"] = "Sandgraal Rizzen",',
+                "},",
+                '["profiles"] = {',
+                '["Sandgraal Rizzen"] = {',
+                '["UseData"] = true,',
+                "},",
+                "},",
+                "}",
+            ]
+        )
+        + NL
+    ).encode()
+    env.put(ACCOUNT_FILE, account)
+    caveat = (
+        "Spy takes the players other Spy users share for Sandgraal-Rizzen, so some places and "
+        "times may come from other Spy users."
+    )
+    assert env.json("spy", "list")["caveat"] == caveat
+    assert env.json("spy", "show", "Goruthuz-Mugstout")["caveat"] == caveat
+    out = env.run("spy", "list").stdout
+    assert " ".join(out.split()).count(caveat) == 1

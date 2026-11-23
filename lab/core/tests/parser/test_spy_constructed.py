@@ -238,3 +238,50 @@ def test_constructed_named_prefers_the_exact_key() -> None:
     ]
     assert spy.named(rows, KEY) == rows[:1]
     assert spy.named(rows, KEY.upper()) == rows
+
+
+def test_constructed_a_list_kos_entry_never_links_to_a_string_key_spelled_alike() -> None:
+    """A `KOSData` written as a list has the key 1 (text `[1]`); a player
+    row under the string key "[1]" is a different key and stays unlinked."""
+    row = _row(level="3")
+    data = _char(
+        f'["PlayerData"] = {{{NL}["[1]"] = {row},{NL}}},{NL}["KOSData"] = {{{NL}1795400000,{NL}}},'
+    )
+    got = spy.parse_character(data, SOURCE)
+    (p,) = got.players
+    assert p.key == '["[1]"]' and not p.kos
+    assert [k.key for k in got.kos] == ["[1]"]
+
+
+def test_constructed_a_version_that_is_not_text_is_said_so() -> None:
+    got = spy.parse_character(_char("", version="2"), SOURCE)
+    assert got.warning is not None
+    assert got.warning.startswith("Spy saved this character's data with a version that is not text")
+
+
+def test_constructed_the_characters_that_take_shared_rows_are_named() -> None:
+    text = NL.join(
+        [
+            "",
+            "SpyDB = {",
+            '["profileKeys"] = {',
+            '["Mine Fakerealm"] = "Mine Fakerealm",',
+            '["Other Fakerealm"] = "Default",',
+            "},",
+            '["profiles"] = {',
+            '["Mine Fakerealm"] = {',
+            '["UseData"] = true,',
+            "},",
+            '["Default"] = {',
+            '["UseData"] = false,',
+            "},",
+            "},",
+            "}",
+            "",
+        ]
+    ).encode()
+    got = spy.parse_account(text, SOURCE.model_copy(update={"character": None}))
+    assert got.uses_shared_data == ["Mine Fakerealm"]
+    assert spy.uses_shared_data([got], SOURCE)
+    other = SOURCE.model_copy(update={"character": "1/Other-Fakerealm"})
+    assert not spy.uses_shared_data([got], other)

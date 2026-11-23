@@ -3626,7 +3626,7 @@
   const spySeen = { listSeq: 0, showSeq: 0, searchTimer: null, read: false };
   const SPY_FILTER = [["", "Everyone"], ["enemies", "Enemies"], ["kos", "Kill on sight"]];
   const SPY_SORT = [["last", "Last seen, newest first"], ["name", "By name"], ["level", "Highest level first"]];
-  const SPY_COLUMNS = ["Player", "Who", "Guild", "Last seen", "Where", "Seen by"];
+  const SPY_COLUMNS = ["Player", "Who", "Guild", "Last seen", "Place Spy last recorded", "Seen by"];
   fillSelect(byId("spy-filter"), SPY_FILTER);
   fillSelect(byId("spy-sort"), SPY_SORT);
 
@@ -3655,7 +3655,7 @@
       crewClass(p.class_token),
     ].filter(Boolean);
     const side = hubStr(p.faction) ? visible(p.faction) : null;
-    const enemy = p.is_enemy === true ? "enemy" : null;
+    const enemy = p.is_enemy === true ? "hostile when Spy last looked" : null;
     const marks = [p.kos === true ? "kill on sight" : null, p.ignored === true ? "ignored" : null];
     return [parts.join(" "), side, enemy, ...marks].filter(Boolean).join(", ") || NOT_RECORDED;
   }
@@ -3711,16 +3711,21 @@
       return;
     }
     spySeen.read = true;
-    const said = (Array.isArray(report.warnings) ? report.warnings : []).filter((w) => typeof w === "string");
+    // The version warnings and the caveat on shared rows, then the standing
+    // notes under the panel, as the command gives them.
+    const said = [...(Array.isArray(report.warnings) ? report.warnings : []), report.caveat]
+      .filter((w) => typeof w === "string");
     warnings.replaceChildren(...said.map((w) => make("li", visible(w))));
     warnings.hidden = said.length === 0;
+    byId("spy-notes").replaceChildren(...(Array.isArray(report.notes) ? report.notes : [])
+      .filter((n) => typeof n === "string").map((n) => make("li", visible(n))));
     const players = report.players.filter((p) => p && typeof p.key === "string");
     const total = hubNum(report.total);
     if (players.length === 0) {
       box.replaceChildren();
       box.hidden = true;
       if (reply.error) spySay(shown(reply.error), true);
-      else spySay(total ? "No player matches." : visible(report.words), false);
+      else spySay(total ? "No row matches." : visible(report.words), false);
       return;
     }
     const table = make("table");
@@ -3747,7 +3752,9 @@
     if (reply.error) {
       spySay(shown(reply.error), true);
     } else {
-      spySay(n === all ? visible(report.words) : "Showing " + n + " of " + pluralWord(all, " player") + ".", false);
+      // `total` counts rows, one per character that saw a player, as the
+      // command's own match line does.
+      spySay(n === all ? visible(report.words) : "Showing " + n + " of " + pluralWord(all, " row") + ".", false);
     }
   }
 

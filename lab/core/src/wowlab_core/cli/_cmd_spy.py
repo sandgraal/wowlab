@@ -47,14 +47,21 @@ _SPY_AS_OF = "as of your last logout or /reload"
 _SPY_NOTES = [
     "Spy saves its lists when you log out or type /reload, and the game overwrites a change "
     "made to them while it runs.",
-    "Where a player was seen is where your character stood when Spy saw them: the game does "
-    "not tell addons where another player is. In an instance Spy keeps the instance's name "
-    "and no map position.",
+    "Spy keeps hostile players only, and drops a player after 90 days, or once it sees them "
+    "as friendly, unless it counted a killing blow or a death against them.",
+    "Spy records your own character's position, not theirs. The time and the place can be "
+    "from different moments: inside an instance Spy writes the instance's name but leaves "
+    "the map position as it was, so that position can be older than the time.",
+    "Hostile means the game called them hostile to your character when Spy last looked, not "
+    "their faction: a duel, mind control or a free-for-all area can make your own faction "
+    "hostile, and marking a player kill on sight, or a row another Spy user shared, sets it "
+    "too.",
     "Each of your characters has its own Spy list: a player two of them saw is listed once "
     "for each.",
     "The class is the game's internal name for it (MAGE, PRIEST, ...), as Spy saved it. A "
     "level followed by ? is one Spy guessed.",
-    "Spy's own counts of fights won and lost against a player appear only once it has counted one.",
+    "Spy counts your killing blows on a player, and the deaths it puts on them, some guessed "
+    "from who had you targeted; neither appears until it has counted one.",
     "Dates are in this computer's time zone.",
 ]
 # `spy list --sort`.
@@ -71,6 +78,20 @@ _SPY_TABLE_WORDS = {
     "playerTags": "the tag on",
 }
 _SPY_RESULT_WORDS = {"win": "won", "loss": "lost", "probable_win": "probably won"}
+# How Spy counted a fight (`Encounters.lua`), in words.
+_SPY_HOW_WORDS = {
+    "kill": "your killing blow",
+    "pet": "your pet's target died",
+    "group": "a group member's kill",
+    "probable": "probable: they died while you fought them",
+    "recap": "named by the death recap",
+    "targeting": "guessed: the only enemy targeting you",
+}
+# The caveat when a character takes rows other Spy users share (W2).
+_SPY_SHARED_CAVEAT = (
+    "Spy takes the players other Spy users share for {who}, so some places and times may "
+    "come from other Spy users."
+)
 
 
 class SpyFileRow(_Out):
@@ -100,7 +121,9 @@ class SpyFileRow(_Out):
 class SpyListReport(_Out):
     """`wowlab spy list --json`: the players Spy saw, as of the last logout
     or /reload. `files` lists every `Spy.lua` looked at; `total` counts
-    every player row in them (one per character that saw the player);
+    the player rows of the characters listed (one row per character that
+    saw the player), `distinct` the players among them (by name, case,
+    spaces and hyphens ignored);
     `players` are the rows shown, filtered and in the order the text lists
     them, each with the file and character it came from; `kos` and
     `ignored` are every kill-on-sight and ignore entry of the characters
@@ -108,11 +131,13 @@ class SpyListReport(_Out):
     kill-on-sight lists and your own notes and tags; `unread` lists each
     entry that does not fit what Spy saves. `warnings` are the version
     warnings (an unknown or missing Spy data version, read as the known one
-    is). `words` is the sentence the text output opens with."""
+    is). `caveat` says when a character listed takes the rows other Spy
+    users share. `words` is the sentence the text output opens with."""
 
     flavor_folders: list[str]
     files: list[SpyFileRow]
     total: int
+    distinct: int
     sort: SpySort
     search: str | None
     character: str | None
@@ -126,6 +151,7 @@ class SpyListReport(_Out):
     tags: list[spy.SpyPlayerTag]
     unread: list[spy.SpyUnread]
     warnings: list[str]
+    caveat: str | None = None
     words: str
     notes: list[str]
 
@@ -135,7 +161,9 @@ class SpyShowReport(_Out):
     name as typed (`typed`): the row of each character that saw them
     (`players`), their kill-on-sight and ignore entries, the fights Spy
     counted against them (`encounters`), the shared kill-on-sight entries,
-    your notes and tags. `lines` are the lines the text output prints."""
+    your notes and tags. `caveat` says when a character that saw them
+    takes the rows other Spy users share. `lines` are the lines the text
+    output prints."""
 
     typed: str
     files: list[SpyFileRow]
@@ -147,6 +175,7 @@ class SpyShowReport(_Out):
     player_notes: list[spy.SpyNote]
     tags: list[spy.SpyPlayerTag]
     warnings: list[str]
+    caveat: str | None = None
     lines: list[str]
     notes: list[str]
 
@@ -270,9 +299,9 @@ def _spy_who(p: spy.SpyPlayer) -> str:
     who = " ".join(x for x in parts if x) or "nothing recorded"
     side = p.faction or "faction unknown"
     if p.is_enemy is True:
-        side += ", enemy"
+        side += ", hostile when Spy last looked"
     elif p.is_enemy is False:
-        side += ", not an enemy"
+        side += ", not hostile when Spy last looked"
     guild = f", guild {p.guild}" if p.guild else ""
     return f"{who}, {side}{guild}"
 
@@ -280,8 +309,8 @@ def _spy_who(p: spy.SpyPlayer) -> str:
 def _spy_line(p: spy.SpyPlayer) -> str:
     marks = "".join([" [kill on sight]" if p.kos else "", " [ignored]" if p.ignored else ""])
     return (
-        f"{p.key}{marks}: {_spy_who(p)}; last seen {_spy_date(p.time)} in {_spy_place(p)} "
-        f"(by {_spy_label(p.source.character)})"
+        f"{p.key}{marks}: {_spy_who(p)}; last seen {_spy_date(p.time)}; place Spy last "
+        f"recorded: {_spy_place(p)} (by {_spy_label(p.source.character)})"
     )
 
 
@@ -294,17 +323,42 @@ def _spy_sorted(players: Sequence[spy.SpyPlayer], by: SpySort) -> list[spy.SpyPl
     return sorted(items, key=lambda p: -(p.time if p.time is not None else -1))
 
 
-def _spy_words(read: _SpyRead, total: int) -> str:
+def _spy_distinct(players: Sequence[spy.SpyPlayer]) -> int:
+    """How many players the rows name: one row per character that saw a
+    player, so a player two characters saw is counted once."""
+    return len({spy.fold(p.key) for p in players})
+
+
+def _spy_words(read: _SpyRead, characters: Sequence[spy.SpyCharacterData]) -> str:
+    """The opening sentence, about the characters listed (`--character`)."""
     if not read.accounts and not read.characters and not read.errors:
         return (
             f"No Spy saved data in {', '.join(read.folders)}: Spy is not installed, or has not "
             "saved yet (it saves when you log out or type /reload)."
         )
+    rows = [p for c in characters for p in c.players]
+    distinct = _spy_distinct(rows)
     counts = ", ".join(
-        f"{_spy_label(c.source.character)} {len(c.players)}" for c in read.characters if c.present
+        f"{_spy_label(c.source.character)} {len(c.players)}" for c in characters if c.present
     )
     by = f" ({counts})" if counts else ""
-    return f"Spy saw {_plural(total, 'player')}, {_SPY_AS_OF}{by}."
+    held = f"{_plural(distinct, 'enemy player')} Spy still keeps"
+    if len(rows) != distinct:
+        held = (
+            f"{_plural(len(rows), 'row')} for {_plural(distinct, 'enemy player')} Spy still "
+            "keeps (one per character that saw them)"
+        )
+    return f"{held[0].upper()}{held[1:]}, {_SPY_AS_OF}{by}."
+
+
+def _spy_caveat(read: _SpyRead, players: Sequence[spy.SpyPlayer]) -> str | None:
+    """The caveat when a character whose rows are shown takes the rows
+    other Spy users share."""
+    sources = {p.source for p in players}
+    who = sorted(
+        {_spy_label(s.character) for s in sources if spy.uses_shared_data(read.accounts, s)}
+    )
+    return _SPY_SHARED_CAVEAT.format(who=", ".join(who)) if who else None
 
 
 def _spy_errors(read: _SpyRead) -> None:
@@ -381,11 +435,13 @@ def spy_list(
         and (not enemies or p.is_enemy is True)
     ]
     shown = _spy_sorted(picked, sort)
-    words = _spy_words(read, len(everyone))
+    words = _spy_words(read, characters)
+    caveat = _spy_caveat(read, everyone)
     report = SpyListReport(
         flavor_folders=read.folders,
         files=read.files(),
         total=len(everyone),
+        distinct=_spy_distinct(everyone),
         sort=sort,
         search=search,
         character=character,
@@ -399,6 +455,7 @@ def spy_list(
         tags=[t for a in read.accounts for t in a.tags],
         unread=read.unread(),
         warnings=read.warnings(),
+        caveat=caveat,
         words=words,
         notes=_SPY_NOTES,
     )
@@ -409,8 +466,8 @@ def spy_list(
         _say(words)
         for warning in report.warnings:
             _say(warning)
-        if search is not None or kos_only or enemies or character is not None:
-            _say(f"{len(shown)} of {_plural(len(everyone), 'player')} match.")
+        if search is not None or kos_only or enemies:
+            _say(f"{len(shown)} of {_plural(len(everyone), 'row')} match.")
         for p in shown:
             _say(_spy_line(p))
         for u in report.unread:
@@ -419,21 +476,31 @@ def spy_list(
             _say(f"Could not be read: {what} {u.key} ({whose}): {u.reason}")
         _spy_errors(read)
         if read.accounts or read.characters:
-            _say_notes(_SPY_NOTES, notes)
+            _say_notes(_SPY_NOTES, notes, caveat)
     if read.errors:
         raise typer.Exit(EXIT_ERROR)
 
 
 def _spy_player_lines(p: spy.SpyPlayer) -> list[str]:
+    who = _spy_who(p).replace(
+        "hostile when Spy last looked", "hostile to your character when Spy last looked"
+    )
     lines = [
-        f"  Seen by {_spy_label(p.source.character)}: {_spy_who(p)}",
-        f"    Last seen: {_spy_date(p.time)} in {_spy_place(p)}",
+        f"  Seen by {_spy_label(p.source.character)}: {who}",
+        f"    Last seen: {_spy_date(p.time)}",
+        f"    Place Spy last recorded: {_spy_place(p)}",
     ]
     if p.map_id is not None:
         at = f" at {p.map_x:g}, {p.map_y:g}" if p.map_x is not None and p.map_y is not None else ""
-        lines.append(f"    Map {p.map_id}{at} (where your character stood)")
-    if p.wins is not None or p.loses is not None:
-        lines.append(f"    Fights Spy counted: {p.wins or 0} won, {p.loses or 0} lost")
+        lines.append(
+            f"    The last map position Spy recorded: map {p.map_id}{at} (where your character "
+            "stood; Spy does not update it inside an instance, so it can be older than the "
+            "date above)"
+        )
+    if p.wins is not None:
+        lines.append(f"    Your killing blows on them (Spy's count): {p.wins}")
+    if p.loses is not None:
+        lines.append(f"    Your deaths Spy put on them: {p.loses} (some from who had you targeted)")
     if p.kos:
         added = f", added {_spy_date(p.kos_added)}" if p.kos_added is not None else ""
         lines.append(f"    Kill on sight: yes{added}")
@@ -449,7 +516,7 @@ def _spy_player_lines(p: spy.SpyPlayer) -> list[str]:
 
 def _spy_encounter_line(e: spy.SpyEncounter) -> str:
     result = _SPY_RESULT_WORDS.get(e.result or "", f"result {e.result_code or 'unknown'}")
-    how = f" ({e.how})" if e.how else ""
+    how = f" ({_SPY_HOW_WORDS.get(e.how, e.how)})" if e.how else ""
     at = f", map {e.map_id}" if e.map_id is not None else ""
     return f"    {_spy_date(e.time)}: {result}{how}{at} (by {_spy_label(e.source.character)})"
 
@@ -522,6 +589,7 @@ def spy_show(
         tag = _SPY_TAG_WORDS[t.tag] if t.tag is not None else (t.other_tag or "")
         lines.append(f"  Your tag in Spy: {tag}")
     warnings = read.warnings()
+    caveat = _spy_caveat(read, players)
     report = SpyShowReport(
         typed=name,
         files=read.files(),
@@ -533,6 +601,7 @@ def spy_show(
         player_notes=player_notes,
         tags=tags,
         warnings=warnings,
+        caveat=caveat,
         lines=lines,
         notes=_SPY_NOTES,
     )
@@ -545,6 +614,6 @@ def spy_show(
         for line in lines:
             _say(line)
         _spy_errors(read)
-        _say_notes(_SPY_NOTES, notes)
+        _say_notes(_SPY_NOTES, notes, caveat)
     if read.errors:
         raise typer.Exit(EXIT_ERROR)

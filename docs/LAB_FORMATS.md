@@ -156,18 +156,37 @@ copied). Field names are Spy's.
     `race`, `level`, `guild` (absent when none), `faction`, `isEnemy`,
     `isGuess` (the level is a guess), `zone`, `subZone`, `mapID`, `mapX`,
     `mapY` (0 to 1, floored to two decimals) and `time` (Unix seconds).
-    The place is **where the recording character stood**, not the other
-    player's position: Spy's code takes it from `C_Map` for `"player"`. In
-    an instance it keeps the instance's name as `zone`, `""` as `subZone`
-    and no map fields (one row of the capture). Spy's code also writes
-    `wins`, `loses` (counts), `rank` and `reason` (kill-on-sight reasons:
-    text to `true`, or the "other" reason to its text) and reads `kos`;
-    none is in the capture yet **[verify]**.
+    Spy keeps hostile players only: it drops a row after 90 days, or once
+    it sees the player as friendly, unless the row holds `wins` or `loses`.
+    - `isEnemy` is the game's answer (`UnitIsEnemy`) when Spy last looked:
+      hostile to the recording character, not a faction. A duel, mind
+      control or a free-for-all area can make the same faction hostile;
+      marking a player kill on sight, or a shared row, sets it too.
+    - The place is **where the recording character stood**, never the other
+      player's position (`C_Map` for `"player"`), and it can be from a
+      different moment than `time` (`List.lua`, around line 339): `time`
+      is set on every sighting; outside an instance `zone`, `subZone` and
+      the map fields are set with it; inside one Spy writes the instance's
+      name as `zone` and `""` as `subZone` and **leaves `mapID`, `mapX` and
+      `mapY` as they were**, so the map position can be older than `time`
+      (one row of the capture has an instance zone and no map fields,
+      having never been seen outside).
+    - A row another Spy user shared is taken only when the character's
+      profile has `UseData` on (off by default): it carries the sender's
+      place, forces `isEnemy` to true and sets `time` to its arrival.
+    - Spy's code also writes `wins` (your killing blows on them), `loses`
+      (deaths it puts on them, some guessed from who had you targeted),
+      `reason` (kill-on-sight reasons: text to `true`, or the "other"
+      reason to its text) and `kos` (1 while the player is on the
+      kill-on-sight list, cleared when removed); the reader keeps `kos` in
+      the row's unknown fields and takes the list from `KOSData`. `rank`
+      is a Classic-client field the Forever port never passes. None of
+      these is in the capture yet **[verify]**.
   - `KOSData`: key to the time it was added (Unix seconds).
   - `IgnoreData`: key to `true`.
   - `Encounters`: a list of fights (the Forever port's "combat map"), each
     `{t, n, r, k, c, l, g, m, x, y}`: time, name, result (`W` win, `L`
-    loss, `P` probable win), how it was counted (`kill`, `group`,
+    loss, `P` probable win), how it was counted (`kill`, `pet`, `group`,
     `probable`, `recap`, `targeting`), class, level (only when not a
     guess), guild, and the recording character's map and position. At
     most 5000 are kept, the oldest dropped first. Empty in the capture
@@ -177,11 +196,13 @@ copied). Field names are Spy's.
   `added`; the character is named `"First Second"`, with a space),
   `removeKOSData`, `watchData` and `guildWatch` (same nesting), the
   player's `playerNotes` and `playerTags` (`[list][player]` to text, or to
-  `"spare"` or `"rival"`), and Spy's settings (`profiles`, `profileKeys`).
-  The Forever port adds `ForeverDebug`, a list of its own diagnostic
-  lines. The list key is Spy's realm label; on Forever it is
-  `Region <realm type>` (`Region RP-PvP` on the capture), not a realm
-  name.
+  `"spare"` or `"rival"`), and Spy's settings (`profiles`, keyed by
+  profile name, and `profileKeys`, character to profile name; a profile's
+  `UseData` says whether that character takes shared rows). The Forever
+  port adds `ForeverDebug`, a list of its own diagnostic lines. The list
+  key is Spy's realm label: `Region <realm type>` when the client reports
+  region-wide unique names (`Region RP-PvP` on the capture), else the
+  realm's name.
 
 ## 5. `Config.wtf` and `config-cache.wtf`
 
