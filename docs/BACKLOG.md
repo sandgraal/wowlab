@@ -4257,3 +4257,12 @@ One session, from a checklist the conductor writes. It covers:
 **Size:** S · **Depends on:** M22-01 to M22-13, M22-O1
 
 `docs/handoffs/M22-review.md`; dispatch stops until the owner's next pick.
+
+---
+
+## [ ] M22-15 — Combat log on in battlegrounds; killing blows there count toward Nemesis
+**Size:** M · **Depends on:** M21-11 (addon files), M21-02 (worldpvp), M22-03 (the record) · **Sources:** ADR-0026 note of 2026-11-23; `docs/LAB_PLAN.md` §21 (scan-log)
+
+The lab-addon's combat-log rule (M20-19) also turns logging on in a battleground or arena instance and off on leaving it; dungeons and raids stay off; one quiet chat line per switch, as now. `crew scan-log` reads battleground and arena segments as well (today it skips them): within a match segment it records your killing blows (`PARTY_KILL` by you or your pet) and your deaths (`UNIT_DIED` of your GUID, credited to the hostile player who last damaged you within 30 s, as the open-world rule), joined to the match the scoreboard recorded where one matches by map and time, kept as battleground fights beside world encounters. M22-03's **Nemesis** counts these personal kills and deaths; **Rival team** stays team results only.
+
+**Acceptance:** stub-client tests for the switch on entering and leaving a battleground; scan-log tests on a constructed battleground segment and, once the owner has played one battleground with logging on, a real captured slice (M22-O1); the record traces each battleground kill to its log line. Reviewed by `code-reviewer` and `domain-reviewer`. User-facing: yes (the chat lines, the Nemesis counts, the wiki's addon and crew pages).
