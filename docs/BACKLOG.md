@@ -3834,7 +3834,7 @@ The owner writes a combat log in game (`/combatlog`). The desk reads it (read-on
 
 ---
 
-## [ ] M20-19 — The addon turns the combat log on in the open world and off in instances and when idle
+## [x] M20-19 — The addon turns the combat log on in the open world and off in instances and when idle
 **Size:** M · **Depends on:** M20-18 · **Sources:** ADR-0026 Note of 2026-11-22; ADR-0036; `docs/LAB_PLAN.md` §21.3; owner decision of 2026-11-22
 
 World PvP is read from a combat log (M20-18) and the owner cannot start one in time. The lab-addon switches the log by itself.
