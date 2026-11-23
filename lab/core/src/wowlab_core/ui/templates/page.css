@@ -498,6 +498,22 @@ pre:empty { display: none; }
 .sim-copy { margin: var(--space-2) 0 0; }
 .sim-copy:empty { display: none; }
 .sim-left { margin: var(--space-2) 0 0; padding-left: var(--space-5); font-size: 14px; overflow-wrap: anywhere; }
+/* the Twink panel (M22-06): a slot per row, its worn item and gap on one
+   line, its candidates as a numbered list; item names are game text */
+.twink-intro { margin: 0 0 var(--space-3); color: var(--muted); font-size: 14px; max-width: 60rem; }
+.twink-status { margin: var(--space-2) 0; }
+.twink-status:empty { display: none; }
+#char-twink-status.error { color: var(--ruin); }
+.twink-links { margin: var(--space-2) 0; display: flex; flex-wrap: wrap; gap: var(--space-2) var(--space-3); }
+.twink-slots { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: var(--space-2); }
+.twink-slot { min-width: 0; padding: var(--space-2) var(--space-3); background: var(--gear-ground); border: 1px solid var(--line); border-radius: var(--radius-row); }
+.twink-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--space-1) var(--space-3); }
+.twink-worn { overflow-wrap: anywhere; unicode-bidi: isolate; }
+.twink-gap { color: var(--muted); font-size: 14px; }
+.twink-cands { margin: var(--space-2) 0 0; padding-left: var(--space-5); display: flex; flex-direction: column; gap: var(--space-1); }
+.twink-cand { min-width: 0; }
+.twink-facts { flex: none; color: var(--muted); font-size: 13px; }
+.twink-notes:empty { display: none; }
 /* the keys and macros panels: the files and record they read, a table of
    keys, the slots no key reaches, the macros with their bodies as lines, and
    the read-only note under each. Player text is isolated so a bidi mark in
