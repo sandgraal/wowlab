@@ -6206,7 +6206,8 @@ must come from the repository test's fixed list of constructed names.)
 - **Times.** Unlike the per-character record (§13.1, "no wall-clock time"),
   crew records carry `time()`, and the warning formats one with `date()`: "last grouped on a date" is the point of the
   feature, and these records never enter the repository (term 3), so the
-  scrub tool has no time to shift.
+  scrub tool has no time to shift. *(History: term 3 was lifted on
+  2026-11-23; a captured book keeps its times as the scrub leaves them.)*
 - **Limits.** At most 5,000 players. When full, the unrated, un-noted
   player with the oldest `last` is dropped first; a rated or noted player
   is never dropped, and when all 5,000 are rated or noted the addon
@@ -7423,7 +7424,7 @@ read), and the UI's refusal of a path says that only the Logs folder is read.
 |---|---|---|
 | 1. Local only | The database is under the user data directory; nothing reads it but `crewdb`; no network module is imported | the no-network tests; an import scan |
 | 2. Opt-in | Nothing is recorded, probed or synced until the book is turned on in game. The one sentence of §20.5 term 2 (the turn-on notice, `crew --help`, the README) names wowlab's own database as a place records are kept from M20-01, and, from M20-11, both teams and what is kept of each player | text tests |
-| 3. Out of the repository | A repository test refuses any tracked SQLite file (by its file signature, and any `*.sqlite*` name) outside the listed `db2lake` test paths, whatever its `application_id`; the capture tool refuses any SQLite file, and a schema 2 book whose `matches` is not empty; tests build databases at run time from the constructed keys of M19-04 | the tests, shown failing on a planted file, a planted journal and a renamed copy |
+| 3. Out of the repository | A repository test refuses any tracked SQLite file (by its file signature, and any `*.sqlite*` name) outside the listed `db2lake` test paths, whatever its `application_id`; the capture tool refuses any SQLite file, and a schema 2 book whose `matches` is not empty (*the book rule was dropped 2026-11-23, M21-01; the SQLite rule stays*); tests build databases at run time from the constructed keys of M19-04 | the tests, shown failing on a planted file, a planted journal and a renamed copy |
 | 4. Shared output | `doctor --redact` gives the path with the home-path login and the account folder redacted, a size and row counts, never a row and never `meta`'s install root; `snap export` does not include the database and says so; no command exports it; the bug-report template says not to attach it | tests on constructed rows |
 | 5. Visible and deletable | `crew list`, `crew show`, `crew matches`; `crew forget` and `--all` reach the database and its copies | tests that a forgotten key's bytes are in no database file |
 
