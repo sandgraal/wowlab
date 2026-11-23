@@ -3834,6 +3834,21 @@ The owner writes a combat log in game (`/combatlog`). The desk reads it (read-on
 
 ---
 
+## [ ] M20-19 — The addon turns the combat log on in the open world and off in instances and when idle
+**Size:** M · **Depends on:** M20-18 · **Sources:** ADR-0026 Note of 2026-11-22; ADR-0036; `docs/LAB_PLAN.md` §21.3; owner decision of 2026-11-22
+
+World PvP is read from a combat log (M20-18) and the owner cannot start one in time. The lab-addon switches the log by itself.
+
+- **Rule (time and place only):** on when the player is outside any instance and not in a raid group; off on entering an instance or joining a raid group; off after an idle time with no combat (default 10 minutes, a named constant, saved setting), back on at the next combat. No trigger from the PvP flag or from nearby players.
+- **Client call:** `LoggingCombat(true/false)` only; the addon reads the current state first and never turns on a log it did not turn on if the player had it on, and never turns off one the player turned on by hand (say what it does when it finds the log already on).
+- **Chat:** one quiet line per switch ("on", "off", with the reason), one line once when Advanced Combat Logging is off, and `/wowlab combatlog on|off` for the feature (default on; saved).
+- **Where the call is missing or refused:** dormant, one line, no error; `doctor`/`char show` say whether the feature is on and what it last did (a counter and the last switch time, no log content).
+- **No Lua execution, no write outside the addon's own SavedVariables** (L1–L3); the static checks in `tests/addon/` cover the rule's states with a stub client.
+
+**Acceptance:** stub-client tests for each state change (login in the world, zone into an instance, group to raid, idle, combat resumes, log already on, call missing); `@live`-style owner check recorded in the ticket's report; `docs/LAB_PLAN.md` §21.3 and the lab-addon page of the wiki say what it does and that the owner's first run is not yet confirmed. Reviewed by `code-reviewer` and `domain-reviewer`. User-facing: yes.
+
+---
+
 ## [ ] M20-10 — PvP book wave review
 **Size:** S · **Depends on:** M20-01, M20-02, M20-03, M20-04, M20-05, M20-06, M20-09, M20-11, M20-12, M20-18
 
