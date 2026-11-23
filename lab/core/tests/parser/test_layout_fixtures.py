@@ -74,12 +74,19 @@ FILES_ONLY_RUNS: dict[str, str] = {
         "(a character Blizzard_AuctionHouseUI.lua, the account Blizzard_CombatLog.lua), "
         "laid out as macos-70425 is"
     ),
+    "macos-71037": (
+        "M22-01: only the Spy addon's three Spy.lua files committed (the account one and two "
+        "characters'), laid out as macos-70425 is"
+    ),
 }
 INSTALL_ROOTS = sorted(p for p in PLATFORMS if (FIXTURES / p / ".build.info").is_file())
 BORROWED_ROOT = "macos"
 # A files-only run of the launch client (`_forever_`) borrows a launch-client
 # root: `macos/`'s `.build.info` names only the beta's flavor folder.
-BORROWED_ROOTS: dict[str, str] = {"macos-70938": "macos-70888"}
+BORROWED_ROOTS: dict[str, str] = {
+    "macos-70938": "macos-70888",
+    "macos-71037": "macos-70888",
+}
 
 
 @pytest.mark.parser

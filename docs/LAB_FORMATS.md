@@ -140,6 +140,49 @@ as a value, `setmetatable({}, {})`, string concatenation, arithmetic, a bare
 identifier, an unterminated string, an unterminated table, depth 10 000, a
 NUL byte, a lone surrogate escape.
 
+### 4.4 The Spy addon's tables (M22-01)
+
+Spy is a third-party addon; `wowlab_core.spy` reads its two tables through
+`luadata` (§4.1). Read from the M22-01 capture (`fixtures/macos-71037/`,
+build 71037, 2026-11-23; the install runs a Forever port of Spy 1.3.8) and
+from the addon's own Lua on the owner's install (read, never run or
+copied). Field names are Spy's.
+
+- **`SpyPerCharDB`**, in each character folder's `SavedVariables/Spy.lua`:
+  - `version`: text, `"1.1"` on the capture (Spy's `DatabaseVersion`).
+    The reader reads any other value as 1.1 is, with a warning.
+  - `PlayerData`: keyed by `<First>-<Second>` on Forever; each row holds
+    `name` (the key again), `class` (the internal token, `PALADIN`),
+    `race`, `level`, `guild` (absent when none), `faction`, `isEnemy`,
+    `isGuess` (the level is a guess), `zone`, `subZone`, `mapID`, `mapX`,
+    `mapY` (0 to 1, floored to two decimals) and `time` (Unix seconds).
+    The place is **where the recording character stood**, not the other
+    player's position: Spy's code takes it from `C_Map` for `"player"`. In
+    an instance it keeps the instance's name as `zone`, `""` as `subZone`
+    and no map fields (one row of the capture). Spy's code also writes
+    `wins`, `loses` (counts), `rank` and `reason` (kill-on-sight reasons:
+    text to `true`, or the "other" reason to its text) and reads `kos`;
+    none is in the capture yet **[verify]**.
+  - `KOSData`: key to the time it was added (Unix seconds).
+  - `IgnoreData`: key to `true`.
+  - `Encounters`: a list of fights (the Forever port's "combat map"), each
+    `{t, n, r, k, c, l, g, m, x, y}`: time, name, result (`W` win, `L`
+    loss, `P` probable win), how it was counted (`kill`, `group`,
+    `probable`, `recap`, `targeting`), class, level (only when not a
+    guess), guild, and the recording character's map and position. At
+    most 5000 are kept, the oldest dropped first. Empty in the capture
+    **[verify]**.
+- **`SpyDB`**, in the account's `SavedVariables/Spy.lua`: `kosData`
+  (`[list][faction][character]` to players, each the player's row with
+  `added`; the character is named `"First Second"`, with a space),
+  `removeKOSData`, `watchData` and `guildWatch` (same nesting), the
+  player's `playerNotes` and `playerTags` (`[list][player]` to text, or to
+  `"spare"` or `"rival"`), and Spy's settings (`profiles`, `profileKeys`).
+  The Forever port adds `ForeverDebug`, a list of its own diagnostic
+  lines. The list key is Spy's realm label; on Forever it is
+  `Region <realm type>` (`Region RP-PvP` on the capture), not a realm
+  name.
+
 ## 5. `Config.wtf` and `config-cache.wtf`
 
 One CVar per line: `SET name "value"`. Value is always quoted; an embedded
