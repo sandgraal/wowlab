@@ -70,7 +70,11 @@ def _export(
     record, identity, slots = _parts(path)
     klass = simexport.class_name(identity, simexport.load_format())
     talents = simexport.talents_of(
-        simexport.purchased(record), klass, table, table_build=build if table else None
+        simexport.purchased(record),
+        klass,
+        table,
+        table_build=build if table else None,
+        record_build=labaddon.client_build(record),
     )
     return simexport.build(identity, slots, level=dressing.level_of(record), talents=talents)
 
@@ -178,6 +182,22 @@ def test_a_format_file_out_of_shape_is_refused_constructed(old: str, new: str) -
         simexport.parse_format(text.replace(old, new))
 
 
+@pytest.mark.parametrize(
+    ("old", "new"),
+    [
+        ("ids = [\n    12718,", "ids = [\n    12719,"),
+        ("ids = [\n    12718,", "ids = [\n    -1,"),
+        ("level = 60", "level = 0"),
+    ],
+    ids=lambda v: f"constructed: {v!r}",
+)
+def test_suffixes_and_the_level_out_of_shape_are_refused_constructed(old: str, new: str) -> None:
+    text = _format_text()
+    assert text.count(old) == 1
+    with pytest.raises(simexport.FormatError):
+        simexport.parse_format(text.replace(old, new))
+
+
 # ─── the export ──────────────────────────────────────────────────────────────
 
 
@@ -188,6 +208,7 @@ def test_the_recorded_export_of_a_real_character_verify() -> None:
     assert sim.text + "\n" == expected
     assert json.loads(sim.text) == sim.export
     assert sim.talents_table_build == BUILD_70888
+    assert sim.record_build == BUILD_70888
     assert sim.source_commit == COMMIT
     # The shirt is the one thing left out: the sim has no shirt slot.
     assert _whats(sim) == ["slot 4 Shirt: Brown Linen Shirt: the sim has no such slot"]
@@ -211,6 +232,7 @@ def test_the_export_reads_back_as_the_record_says() -> None:
             continue
         s = by_slot[game]
         assert item["id"] == s.item_id
+        # Every bonus id these links carry is one of the sim's random suffixes.
         assert item.get("random_suffix") == (s.bonus_ids[0] if s.bonus_ids else None)
         assert "enchant" not in item and "gems" not in item
 
@@ -251,7 +273,10 @@ def _identity(**changes: Any) -> labaddon.CharIdentity:
 
 
 def _talents(string: str | None = "", absent: str | None = None) -> simexport.Talents:
-    return simexport.Talents(string=string, absent=absent, left_out=[], table_build=None)
+    return simexport.Talents(
+        string=string, absent=absent, left_out=[], table_build=None, record_build=None,
+        table_note=None,
+    )  # fmt: skip
 
 
 def test_a_class_the_sim_lacks_is_refused_constructed() -> None:
@@ -282,18 +307,104 @@ def _slot(**changes: Any) -> gear.GearSlot:
     return boots.model_copy(update=changes)
 
 
-def test_gems_a_link_suffix_and_several_bonus_ids_are_listed_constructed() -> None:
-    slot = _slot(gem_ids=[23, 24], suffix_id=-5, bonus_ids=[12720, 99], enchant_id=1843)
+def test_the_suffix_ids_are_the_sims_and_hold_every_captured_bonus_id() -> None:
+    """`db.json`'s `randomSuffixes[].id` at the pinned commit: 269 ids from
+    12718 to 13784; every bonus id of the committed records is among them,
+    so the recorded export gives each as its item's random suffix."""
+    ids = simexport.load_format().suffixes.ids
+    assert (len(ids), min(ids), max(ids)) == (269, 12718, 13784)
+    assert ids == sorted(set(ids))
+    captured = set()
+    for path in (RIZZEN, SETT, PARTICIPLE):
+        _, _, slots = _parts(path)
+        captured |= {b for s in slots for b in s.bonus_ids}
+    assert captured == {12720, 12730, 12745, 12748, 12917}
+    assert captured <= set(ids)
+
+
+WHAT = "slot 8 Feet: Willow Boots of the Owl"
+
+
+def test_gems_a_link_suffix_and_a_bonus_id_beside_the_suffix_are_listed_constructed() -> None:
+    slot = _slot(gem_ids=[23, 24], suffix_id=-5, bonus_ids=[99, 12720], enchant_id=1843)
     sim = simexport.build(_identity(), [slot], level=13, talents=_talents())
-    assert sim.export["gear"]["items"][9] == {"id": 6537, "enchant": 1843}
-    what = "slot 8 Feet: Willow Boots of the Owl"
+    assert sim.export["gear"]["items"][9] == {
+        "id": 6537, "enchant": 1843, "random_suffix": 12720,
+    }  # fmt: skip
     assert _whats(sim) == [
-        f"{what}: its 2 bonus ids (12720, 99): which one is its random suffix is not known, "
-        "so none is given",
-        f"{what}: its link's suffix field (-5): the sim's random suffixes are bonus lists, not "
+        f"{WHAT}: its bonus id 99: not one of the sim's random suffixes",
+        f"{WHAT}: its link's suffix field (-5): the sim's random suffixes are bonus lists, not "
         "this field",
-        f"{what}: its gems (23, 24): the sim's items carry no gems",
+        f"{WHAT}: its gems (23, 24): the sim's items carry no gems",
     ]
+
+
+@pytest.mark.parametrize(
+    ("bonus", "suffix", "whys"),
+    [
+        ([99], None, ["its bonus id 99: not one of the sim's random suffixes"]),
+        ([99, 12], None, [
+            "its bonus id 99: not one of the sim's random suffixes",
+            "its bonus id 12: not one of the sim's random suffixes",
+        ]),
+        ([12718, 13784], None, [
+            "its bonus ids 12718, 13784: each is one of the sim's random suffixes, and it takes one",
+        ]),
+        ([13784, 7], 13784, ["its bonus id 7: not one of the sim's random suffixes"]),
+        ([], None, []),
+    ],
+    ids=lambda v: f"constructed: {v!r}",
+)  # fmt: skip
+def test_only_a_bonus_id_among_the_sims_suffixes_is_one_constructed(
+    bonus: list[int], suffix: int | None, whys: list[str]
+) -> None:
+    sim = simexport.build(_identity(), [_slot(bonus_ids=bonus)], level=13, talents=_talents())
+    assert sim.export["gear"]["items"][9].get("random_suffix") == suffix
+    assert _whats(sim) == [f"{WHAT}: {why}" for why in whys]
+
+
+# ─── the note ────────────────────────────────────────────────────────────────
+
+
+def test_the_note_says_where_to_paste_what_wowsims_warns_and_that_it_is_unconfirmed() -> None:
+    sim = _export(RIZZEN, _table())
+    assert sim.note == (
+        "Paste this into WoWSims' Addon Import, on the sim page for this character's class: the "
+        "import refuses another class. WoWSims then warns that the addon is not up to date, "
+        "since this text is wowlab's and carries no addon version, and imports it anyway. "
+        "WoWSims also warns that the character is below level 60: it simulates a level 60 "
+        "character in this gear. Whether WoWSims imports this export is not yet confirmed. The "
+        f"format was read from wowsims/forever at commit {COMMIT}; wowlab fetched nothing and "
+        "sends nothing."
+    )
+    assert "[verify]" not in sim.note
+
+
+@pytest.mark.parametrize("level", [60, None], ids=["constructed: level 60", "constructed: none"])
+def test_no_level_warning_at_the_sims_level_or_without_one_constructed(level: int | None) -> None:
+    sim = simexport.build(_identity(), [], level=level, talents=_talents())
+    assert "below level" not in sim.note
+
+
+def test_a_table_of_another_build_is_said_constructed() -> None:
+    record, identity, slots = _parts(RIZZEN)
+    talents = simexport.talents_of(
+        simexport.purchased(record), "warlock", _table(), table_build=BUILD_70888,
+        record_build="1.60.1.70450",
+    )  # fmt: skip
+    assert talents.string == "022" and talents.record_build == "1.60.1.70450"
+    assert talents.table_note == (
+        "The record was saved by 1.60.1.70450; its talents were mapped with the TraitNodeEntry "
+        f"table of {BUILD_70888}, whose ids may differ."
+    )
+    sim = simexport.build(identity, slots, level=13, talents=talents)
+    assert talents.table_note in sim.note
+    assert sim.record_build == "1.60.1.70450" and sim.talents_table_build == BUILD_70888
+    same = simexport.talents_of(
+        simexport.purchased(record), "warlock", _table(), table_build=BUILD_70888,
+        record_build=BUILD_70888,
+    )  # fmt: skip
+    assert same.table_note is None
 
 
 def test_a_slot_with_no_item_id_is_listed_constructed() -> None:

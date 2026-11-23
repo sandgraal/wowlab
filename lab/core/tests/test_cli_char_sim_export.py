@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import shutil
 from pathlib import Path
 from typing import Any
@@ -107,7 +108,8 @@ def test_json_is_the_report_with_the_same_text_constructed(launch: Path, cached:
     assert report.sim.export == json.loads(EXPECTED)
     assert report.character == WARLOCK and report.flavor_folder == FOREVER
     assert report.path is None
-    assert report.sim.talents_table_build == BUILD
+    assert report.sim.talents_table_build == BUILD and report.sim.record_build == BUILD
+    assert "mapped with" not in report.sim.note
     assert report.sim.source_commit == simexport.load_format().source.commit
     assert [x.what for x in report.sim.left_out] == ["slot 4 Shirt: Brown Linen Shirt"]
 
@@ -122,6 +124,71 @@ def test_without_the_cached_table_the_talents_are_left_out_and_said(launch: Path
         f"Left out: talents: the game table TraitNodeEntry is not cached for {BUILD}; wowlab "
         f"db2 fetch TraitNodeEntry --build {BUILD} downloads it once"
     ) in done.stderr.splitlines()
+
+
+def _record(root: Path) -> Path:
+    return root / FOREVER / "WTF/Account" / ACCOUNT / WARLOCK / "SavedVariables/WowLab.lua"
+
+
+def _rewrite_client(root: Path, version: str, build: str) -> None:
+    """The record's client block with another version and build
+    (constructed: one value of the real record changed, its mtime kept)."""
+    path = _record(root)
+    stat = path.stat()
+    text = path.read_bytes()
+    old = b'["version"] = "1.60.1",\r\n["build"] = "70888",'
+    assert text.count(old) == 1
+    new = f'["version"] = "{version}",\r\n["build"] = "{build}",'.encode()
+    path.write_bytes(text.replace(old, new))
+    os.utime(path, ns=(stat.st_atime_ns, stat.st_mtime_ns))
+
+
+def test_the_install_builds_table_stands_in_and_is_said_constructed(
+    launch: Path, cached: Path
+) -> None:
+    """The record saved by 70887, whose table is not cached: the install's
+    (70888) is used, and the note and stderr say so."""
+    _rewrite_client(launch, "1.60.1", "70887")
+    done = run("--json")
+    assert done.exit_code == 0, done.output
+    report = cli.CharSimExportReport.model_validate_json(done.stdout)
+    assert report.sim.export["talents"] == "022"
+    assert report.sim.record_build == "1.60.1.70887"
+    assert report.sim.talents_table_build == BUILD
+    said = (
+        "The record was saved by 1.60.1.70887; its talents were mapped with the TraitNodeEntry "
+        f"table of {BUILD}, whose ids may differ."
+    )
+    assert said in report.sim.note
+    text = run()
+    assert text.stdout == EXPECTED
+    assert said in text.stderr.splitlines()
+
+
+def test_a_record_build_that_is_no_game_version_falls_through_constructed(
+    launch: Path, cached: Path
+) -> None:
+    """A version of two parts makes `1.60.70888`, which is no full build
+    string: the install's table is used instead of giving up."""
+    _rewrite_client(launch, "1.60", "70888")
+    done = run("--json")
+    assert done.exit_code == 0, done.output
+    report = cli.CharSimExportReport.model_validate_json(done.stdout)
+    assert report.sim.export["talents"] == "022"
+    assert report.sim.record_build == "1.60.70888"
+    assert report.sim.talents_table_build == BUILD
+    assert "The record was saved by 1.60.70888" in report.sim.note
+
+
+def test_with_no_table_a_malformed_build_is_named_beside_the_fetch_line_constructed(
+    launch: Path,
+) -> None:
+    _rewrite_client(launch, "1.60", "70888")
+    done = run()
+    assert done.exit_code == 0, done.output
+    [line] = [x for x in done.stderr.splitlines() if x.startswith("Left out: talents: ")]
+    assert f"is not cached for {BUILD}; wowlab db2 fetch TraitNodeEntry --build {BUILD}" in line
+    assert "'1.60.70888' cannot be used (not a full build string" in line
 
 
 def test_out_writes_the_export_under_the_user_data_directory(

@@ -18,8 +18,10 @@ The format was read by hand from wowsims/forever at commit
 `proto/common.proto` (`ItemSpec`, `EquipmentSpec`, `ItemSlot`, `Race`,
 `Class`), `ui/sim/proto/names.ts` (the race and class names),
 `ui/sim/proto/database.ts` (how an `ItemSpec` is matched),
-`ui/sim/talents/trees/<class>.json` (the talent order) and
-`tools/database/dbc/random_suffix.go` (a random suffix is a bonus list).
+`ui/sim/talents/trees/<class>.json` (the talent order),
+`tools/database/dbc/random_suffix.go` (a random suffix is a bonus list),
+`assets/database/db.json` (the sim's random suffix ids) and
+`ui/sim/constants/mechanics.ts` (`CHARACTER_LEVEL`, the level it models).
 Everything read from it is data in `wowsims_format.toml`, which names the
 commit; a newer sim is read again by hand. Nothing here names a client
 folder, product or build (L6).
@@ -32,33 +34,41 @@ What goes in, and what is left out and listed (`SimExport.left_out`):
 - `race`: the sim's race name for the record's race id; left out when the
   record has none or the sim has no such race.
 - `level`: the record's (`talents.legacy.player_level`); left out when
-  absent. The sim models level 60 and warns below it.
+  absent. The sim models one level (`[format] level`, 60): below it the
+  import warns and the sim still simulates that level, which the note says.
 - `talents`: the sim's talent string. The record holds, per talent node
   of its class config, the rank and the active trait entry id; the game's
   `TraitNodeEntry` table gives each entry's TraitDefinition id, and the
   sim's trees list those ids in order (digit i of tree t). Trailing zeros of
   each tree and trailing dashes are trimmed, as the sim writes it. Left out
-  when the record has no class config or the table is not cached; a talent
+  when the record has no class config or no table is cached; a talent
   whose entry or definition is not found, or whose rank is over 9, is
-  listed and left out of the string.
+  listed and left out of the string. The table is the record's build's
+  when cached, else the install's; the note says when it is not the
+  record's.
 - `gear.items`: one entry per sim slot, in the sim's slot order, `null` for
   an empty one, up to the last filled (as the exporter addon writes it; the
   import drops the nulls and places each item by its type). Each item is
   `{"id", "enchant", "random_suffix"}`, the last two only when set. The
-  shirt and the tabard have no sim slot and are listed. The sim's
-  `ItemSpec` has no gems (its gem fields are reserved at the pinned
-  commit), so an item's gems are listed. A random suffix is a bonus list's
-  id in this sim: an item with exactly one bonus id gives it as
-  `random_suffix` **[verify]** (the import ignores an id it does not know);
-  one with more is listed, its suffix left out, since which of them is the
-  suffix is not known without the game's bonus tables; a link's own suffix
-  field (empty on every committed Forever capture) is not a bonus list and
-  is listed.
+  shirt and the tabard have no sim slot and are listed. Of each link, the
+  item, enchant, suffix, gem and bonus fields are read, and what of them
+  the sim cannot take is listed: the sim's `ItemSpec` has no gems (its gem
+  fields are reserved at the pinned commit); a random suffix is a bonus
+  list id in this sim, so the link's one bonus id that is among the sim's
+  random suffixes (`[suffixes] ids`, from its `db.json`) is
+  `random_suffix`, and every other bonus id is listed as not one of them;
+  the link's own suffix field (empty on every committed Forever capture) is
+  not a bonus list and is listed. The link's other fields (link level,
+  specialization, item context, modifiers) are neither exported nor listed:
+  the import reads nothing like them.
 
-The export carries no `version`: it is not the WoWSims Exporter addon's,
-and the import may show its "not up to date" warning and import anyway
-[verify]. Whether an export imports is the owner's check (M21-O2): the
-recorded expected output in the tests is marked **[verify]** until then.
+The export carries no `version`: it is not the WoWSims Exporter addon's.
+The import then shows its "not up to date" warning and imports anyway
+(`addon.ts`, the version check), and it refuses a text of another class
+than the sim page's (`finish_individual_import.ts`, `wrong_class`); the
+note says both. Whether WoWSims imports a real export is the owner's check
+(M21-O2): the note says it is not yet confirmed, and the recorded expected
+output in the tests is marked **[verify]** until then.
 """
 
 from __future__ import annotations
@@ -144,7 +154,12 @@ class Source(_Model):
 
 class Format(_Model):
     flavor: str = Field(pattern=f"^{_WORD.pattern}$")
+    level: int = Field(ge=1, le=1000)
     slots: list[int] = Field(min_length=1, max_length=32)
+
+
+class Suffixes(_Model):
+    ids: list[int] = Field(min_length=1, max_length=10_000)
 
 
 class ClassTalents(_Model):
@@ -152,12 +167,14 @@ class ClassTalents(_Model):
 
 
 class SimFormat(_Model):
-    """The shipped file: where it was read, the export's `flavor`, the sim's
-    slot order, race and class names by game id, and each class's talent
-    trees as TraitDefinition ids in the sim's order."""
+    """The shipped file: where it was read, the export's `flavor`, the level
+    the sim models, the sim's slot order, its random suffix ids, race and
+    class names by game id, and each class's talent trees as
+    TraitDefinition ids in the sim's order."""
 
     source: Source
     format: Format
+    suffixes: Suffixes
     races: dict[int, str]
     classes: dict[int, str]
     talents: dict[str, ClassTalents]
@@ -166,6 +183,10 @@ class SimFormat(_Model):
     def _consistent(self) -> SimFormat:
         if len(set(self.format.slots)) != len(self.format.slots):
             raise ValueError("a slot is listed twice")
+        if any(i <= 0 for i in self.suffixes.ids):
+            raise ValueError("a random suffix id is not a positive id")
+        if len(set(self.suffixes.ids)) != len(self.suffixes.ids):
+            raise ValueError("a random suffix id is listed twice")
         for name in self.races.values():
             if not _NAME.fullmatch(name):
                 raise ValueError(f"race name {name!r} is not a plain name")
@@ -240,6 +261,9 @@ class Talents(_Model):
     absent: str | None
     left_out: list[LeftOut]
     table_build: str | None  # the build whose TraitNodeEntry table was read
+    record_build: str | None  # the build the record was saved by, when it names one
+    # Said when the table read is not the record's build's: the ids may differ.
+    table_note: str | None
 
 
 class SimExport(_Model):
@@ -251,16 +275,27 @@ class SimExport(_Model):
     export: dict[str, Any]
     left_out: list[LeftOut]
     talents_table_build: str | None
+    record_build: str | None
     source_repository: str
     source_commit: str
     note: str
 
 
-_NOTE = (
-    "Paste the text into WoWSims' Addon Import, on the sim page for this character's class "
-    "(the import refuses another class) [verify]. WoWSims may warn that the addon is not up "
-    "to date: this text is wowlab's, not the WoWSims Exporter addon's, and carries no addon "
-    "version. The format was read from wowsims/forever at commit {commit}; nothing was fetched."
+# The note, in player words (no marker: the CLI, `--json` and the page say
+# exactly this). Each sentence about WoWSims is read from its source at the
+# pinned commit; whether it imports a real export is the owner's check.
+_NOTE_PASTE = (
+    "Paste this into WoWSims' Addon Import, on the sim page for this character's class: the "
+    "import refuses another class. WoWSims then warns that the addon is not up to date, since "
+    "this text is wowlab's and carries no addon version, and imports it anyway."
+)
+_NOTE_LEVEL = (
+    "WoWSims also warns that the character is below level {sim}: it simulates a level {sim} "
+    "character in this gear."
+)
+_NOTE_END = (
+    "Whether WoWSims imports this export is not yet confirmed. The format was read from "
+    "wowsims/forever at commit {commit}; wowlab fetched nothing and sends nothing."
 )
 
 
@@ -329,17 +364,33 @@ def talents_of(
     *,
     table_build: str | None,
     table_absent: str | None = None,
+    record_build: str | None = None,
     fmt: SimFormat | None = None,
 ) -> Talents:
     """The sim's talent string for class `klass` from `purchased`'s ranks and
-    the `definitions` of the cached table (None when it is not cached:
-    `table_absent` says why), or why there is none."""
+    the `definitions` of the cached table of `table_build` (None when none is
+    cached: `table_absent` says why), or why there is none. `record_build` is
+    the build the record was saved by; when the table is another build's,
+    `table_note` says so."""
     fmt = fmt if fmt is not None else load_format()
     if isinstance(ranks, str):
-        return Talents(string=None, absent=ranks, left_out=[], table_build=None)
+        return Talents(
+            string=None, absent=ranks, left_out=[], table_build=None,
+            record_build=record_build, table_note=None,
+        )  # fmt: skip
     if table is None:
         why = table_absent or f"the game table {TALENT_TABLE} is not cached"
-        return Talents(string=None, absent=why, left_out=[], table_build=None)
+        return Talents(
+            string=None, absent=why, left_out=[], table_build=None,
+            record_build=record_build, table_note=None,
+        )  # fmt: skip
+    note = None
+    if table_build != record_build:
+        saved = f"was saved by {record_build}" if record_build else "names no game version"
+        note = (
+            f"The record {saved}; its talents were mapped with the {TALENT_TABLE} table of "
+            f"{table_build}, whose ids may differ."
+        )
     trees = fmt.talents[klass].trees
     where = {d: (t, i) for t, tree in enumerate(trees) for i, d in enumerate(tree)}
     points = [[0] * len(tree) for tree in trees]
@@ -363,7 +414,10 @@ def talents_of(
         points[tree_at][index] = rank
     parts = ["".join(str(p) for p in tree).rstrip("0") for tree in points]
     string = "-".join(parts).rstrip("-")
-    return Talents(string=string, absent=None, left_out=left_out, table_build=table_build)
+    return Talents(
+        string=string, absent=None, left_out=left_out, table_build=table_build,
+        record_build=record_build, table_note=note,
+    )  # fmt: skip
 
 
 # ─── the gear ────────────────────────────────────────────────────────────────
@@ -377,6 +431,7 @@ def _items(
     slots: Sequence[gear.GearSlot], fmt: SimFormat
 ) -> tuple[list[dict[str, int] | None], list[LeftOut]]:
     order = {game: at for at, game in enumerate(fmt.format.slots)}
+    suffixes = frozenset(fmt.suffixes.ids)
     items: list[dict[str, int] | None] = [None] * len(fmt.format.slots)
     left_out: list[LeftOut] = []
     for s in sorted(slots, key=lambda s: s.slot):
@@ -391,14 +446,16 @@ def _items(
         item: dict[str, int] = {"id": s.item_id}
         if s.enchant_id:
             item["enchant"] = s.enchant_id
-        if len(s.bonus_ids) == 1 and s.bonus_ids[0] > 0:
-            item["random_suffix"] = s.bonus_ids[0]
-        elif len(s.bonus_ids) > 1:
-            bonus = ", ".join(str(b) for b in s.bonus_ids)
-            why = (
-                f"its {len(s.bonus_ids)} bonus ids ({bonus}): which one is its random suffix "
-                "is not known, so none is given"
-            )
+        known = [b for b in s.bonus_ids if b in suffixes]
+        others = [b for b in s.bonus_ids if b not in suffixes]
+        if len(known) == 1:
+            item["random_suffix"] = known[0]
+        elif known:
+            ids = ", ".join(str(b) for b in known)
+            why = f"its bonus ids {ids}: each is one of the sim's random suffixes, and it takes one"
+            left_out.append(LeftOut(what=what, why=why))
+        for bonus in others:
+            why = f"its bonus id {bonus}: not one of the sim's random suffixes"
             left_out.append(LeftOut(what=what, why=why))
         if s.suffix_id:
             why = (
@@ -460,14 +517,21 @@ def build(
         export["gear"] = {"items": items}
     left_out.extend(gear_left_out)
     text = json.dumps(export, ensure_ascii=True, separators=(",", ":"))
+    sentences = [_NOTE_PASTE]
+    if level is not None and 0 < level < fmt.format.level:
+        sentences.append(_NOTE_LEVEL.format(sim=fmt.format.level))
+    if talents.table_note is not None:
+        sentences.append(talents.table_note)
+    sentences.append(_NOTE_END.format(commit=fmt.source.commit))
     return SimExport(
         text=text,
         export=export,
         left_out=left_out,
         talents_table_build=talents.table_build,
+        record_build=talents.record_build,
         source_repository=fmt.source.repository,
         source_commit=fmt.source.commit,
-        note=_NOTE.format(commit=fmt.source.commit),
+        note=" ".join(sentences),
     )
 
 

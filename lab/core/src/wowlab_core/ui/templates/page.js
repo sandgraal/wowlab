@@ -2056,7 +2056,7 @@
   // character picked from the game folder (never one kept only in a backup,
   // and never with --out: the server refuses it). Its `sim.text` is shown
   // as text beside a Copy button that copies it exactly; what the export
-  // leaves out is listed, each line the report's words. The page opens and
+  // leaves out is listed, and its note shown, each in the report's words. The page opens and
   // fetches nothing outside its own server: the player pastes the text into
   // WoWSims themselves.
   function clearSim() {
@@ -2101,8 +2101,7 @@
         : "wowlab char sim-export printed something this page does not know.";
       return;
     }
-    byId("char-sim-status").textContent =
-      "Paste this into WoWSims' Addon Import, on the sim page for this character's class.";
+    byId("char-sim-status").textContent = "The character as WoWSims' Addon Import reads it:";
     const text = byId("char-sim-text");
     text.textContent = visible(sim.text);
     text.hidden = false;
@@ -2113,9 +2112,9 @@
       for (const l of left) list.appendChild(make("li", "Left out: " + visible(l.what) + ": " + visible(l.why)));
       list.hidden = false;
     }
-    byId("char-sim-note").textContent =
-      "wowlab sends nothing to WoWSims and fetched nothing to write this; the text is in the format WoWSims' " +
-      "own exporter addon writes.";
+    // The report's own note, word for word as the CLI and --json give it:
+    // where to paste, what WoWSims warns, and that the import is not yet confirmed.
+    byId("char-sim-note").textContent = typeof sim.note === "string" ? visible(sim.note) : "";
   }
 
   byId("char-sim-button").addEventListener("click", () => {

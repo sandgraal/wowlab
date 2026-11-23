@@ -1613,10 +1613,13 @@ class CharSimExportReport(_Out):
 
 
 def _talent_table(builds: Sequence[str | None]) -> tuple[dict[int, int] | None, str | None, str]:
-    """The trait entry definitions from the first of `builds` whose
-    `TraitNodeEntry` table is cached, that build, and, when none is, why.
-    Never fetches."""
+    """The trait entry definitions from the first of `builds` (the record's,
+    then the install's) whose `TraitNodeEntry` table is cached and reads,
+    that build, and, when none does, why. A build that is not a full game
+    version, or whose cached table cannot be read, is passed over for the
+    next. Never fetches."""
     tried: list[str] = []
+    problems: list[str] = []
     for build in dict.fromkeys(b for b in builds if b):
         try:
             rows = gamedata.cached_rows(simexport.TALENT_TABLE, build)
@@ -1624,21 +1627,23 @@ def _talent_table(builds: Sequence[str | None]) -> tuple[dict[int, int] | None, 
                 tried.append(build)
                 continue
             return simexport.definitions(rows), build, ""
-        except (ValueError, OSError, gamedata.GameDataError) as exc:
-            return (
-                None,
-                None,
-                f"the cached {simexport.TALENT_TABLE} table of {build} cannot be read ({exc})",
+        except ValueError as exc:  # not a full game version, or a malformed table
+            problems.append(f"{build[:64]!r} cannot be used ({exc})")
+        except (OSError, gamedata.GameDataError) as exc:
+            problems.append(
+                f"the cached {simexport.TALENT_TABLE} table of {build} cannot be read ({exc})"
             )
-    if not tried:
+    words: list[str] = []
+    if tried:
+        fetch = f"wowlab db2 fetch {simexport.TALENT_TABLE} --build {tried[0]}"
+        words.append(
+            f"the game table {simexport.TALENT_TABLE} is not cached for {' or '.join(tried)}; "
+            f"{fetch} downloads it once"
+        )
+    words.extend(problems)
+    if not words:
         return None, None, "neither the record nor the install names a game version"
-    fetch = f"wowlab db2 fetch {simexport.TALENT_TABLE} --build {tried[0]}"
-    return (
-        None,
-        None,
-        f"the game table {simexport.TALENT_TABLE} is not cached for {' or '.join(tried)}; "
-        f"{fetch} downloads it once",
-    )
+    return None, None, "; ".join(words)
 
 
 @char_app.command("sim-export", short_help="One character as the JSON WoWSims' Addon Import reads.")
@@ -1700,15 +1705,15 @@ def char_sim_export(
         raise CliError(f"the shipped {simexport.FORMAT_FILE} cannot be used: {exc}") from exc
     except simexport.SimExportError as exc:
         raise CliError(f"{target.path}: no export: {exc}") from exc
-    table, table_build, table_absent = _talent_table(
-        [labaddon.client_build(record), chosen.version]
-    )
+    record_build = labaddon.client_build(record)
+    table, table_build, table_absent = _talent_table([record_build, chosen.version])
     talents = simexport.talents_of(
         simexport.purchased(record),
         klass,
         table,
         table_build=table_build,
         table_absent=table_absent,
+        record_build=record_build,
         fmt=fmt,
     )
     sim = simexport.build(
@@ -1758,6 +1763,8 @@ def char_sim_export(
             simexport.TALENT_TABLE,
             talents.table_build,
         )
+    if talents.table_note is not None:
+        _note("{}", talents.table_note)
     for item in sim.left_out:
         _note("Left out: {}: {}", item.what, item.why)
     # The notes go to stderr too: stdout holds the export alone.

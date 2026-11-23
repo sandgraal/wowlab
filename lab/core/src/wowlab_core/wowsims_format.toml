@@ -8,7 +8,8 @@
 #
 # The talent tables below are copied from that repository's
 # `ui/sim/talents/trees/<class>.json` (each tree's `talents[].definitionId`,
-# in the order listed), which is:
+# in the order listed), and the random suffix ids from its
+# `assets/database/db.json` (`randomSuffixes[].id`); that repository is:
 #
 #   MIT License, Copyright (c) 2022 wowsims team
 #
@@ -42,7 +43,9 @@ read = [
     "ui/sim/proto/names.ts",
     "ui/sim/proto/database.ts",
     "ui/sim/talents/trees/<class>.json",
+    "ui/sim/constants/mechanics.ts",
     "tools/database/dbc/random_suffix.go",
+    "assets/database/db.json",
 ]
 
 [format]
@@ -50,6 +53,9 @@ read = [
 # this word (a string built for another game's trees would spend the points
 # on other talents). It names the sim's format, not a client folder.
 flavor = "forever"
+# The one level the sim models (`ui/sim/constants/mechanics.ts`,
+# `CHARACTER_LEVEL`); addon.ts warns when the export's level is below it.
+level = 60
 # The sim's `ItemSlot` values 0 to 16 (proto/common.proto), in order, as the
 # client's inventory slot numbers (the numbers `gear_slots.toml` names): Head,
 # Neck, Shoulder, Back, Chest, Wrist, Hands, Waist, Legs, Feet, Finger 1,
@@ -88,6 +94,34 @@ slots = [1, 2, 3, 15, 5, 9, 10, 6, 7, 8, 11, 12, 13, 14, 16, 17, 18]
 "8" = "mage"
 "9" = "warlock"
 "11" = "druid"
+
+[suffixes]
+# The sim's random suffixes (`assets/database/db.json`, `randomSuffixes[].id`, 269 ids from
+# 12718 to 13784 at the pinned commit). Each is a bonus list id: an item link's bonus id in this
+# set is the item's random suffix; any other bonus id is not one the sim knows.
+ids = [
+    12718, 12719, 12720, 12721, 12722, 12723, 12724, 12725, 12726, 12727, 12728, 12729, 12730,
+    12731, 12732, 12733, 12734, 12735, 12736, 12737, 12738, 12739, 12740, 12741, 12742, 12743,
+    12744, 12745, 12746, 12747, 12748, 12749, 12750, 12751, 12752, 12753, 12754, 12755, 12756,
+    12757, 12758, 12759, 12760, 12761, 12905, 12906, 12907, 12908, 12909, 12910, 12911, 12912,
+    12913, 12914, 12915, 12916, 12917, 12918, 12919, 12920, 12945, 12946, 12947, 12948, 12949,
+    12950, 12951, 12952, 12953, 12954, 12955, 12956, 12957, 12958, 12959, 12960, 12961, 12962,
+    12963, 12964, 12965, 12966, 12967, 12968, 12969, 12970, 12971, 12972, 12973, 12974, 12975,
+    12976, 12977, 12978, 12979, 12980, 12981, 12982, 12983, 12984, 12985, 12986, 12987, 12988,
+    12989, 12992, 12993, 12994, 12995, 12996, 12997, 12998, 12999, 13000, 13001, 13002, 13003,
+    13004, 13005, 13006, 13007, 13008, 13009, 13010, 13011, 13012, 13013, 13014, 13015, 13016,
+    13017, 13018, 13019, 13020, 13021, 13022, 13023, 13024, 13025, 13026, 13027, 13028, 13029,
+    13030, 13031, 13032, 13033, 13034, 13035, 13036, 13037, 13038, 13039, 13040, 13041, 13044,
+    13045, 13046, 13047, 13048, 13049, 13050, 13051, 13052, 13053, 13054, 13055, 13056, 13057,
+    13058, 13059, 13060, 13061, 13062, 13063, 13064, 13084, 13085, 13086, 13087, 13088, 13089,
+    13090, 13091, 13092, 13093, 13094, 13095, 13096, 13097, 13098, 13099, 13100, 13101, 13102,
+    13103, 13104, 13105, 13106, 13107, 13108, 13109, 13138, 13139, 13140, 13141, 13142, 13143,
+    13144, 13145, 13146, 13147, 13148, 13149, 13150, 13151, 13152, 13153, 13154, 13155, 13156,
+    13157, 13158, 13159, 13160, 13161, 13162, 13163, 13164, 13165, 13166, 13167, 13168, 13169,
+    13170, 13171, 13172, 13177, 13178, 13179, 13180, 13181, 13182, 13188, 13189, 13190, 13191,
+    13192, 13193, 13194, 13195, 13196, 13197, 13198, 13199, 13200, 13201, 13202, 13203, 13204,
+    13205, 13777, 13778, 13779, 13780, 13781, 13782, 13783, 13784,
+]
 
 # Each class's three talent trees in the sim's order: digit i of tree t of the
 # export's talent string is the rank of the TraitDefinition id at position i

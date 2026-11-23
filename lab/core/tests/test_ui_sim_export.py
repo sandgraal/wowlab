@@ -158,14 +158,15 @@ def test_a_click_runs_sim_export_and_shows_the_text_to_copy(
     assert [b for b in bodies if b["command"] == SIM] == [{"command": SIM, "params": PARAMS}]
     assert clicked["newRequests"] and all(r["url"] == "/api/run" for r in clicked["newRequests"])
     assert clicked["boxHidden"] is False and clicked["expanded"] == "true"
-    assert clicked["status"] == (
-        "Paste this into WoWSims' Addon Import, on the sim page for this character's class."
-    )
+    assert clicked["status"] == "The character as WoWSims' Addon Import reads it:"
     assert clicked["textHidden"] is False and clicked["text"] == sim["text"]
     assert clicked["copies"] == 1
     assert clicked["left"] == [f"Left out: {x['what']}: {x['why']}" for x in sim["left_out"]]
     assert clicked["leftHidden"] is (not sim["left_out"])
-    assert "wowlab sends nothing to WoWSims" in clicked["note"]
+    # The report's own note, word for word: the page adds and drops nothing.
+    assert clicked["note"] == sim["note"]
+    assert "Addon Import" in sim["note"] and "is not yet confirmed" in sim["note"]
+    assert "exporter addon writes" not in clicked["note"]
     # Copy puts the export on the clipboard exactly, and asks for nothing.
     assert copied["clipboard"] == [sim["text"]]
     assert copied["newRequests"] == []
@@ -178,6 +179,7 @@ def test_a_hostile_export_is_text_and_copied_exactly_constructed(
     report = _report(scenario)
     hostile = '{"class":"<img src=x onerror=alert(1)>","x":"' + RLO + '</pre><script>"}'
     report["sim"]["text"] = hostile
+    report["sim"]["note"] = "<script>alert(1)</script>" + RLO
     report["sim"]["left_out"] = [
         {"what": "<b>race</b>", "why": "javascript:alert(1)"},
         {"what": 5, "why": "not a string"},
@@ -188,6 +190,7 @@ def test_a_hostile_export_is_text_and_copied_exactly_constructed(
     clicked, copied = _sim_steps(out)
     assert clicked["text"] == hostile.replace(RLO, "⟨U+202E⟩")
     assert clicked["left"] == ["Left out: <b>race</b>: javascript:alert(1)"]
+    assert clicked["note"] == "<script>alert(1)</script>⟨U+202E⟩"
     assert copied["clipboard"] == [hostile]
     assert not out["traps"]
     _only_api(out)
