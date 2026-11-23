@@ -3978,7 +3978,7 @@ Click each new link on one of your characters and on one opponent; copy one wowf
 ## [ ] M21-11 — Addon fixes from the launch-build API list
 **Size:** S · **Depends on:** M21-09 · **Sources:** M21-09's README findings and its domain review (2026-11-23)
 
-In `lab/addon/WowLab`: (1) macro slots: read `Constants.MacroConsts.MAX_ACCOUNT_MACROS` (guarded) before the 120 fallback, record where the value came from, and correct the false "loaded once the macro window has been opened" reason in `Actions.lua`, the owner-facing text in `labaddon.py` (around line 4007, with its tests) and `docs/LAB_PLAN.md` (around line 2601); (2) the scoreboard probe in `Crew.lua` stops taking `GetBattlefieldScore`'s sixth value as the side when the first is nil and `C_PvP.GetScoreInfo` gave no row (the 12.0.1 deprecation shim returns `faction = 0` for no row); (3) stop asking for `ACCOUNT_BINDINGS`/`CHARACTER_BINDINGS`, which no 71037 UI file defines, and record `Enum.BindingSet` where it helps; (4) read the combat log's state and advanced flag with the documented `C_ChatInfo.IsLoggingCombat`; (5) drop the registration of `BARBER_SHOP_SUCCESS`, which is not in the client's event list.
+In `lab/addon/WowLab`: (1) macro slots: read `Constants.MacroConsts.MAX_ACCOUNT_MACROS` (guarded) before the 120 fallback, record where the value came from, and correct the false "loaded once the macro window has been opened" reason in `Actions.lua`, the owner-facing text in `labaddon.py` (around line 4007, with its tests) and `docs/LAB_PLAN.md` (around line 2601); (2) the scoreboard probe in `Crew.lua` stops taking `GetBattlefieldScore`'s sixth value as the side when the first is nil and `C_PvP.GetScoreInfo` gave no row (the 12.0.1 deprecation shim returns `faction = 0` for no row); (3) stop asking for `ACCOUNT_BINDINGS`/`CHARACTER_BINDINGS`, which no 71037 UI file defines, and record `Enum.BindingSet` where it helps; (4) read the combat log's state and advanced flag with the documented `C_ChatInfo.IsLoggingCombat`; (5) drop the registration of `BARBER_SHOP_SUCCESS`, which is not in the client's event list. (6) *Added 2026-11-23 (domain review of M21-02):* on Forever, `UnitFullName("player")`'s second value is very likely the character's second name, not a realm, so `homeRealm()` in `Crew.lua` and `realm_from = "full_name"` in `Identity.lua` mislabel it; check with the owner's batched `/dump UnitFullName("player")` and `/dump GetNormalizedRealmName()` (M22-O1) and record the second name as such.
 
 **Acceptance:** stub-client tests per change; `make lint-lua` green; README rows updated with dated lines; no new [verify] marked confirmed without a capture. Reviewed by `code-reviewer` and `domain-reviewer`. User-facing: the macro-slot line in `char show`/`doctor`.
 
@@ -4249,7 +4249,7 @@ One session, from a checklist the conductor writes. It covers:
 - the 29 twink list (M22-06);
 - QuestieDB data form (M22-08);
 - in-combat reads (M22-12);
-- the crew-book cold-start check (M21-09's README order).
+- the crew-book cold-start check (M21-09's README order); `/dump UnitFullName("player")` and `/dump GetNormalizedRealmName()` (M21-11 item 6); and `/dump C_PvP.GetScoreInfo(1)` on a battleground scoreboard (is the name `First Second`, `First-Second`, or with a realm?).
 
 ---
 
