@@ -63,11 +63,11 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from wowlab_core import charname, crewbook, crewedit, guard, snapshot, worldpvp
 from wowlab_core.errors import WowlabError
-from wowlab_core.region import Region
+from wowlab_core.region import Region, region_of
 
 # ─── constants ───────────────────────────────────────────────────────────────
 
-SCHEMA = 4
+SCHEMA = 5
 """The database's own schema (`PRAGMA user_version`)."""
 APPLICATION_ID = 0x574C4342  # "WLCB": wowlab crew book
 """`PRAGMA application_id` of every crew database; `_SQL_SET_APP_ID` holds
@@ -140,6 +140,7 @@ _SQL_SET_VERSION: dict[int, str] = {
     2: "PRAGMA user_version = 2",
     3: "PRAGMA user_version = 3",
     4: "PRAGMA user_version = 4",
+    5: "PRAGMA user_version = 5",
 }
 _SQL_BEGIN = "BEGIN IMMEDIATE"
 _SQL_COMMIT = "COMMIT"
@@ -244,6 +245,12 @@ _SQL_CREATE: tuple[str, ...] = (
     " PRIMARY KEY (encounter_id, player_key)"
     ") STRICT",
     "CREATE INDEX world_encounter_players_key ON world_encounter_players (player_key)",
+    "CREATE TABLE log_names ("
+    " player_key TEXT PRIMARY KEY NOT NULL,"
+    " second_name TEXT,"
+    " realm TEXT,"
+    " region TEXT"
+    ") STRICT",
 )
 
 # Statements that move the database from schema n to n + 1, after a copy of
@@ -270,6 +277,12 @@ _SQL_CREATE: tuple[str, ...] = (
 # of the first line, the size, and the offset read to, with where the log
 # was at that offset), the encounters, and each player's part in one. The
 # statements are `_SQL_CREATE`'s own, which a test checks.
+#
+# 4 -> 5 (M21-02): what a combat log's four-part unit name gives besides
+# the key (`<First>-<Second>-<Realm>-<Region>`, the launch client's): the
+# second name, the realm and the region as written, one row per key the
+# log named so, in a table of its own (`log_names`). A row of the beta's
+# three-part names has none, so its key's second part stays a realm.
 #
 # Keyed by (schema it starts from, order within the step); each value one
 # constant statement, so the static check reads every one.
@@ -324,6 +337,12 @@ _MIGRATIONS: dict[tuple[int, int], str] = {
     " PRIMARY KEY (encounter_id, player_key)"
     ") STRICT",
     (3, 7): "CREATE INDEX world_encounter_players_key ON world_encounter_players (player_key)",
+    (4, 1): "CREATE TABLE log_names ("
+    " player_key TEXT PRIMARY KEY NOT NULL,"
+    " second_name TEXT,"
+    " realm TEXT,"
+    " region TEXT"
+    ") STRICT",
 }
 
 _SQL_META_ALL = "SELECT name, value FROM meta"
@@ -465,14 +484,19 @@ class CrewRow(crewbook.CrewPlayer):
     # the region the flavor's Config.wtf names (its `portal` setting as the
     # client last wrote it; the report's `region_absent` says why it is
     # None): wowlab assumes every player is in your region (not yet
-    # confirmed). The database keeps no region part from the combat log:
-    # it was empty on the owner's own unit name, the only player in the one
-    # log fixture (beta).
+    # confirmed). A player a combat log named in four parts (the launch
+    # client's `<First>-<Second>-<Realm>-<Region>`) takes the region and
+    # realm that name gave, kept in `log_names` (`region_from` `log`); the
+    # beta's three-part names left the region empty.
     game_name: str = ""
     realm: str | None = None
     first_name: str = ""
     second_name: str | None = None
     region: Region | None = None
+    # Where `region` came from (M21-02): `log`, a combat log's unit name for
+    # this player (the launch client's writes one); `settings`, the
+    # flavor's Config.wtf; None when there is no region.
+    region_from: Literal["log", "settings"] | None = None
 
 
 class CrewMatchRow(_Model):
@@ -939,11 +963,27 @@ def _public(
     world: dict[str, _WorldPart] | None = None,
     region: Region | None = None,
     second_names: bool = False,
+    logged: _LogName | None = None,
 ) -> CrewRow:
     kept = {p.key: p for p in book.players} if book is not None else {}
     held = kept.get(row.key)
     part = (world or {}).get(row.key) or _WorldPart()
-    names = charname.key_names(row.name, row.realm, second_names=second_names)
+    if logged is not None and logged.second_name:
+        # A four-part unit name gave the second name and the realm.
+        names = charname.KeyNames(
+            row.name,
+            logged.second_name,
+            charname.game_name(row.name, logged.second_name),
+            logged.realm,
+        )
+    else:
+        # A key's second part is a second name only where the lab-addon
+        # wrote the key on a second-name flavor; a key only a three-part
+        # (beta) unit name gave keeps it as a realm.
+        names = charname.key_names(
+            row.name, row.realm, second_names=second_names and _from_book(row)
+        )
+    from_log = region_of(logged.region) if logged is not None else None
     return CrewRow(
         key=row.key,
         class_token=row.class_token,
@@ -989,7 +1029,23 @@ def _public(
         realm=names.realm,
         first_name=names.first_name,
         second_name=names.second_name,
-        region=region,
+        region=from_log or region,
+        region_from="log" if from_log else "settings" if region else None,
+    )
+
+
+def _from_book(row: _Row) -> bool:
+    """Whether the game's list ever gave this row (a group, a match, or
+    the list itself), as against a player only a combat log named."""
+    return bool(
+        row.in_book
+        or row.met
+        or row.met_seen
+        or row.allied
+        or row.faced
+        or row.allied_seen
+        or row.faced_seen
+        or row.pvp_last is not None
     )
 
 
@@ -1019,7 +1075,10 @@ def read(
         rows = list(_rows(conn).values())
         aliases = _aliases(rows)
         world = _world_parts(conn)
-        return [_public(r, book, aliases, world, region, second_names) for r in rows]
+        names = _log_names(conn)
+        return [
+            _public(r, book, aliases, world, region, second_names, names.get(r.key)) for r in rows
+        ]
     except sqlite3.Error as exc:
         raise CrewDbError(f"The crew database {path} cannot be read ({exc}).") from exc
     finally:
@@ -2334,11 +2393,14 @@ def _forget_rows(conn: sqlite3.Connection, keys: Sequence[str]) -> None:
     player, a kept scoreboard line whose text holds one of them (the line,
     not the row), so no copy of the name stays in another player's data."""
     world = _has_world(conn)
+    names = _has_log_names(conn)
     for key in keys:
         conn.execute(_SQL_FORGET_PLAYER, (key,))
         conn.execute(_SQL_FORGET_IN_MATCHES, (key,))
         if world:  # M20-18: their part in every open-world encounter
             conn.execute(_SQL_FORGET_IN_WORLD, (key,))
+        if names:  # M21-02: what a log's unit name gave besides the key
+            conn.execute(_SQL_FORGET_LOG_NAMES, (key,))
     if world:
         _forget_in_log_states(conn, keys)
     if not _has_score(conn):
@@ -2729,6 +2791,16 @@ none of the rest, and says how many."""
 _SQL_HAS_WORLD = (
     "SELECT count(*) FROM sqlite_master WHERE type = 'table' AND name = 'world_encounter_players'"
 )
+_SQL_HAS_LOG_NAMES = (
+    "SELECT count(*) FROM sqlite_master WHERE type = 'table' AND name = 'log_names'"
+)
+_SQL_LOG_NAMES_ALL = "SELECT player_key, second_name, realm, region FROM log_names"
+_SQL_LOG_NAMES_SET = (
+    "INSERT INTO log_names (player_key, second_name, realm, region) VALUES (?, ?, ?, ?)"
+    " ON CONFLICT (player_key) DO UPDATE SET second_name = excluded.second_name,"
+    " realm = excluded.realm, region = excluded.region"
+)
+_SQL_FORGET_LOG_NAMES = "DELETE FROM log_names WHERE player_key = ?"
 # An encounter on a map the database keeps a battleground or arena match on
 # is not the open world, whenever that match was synced (`map_id` is the
 # client's instance id, as `ZONE_CHANGE`'s first field is).
@@ -2810,6 +2882,44 @@ class _WorldPart:
     first: int | None = None
     last: int | None = None
     zone: str | None = None
+
+
+def _log_name_values(p: worldpvp.WorldPlayer) -> tuple[str | None, str | None, str | None] | None:
+    """(second name, realm, region) a player's unit name gave besides the
+    key, each kept only when it is valid UTF-8 within TEXT_MAX_BYTES; None
+    when it gave none of them."""
+
+    def kept(text: str | None) -> str | None:
+        size = None if text is None else _bytes_of(text)
+        return text if size is not None and 0 < size <= TEXT_MAX_BYTES else None
+
+    values = (kept(p.second_name), kept(p.log_realm), kept(p.region))
+    return None if values == (None, None, None) else values
+
+
+def _has_log_names(conn: sqlite3.Connection) -> bool:
+    """Whether this file has `log_names` (a copy kept before schema 5
+    does not)."""
+    return bool(conn.execute(_SQL_HAS_LOG_NAMES).fetchone()[0])
+
+
+@dataclasses.dataclass(frozen=True)
+class _LogName:
+    """What a four-part unit name gave besides its key (M21-02)."""
+
+    second_name: str | None
+    realm: str | None
+    region: str | None
+
+
+def _log_names(conn: sqlite3.Connection) -> dict[str, _LogName]:
+    """Each key's `log_names` row; empty in a file without the table."""
+    if not _has_log_names(conn):
+        return {}
+    return {
+        str(k): _LogName(_text(a), _text(b), _text(c))
+        for k, a, b, c in conn.execute(_SQL_LOG_NAMES_ALL).fetchall()
+    }
 
 
 def _has_world(conn: sqlite3.Connection) -> bool:
@@ -3194,6 +3304,9 @@ def _record_open(
                     ),
                 )
                 (foes if p.side == "foe" else allies).add(p.key)
+                logged = _log_name_values(p)
+                if logged is not None:  # M21-02: a four-part unit name
+                    conn.execute(_SQL_LOG_NAMES_SET, (p.key, *logged))
                 if p.key in rows:
                     if guid is not None:
                         conn.execute(_SQL_SET_GUID_IF_NONE, (guid, p.key))

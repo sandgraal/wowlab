@@ -249,7 +249,8 @@ def test_constructed_another_characters_guid_is_not_you() -> None:
         ("Inventeda-Fakerealm-", None, "Inventeda-Fakerealm"),
         ("Inventeda-Fakerealm-EU", None, "Inventeda-Fakerealm"),
         ("Inventeda-Fake realm-", None, "Inventeda-Fakerealm"),
-        ("Inventeda-Fake-realm-EU", None, "Inventeda-Fakerealm"),
+        # M21-02: four parts are the launch client's <First>-<Second>-<Realm>-<Region>.
+        ("Inventeda-Fake-realm-EU", None, "Inventeda-Fake"),
         ("Inventeda", "Fake-real m", "Inventeda-Fakerealm"),
         ("Inventeda-Fakerealm", None, "Inventeda-Fakerealm"),
         ("Inventeda", "Fakerealm", "Inventeda-Fakerealm"),

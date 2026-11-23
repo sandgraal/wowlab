@@ -71,8 +71,14 @@ player who last damaged you at most `DEATH_WINDOW_SECONDS` before is
 credited. A death later than that, with no killing hit from an opponent,
 is not the encounter's.
 
-**Names.** A unit name is `"<Name>-<Realm>-<Region>"` in the real log, the
-region empty on Forever and the realm without its spaces. The key is
+**Names.** The beta's log (build 1.60.1.70009) wrote a unit name
+`"<Name>-<Realm>-<Region>"`, the region empty and the realm without its
+spaces. The launch client's log (1.60.1.71037, M21-02) writes another player
+`"<First>-<Second>-<Realm>-<Region>"`, the realm with its spaces (`Roleplay
+PvP`) and the region set (`US`): a name of four or more parts is keyed
+`<First>-<Second>`, as the lab-addon keys a Forever player (the client
+reports the second name where retail reports the realm), and its realm and
+region are kept beside the key as written (`unit_parts`). A shorter name's key is
 `<Name>-<Realm>` with the realm part normalized in one place
 (`normalize_realm`: spaces and hyphens removed), as the lab-addon builds the
 key of a player on your own realm. For a player on another realm the addon
@@ -103,7 +109,7 @@ import re
 import time
 from collections.abc import Callable, Iterable, Mapping
 from pathlib import Path
-from typing import Literal
+from typing import Literal, NamedTuple
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -124,6 +130,8 @@ __all__ = [
     "SIDE_MAX",
     "WORLD_EVENTS",
     "Side",
+    "UnitParts",
+    "Who",
     "WorldEncounter",
     "WorldPlayer",
     "WorldScan",
@@ -133,6 +141,7 @@ __all__ = [
     "read_world",
     "scan_entries",
     "seconds_of",
+    "unit_parts",
 ]
 
 ENCOUNTER_GAP_SECONDS = 300
@@ -239,6 +248,13 @@ class WorldPlayer(_Model):
     hits: int
     killed_by_you: bool = False
     killed_you: bool = False
+    # From a four-part unit name (`<First>-<Second>-<Realm>-<Region>`, the
+    # launch client's, M21-02): the second name (also the key's second
+    # part), the realm and the region as the log wrote them. A shorter name
+    # gives no second name and no realm here; its region, when not empty.
+    second_name: str | None = None
+    log_realm: str | None = None
+    region: str | None = None
 
 
 class WorldEncounter(_Model):
@@ -346,26 +362,60 @@ def normalize_realm(text: str) -> str:
     return _REALM_DROPPED.sub("", text)
 
 
+class UnitParts(NamedTuple):
+    """A player's unit name split as the log writes it (M21-02). Four or
+    more parts are the launch client's `<First>-<Second>-<Realm>-<Region>`
+    (`second` set, `realm` the parts between the second name and the
+    region, joined by `-`, as written); three are the beta's
+    `<Name>-<Realm>-<Region>`, two `<Name>-<Realm>`, one a name alone
+    (`second` None, and `realm` and `region` empty when not given)."""
+
+    name: str
+    second: str | None
+    realm: str
+    region: str
+
+
+def unit_parts(unit_name: str) -> UnitParts:
+    """The parts of a unit name, nothing normalized."""
+    parts = unit_name.split("-")
+    if len(parts) >= 4:
+        return UnitParts(parts[0], parts[1], "-".join(parts[2:-1]), parts[-1])
+    if len(parts) == 3:
+        return UnitParts(parts[0], None, parts[1], parts[2])
+    if len(parts) == 2:
+        return UnitParts(parts[0], None, parts[1], "")
+    return UnitParts(parts[0], None, "", "")
+
+
 def _parts(unit_name: str) -> tuple[str, str]:
     """(name, realm normalized) of a unit name as the log writes it; the
-    realm empty when the name has no realm part."""
-    parts = unit_name.split("-")
-    if len(parts) >= 3:
-        realm = "".join(parts[1:-1])  # the last part is the region
-    elif len(parts) == 2:
-        realm = parts[1]
-    else:
-        realm = ""
-    return parts[0], normalize_realm(realm)
+    realm empty when the name has no realm part. A four-part name's realm
+    is its realm part, not its second name."""
+    got = unit_parts(unit_name)
+    return got.name, normalize_realm(got.realm)
 
 
-def player_key(unit_name: str, home_realm: str | None) -> tuple[str, str, str] | None:
-    """(key, name, realm) of a player's unit name as the log writes it
-    (`<Name>-<Realm>-<Region>`); None when no key can be made of it. A
-    name with no realm part is on `home_realm` (not yet confirmed)."""
+def _who(unit_name: str, home_realm: str | None) -> Who | None:
+    """The key of a player's unit name and what the log gave besides
+    (M21-02); None when no key can be made of it. A four-part name is
+    keyed `<First>-<Second>`, as the lab-addon keys a Forever player, so
+    one player is one key across the log and the crew book; the realm and
+    region parts are kept beside it as written. A shorter name is keyed
+    `<Name>-<Realm>` with the realm normalized, a name with no realm part
+    on `home_realm` (not yet confirmed)."""
     if any(ord(c) < 0x20 or ord(c) == 0x7F for c in unit_name):
         return None
-    name, realm = _parts(unit_name)
+    got = unit_parts(unit_name)
+    if got.second is not None:
+        if not got.name or not got.second:
+            return None
+        key = f"{got.name}-{got.second}"
+        size = _bytes(key)
+        if size is None or size > KEY_MAX_BYTES:
+            return None
+        return Who(key, got.name, got.second, got.second, got.realm or None, got.region or None)
+    name, realm = got.name, normalize_realm(got.realm)
     if not realm and home_realm:
         realm = normalize_realm(home_realm)
     if not name or not realm:
@@ -374,7 +424,16 @@ def player_key(unit_name: str, home_realm: str | None) -> tuple[str, str, str] |
     size = _bytes(key)
     if size is None or size > KEY_MAX_BYTES:
         return None
-    return key, name, realm
+    return Who(key, name, realm, None, None, got.region or None)
+
+
+def player_key(unit_name: str, home_realm: str | None) -> tuple[str, str, str] | None:
+    """(key, name, the key's second part) of a player's unit name as the
+    log writes it; None when no key can be made of it. A four-part name
+    (`<First>-<Second>-<Realm>-<Region>`) gives `<First>-<Second>`; a
+    shorter one `<Name>-<Realm>` (see `_who`)."""
+    who = _who(unit_name, home_realm)
+    return None if who is None else (who.key, who.name, who.realm)
 
 
 # ─── encounters being built ──────────────────────────────────────────────────
@@ -390,6 +449,9 @@ class _Player:
     hits: int = 0
     killed_by_you: bool = False
     killed_you: bool = False
+    second_name: str | None = None
+    log_realm: str | None = None
+    region: str | None = None
 
 
 @dataclasses.dataclass
@@ -424,6 +486,9 @@ class _Open:
                     hits=p.hits,
                     killed_by_you=p.killed_by_you,
                     killed_you=p.killed_you,
+                    second_name=p.second_name,
+                    log_realm=p.log_realm,
+                    region=p.region,
                 )
                 for p in sorted(self.players.values(), key=lambda p: (p.side != "foe", p.key))
             ],
@@ -431,7 +496,18 @@ class _Open:
         )
 
 
-Who = tuple[str, str, str]
+class Who(NamedTuple):
+    """A player as a read keys them: the key, its two parts (`name`, and
+    `realm`: the realm, or a Forever player's second name), and from a
+    four-part unit name the second name, the realm and the region as the
+    log wrote them (M21-02)."""
+
+    key: str
+    name: str
+    realm: str
+    second_name: str | None = None
+    log_realm: str | None = None
+    region: str | None = None
 
 
 class _Full(Exception):  # noqa: N818 - a signal, not an error
@@ -557,7 +633,7 @@ class _Reader:
             return None
         if flags & combatlog.AFFILIATION_MASK in (_AFFILIATION_PARTY, _AFFILIATION_RAID):
             return None  # in your group: charmed or mind-controlled, not an opponent
-        return player_key(name.text, self.home_of(owner))
+        return _who(name.text, self.home_of(owner))
 
     def friend(self, guid: object, name: object, flags: int | None, owner: str) -> Who | None:
         if not isinstance(guid, str) or not _PLAYER_GUID.fullmatch(guid):
@@ -568,7 +644,7 @@ class _Reader:
             return None
         if flags & _REACTION_MASK != _REACTION_FRIENDLY:
             return None
-        return player_key(name.text, self.home_of(owner))
+        return _who(name.text, self.home_of(owner))
 
     def note_unit(self, guid: object, name: object, flags: int | None) -> None:
         if not isinstance(guid, str):
@@ -651,8 +727,16 @@ class _Reader:
         if e.sides[side] >= SIDE_MAX:
             e.left_out += 1
             return None
-        key, name, realm = who
-        player = _Player(key=key, name=name, realm=realm, guid=guid, side=side)
+        player = _Player(
+            key=who.key,
+            name=who.name,
+            realm=who.realm,
+            guid=guid,
+            side=side,
+            second_name=who.second_name,
+            log_realm=who.log_realm,
+            region=who.region,
+        )
         e.players[guid] = player
         e.sides[side] += 1
         self.held += 1
@@ -731,7 +815,7 @@ class _Reader:
         name = self.names.get(owner)
         if name is None:
             return None, True
-        who = player_key(name, self.home_of(you))
+        who = _who(name, self.home_of(you))
         if who is None:
             return None, True
         return (you, owner, who), False
