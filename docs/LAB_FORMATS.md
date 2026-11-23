@@ -656,6 +656,10 @@ Dated entries, newest last. Each names the fixture that prompted it.
   the edited `showTargetOfTarget` line instead of writing `"0"`; that it
   drops every CVar set to its default is **[verify]**). Also recorded verbatim, meaning unknown:
   `portal "test"`, `currentGameMode "15"`, `engineSurveyPatch "16001"`.
+  *(Resolved 2026-11-23, M21-02: `portal` is the client's region. The
+  launch-client fixture `macos-70888` has `SET portal "US"`, and the
+  owner's `GetCurrentRegionName()` returned `"US"` in game; `test` was the
+  beta's value.)*
 - **2026-09-22, §6, same capture.** Account `bindings-cache.wtf`: three
   `bind KEY ACTION` lines, CRLF, no header or mode line. The quoted
   `CLICK …` action form stays unobserved.

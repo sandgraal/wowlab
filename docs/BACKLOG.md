@@ -3884,7 +3884,9 @@ Facts the research established (2026-11-23), for every ticket below:
 
 Read `portal` from the flavor's `WTF/Config.wtf` through the existing WTF reader (read-only, L1). `region` (`us`, `eu`, `kr`, `tw`; anything else, `test` included, is `None`) joins `CharSummaryRow`, `CharGearReport` and the crew rows of `crew list`/`crew show`/`crew matches` (for a crew player: the `-Region` part the combat log gave, else the player's own region, since Forever has no cross-region play [verify]). Forever's first and second names: the folder form `<First>-<Second>` and the in-game form are both kept, and each report says which is which.
 
-**Acceptance:** tests on real fixtures (the `Config.wtf` of each flavor fixture) and constructed hostile values; `--json` carries `region`; `docs/GLOSSARY.md` gains **Region (portal)**. Reviewed by `code-reviewer` and `domain-reviewer`. User-facing: `region` in `char list`/`crew` output.
+**Acceptance:** tests on real fixtures (the `Config.wtf` of each flavor fixture) and constructed hostile values; `--json` carries `region`; `docs/GLOSSARY.md` gains **Region (portal)**.
+
+*Conductor rulings, 2026-11-23 (review round 1):* `cn` is a known region too (it has no armory links; M21-03 says so per link); the combat log's `-Region` part is not stored, since it is empty on the only Forever log seen. *Owner's in-game check, 2026-11-23 (Forever launch client, US):* `UnitName("target")` returned `"Tay", "Soulrend"`, so on Forever the slot retail uses for the realm holds the **second name**, and a crew key `Name-Realm` is `<First>-<Second>`; `GetPlayerInfoByGUID` returned name `"Tay Soulrend"` and realm `""`; `GetCurrentRegionName()` returned `"US"`. Reviewed by `code-reviewer` and `domain-reviewer`. User-facing: `region` in `char list`/`crew` output.
 
 ---
 
@@ -3896,6 +3898,8 @@ Read `portal` from the flavor's `WTF/Config.wtf` through the existing WTF reader
 Link kinds, this ticket: **profile** (Blizzard armory character and guild; wofwforever.com Journey Companion `…/?region=&name=&surname=`, recorded example from its form; forevertwinking.com character, template left out until M21-O1 gives one, and no link is drawn for a site with no template), **item** (Wowhead `https://www.wowhead.com/forever/item={id}`; `bonus` only once M21-O2 confirms the page reads it), **spell** (`…/forever/spell={id}`). A site's room for a flavor follows `dressing_sites.toml`'s band table; a character of a flavor with no room gets no link.
 
 `page.js` (`DRESSING_ORIGIN` around line 59, the check around lines 1985–2030): one pinned origin becomes the allowlist of origins in `link_sites.toml`, served to the page by the server (not fetched from outside), with the same checks for every link: https, exact origin, no userinfo, the URL round-trips identically. Every outside link opens with `target="_blank" rel="noopener noreferrer"`; the server's `Referrer-Policy: no-referrer` stays.
+
+*Amended 2026-11-23 (owner, in session):* **forevertwinking.com is for the owner's own characters only.** Its addresses carry the site's own character number (`/armory/13-sandgraal-rizzen`; `/armory/sandgraal-rizzen` gives an error) and its builds a server-made code (`/builds/dwhe4ngw2p`), so neither can be built. Instead the player pastes a forevertwinking address for a character once (`wowlab char link set --site forevertwinking URL`, and a field on the Character tab through the confirm flow); wowlab keeps it per character in a small file under the user data directory (never in the install; validated against the origin and path shapes above, recorded examples `https://forevertwinking.com/armory/13-sandgraal-rizzen` and `https://forevertwinking.com/builds/dwhe4ngw2p`) and shows it as a link; `char link list` and `char link forget` show and drop it. No forevertwinking link is drawn for a crew or PvP row. **Armory names on Forever:** first and second name come from the crew key's two parts (M21-02's ruling); the armory link is built from first, second and region; a row with no second name or no region gets no armory link and says why. `cn` gets no armory link.
 
 **Acceptance:** example-URL tests for every template; hostile names (a quote, `<`, `#`, `?`, `/`, `..`, 300 characters, an RTL mark; labelled constructed) give a safe URL or no link; `page.js` tests: an origin outside the list, `http:`, userinfo and a non-round-tripping URL each render as plain text; the CSP header byte-identical. Reviewed by `code-reviewer`, `security-reviewer` and `domain-reviewer`. User-facing: none until M21-04 and M21-05.
 
@@ -3955,10 +3959,12 @@ A dev-time script (`scripts/`, stdlib only) fetched by hand, never in CI, from a
 
 ---
 
-## [ ] M21-O1 — Owner: two forevertwinking.com addresses
+## [x] M21-O1 — Owner: two forevertwinking.com addresses
 **Size:** XS · **owner**
 
 forevertwinking.com's terms forbid an AI agent from reading it, so this one is yours. In your own browser, copy (1) the address of one character page from its armory, and (2) one gear-planner share link. Paste both into the session. The conductor adds them to M21-03's `link_sites.toml` as recorded examples.
+
+*Done 2026-11-23:* `https://forevertwinking.com/armory/13-sandgraal-rizzen` and `https://forevertwinking.com/builds/dwhe4ngw2p`; the slug alone errors. Owner: "forevertwinking is just for my chars then". M21-03 amended.
 
 ---
 
@@ -3969,9 +3975,27 @@ Click each new link on one of your characters and on one opponent; copy one wowf
 
 ---
 
-## [ ] M21-10 — Links out wave review
-**Size:** S · **Depends on:** M21-01 to M21-09, M21-O1, M21-O2
+## [ ] M21-11 — Addon fixes from the launch-build API list
+**Size:** S · **Depends on:** M21-09 · **Sources:** M21-09's README findings and its domain review (2026-11-23)
 
-`docs/handoffs/M21-review.md`: what shipped, each link with its recorded example, the per-site assessment of the owner's bookmarks (Build / Reference / Later / No, from the conductor's review of 2026-11-23), and what stayed [verify].
+In `lab/addon/WowLab`: (1) macro slots: read `Constants.MacroConsts.MAX_ACCOUNT_MACROS` (guarded) before the 120 fallback, record where the value came from, and correct the false "loaded once the macro window has been opened" reason in `Actions.lua`, the owner-facing text in `labaddon.py` (around line 4007, with its tests) and `docs/LAB_PLAN.md` (around line 2601); (2) the scoreboard probe in `Crew.lua` stops taking `GetBattlefieldScore`'s sixth value as the side when the first is nil and `C_PvP.GetScoreInfo` gave no row (the 12.0.1 deprecation shim returns `faction = 0` for no row); (3) stop asking for `ACCOUNT_BINDINGS`/`CHARACTER_BINDINGS`, which no 71037 UI file defines, and record `Enum.BindingSet` where it helps; (4) read the combat log's state and advanced flag with the documented `C_ChatInfo.IsLoggingCombat`; (5) drop the registration of `BARBER_SHOP_SUCCESS`, which is not in the client's event list.
+
+**Acceptance:** stub-client tests per change; `make lint-lua` green; README rows updated with dated lines; no new [verify] marked confirmed without a capture. Reviewed by `code-reviewer` and `domain-reviewer`. User-facing: the macro-slot line in `char show`/`doctor`.
+
+---
+
+## [ ] M21-12 — Full names and region for every player met
+**Size:** M · **Depends on:** M21-02, M21-11 (both change `Crew.lua`) · **Sources:** the owner's in-game check of 2026-11-23 (M21-02's note)
+
+The lab-addon (crew book schema bump, with migration) records the region once per book from `GetCurrentRegionName()`, and, out of combat only (ADR-0026), resolves the GUIDs of players the book met but holds no full name for, with `GetPlayerInfoByGUID` (sixth value: `"First Second"`; seventh: realm, empty on Forever; eighth: [verify], 22 for a level-22 character). The desk fills a crew row's first and second name and region from those, and a player known only from `crew scan-log` (the combat log) borrows them from the book row with the same GUID (`crewdb`'s GUID aliases). Each value says where it came from.
+
+**Acceptance:** stub-client tests for the resolve (out of combat only, a GUID the client no longer knows returns nothing and is retried later, a cap per login); desk tests on constructed books and logs; the owner confirms one open-world opponent resolves (M21-O2). Reviewed by `code-reviewer`, `domain-reviewer` and `security-reviewer`. User-facing: full names and armory links on open-world rows.
+
+---
+
+## [ ] M21-10 — Links out wave review
+**Size:** S · **Depends on:** M21-01 to M21-09, M21-11, M21-12, M21-O1, M21-O2
+
+`docs/handoffs/M21-review.md`: what shipped, each link with its recorded example, the per-site assessment of the owner's bookmarks (Build / Reference / Later / No, from the conductor's review of 2026-11-23), and what stayed [verify]. The next release's runbook gains `uv run python scripts/gen_network_block.py --write --readme` (M21-01: the README's network block follows the release, not `main`). The owner's crew-book cold-start check (from M21-09: take a wowlab snapshot first, then two client restarts and an account-wide `/reload` with the book on) is listed for the owner.
 
 **Acceptance:** the handoff merged; dispatch stops until the owner's next pick (ADR-0024).
