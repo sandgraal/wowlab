@@ -3901,6 +3901,8 @@ Link kinds, this ticket: **profile** (Blizzard armory character and guild; wofwf
 
 *Amended 2026-11-23 (owner, in session):* **forevertwinking.com is for the owner's own characters only.** Its addresses carry the site's own character number (`/armory/13-sandgraal-rizzen`; `/armory/sandgraal-rizzen` gives an error) and its builds a server-made code (`/builds/dwhe4ngw2p`), so neither can be built. Instead the player pastes a forevertwinking address for a character once (`wowlab char link set --site forevertwinking URL`, and a field on the Character tab through the confirm flow); wowlab keeps it per character in a small file under the user data directory (never in the install; validated against the origin and path shapes above, recorded examples `https://forevertwinking.com/armory/13-sandgraal-rizzen` and `https://forevertwinking.com/builds/dwhe4ngw2p`) and shows it as a link; `char link list` and `char link forget` show and drop it. No forevertwinking link is drawn for a crew or PvP row. **Armory names on Forever:** first and second name come from the crew key's two parts (M21-02's ruling); the armory link is built from first, second and region; a row with no second name or no region gets no armory link and says why. `cn` gets no armory link.
 
+*Amended 2026-11-23 (the owner's Gaming/Wow bookmarks, `docs/handoffs/wow-bookmarks-2026-11-23.md`):* three more templates. **Raider.IO** profile `https://forever.raider.io/characters/{region}/{ruleset}/{name}` (ruleset `normal`, `pvp`, `rp` or `pvp-rp`; the name form, `First Second` or `First-Second`, is [verify]; no link when the ruleset is unknown, which for now is every row until M22-11 or the addon gives it). **Warcraft Logs** report `https://forever.warcraftlogs.com/reports/{code}` for a 16-character code the player pastes (a field on the Character tab; the character URL is unknown, so no profile link). **Keystone.guru** dungeon map beside a Questie dungeon or NPC lookup result (M22-08), address [verify] from its `routes/web.php` (`explore/{gameVersion}/{dungeon}`).
+
 **Acceptance:** example-URL tests for every template; hostile names (a quote, `<`, `#`, `?`, `/`, `..`, 300 characters, an RTL mark; labelled constructed) give a safe URL or no link; `page.js` tests: an origin outside the list, `http:`, userinfo and a non-round-tripping URL each render as plain text; the CSP header byte-identical. Reviewed by `code-reviewer`, `security-reviewer` and `domain-reviewer`. User-facing: none until M21-04 and M21-05.
 
 ---
@@ -4199,7 +4201,7 @@ Changes:
 - Fetches character profile, equipment, media and guild for a region and name, on a click or command only.
 - Cached per request.
 
-Whether Forever characters are served, and under which namespace and realm slug, is [verify]. The ticket ends with a recorded probe, and stops if Forever is not served.
+Whether Forever characters are served, and under which namespace and realm slug, is [verify]. The ticket ends with a recorded probe, and stops if Forever is not served. *Note 2026-11-23 (community forum threads 59774 and 60334, undocumented by Blizzard):* namespaces `profile-forever-{region}`, `dynamic-forever-{region}`, `static-forever-{region}` (pin a build as `static-1.60.1_70399-forever-us`); character route `/profile/wow/character/{first}-{second}`, responses carry `surname` and `ruleset` and no realm; equipment, appearance, collections, professions, PvP summary, specializations, statistics, titles, guilds and per-house auctions reported working; character media often 404s for hours after a character appears; characters below level 10 return 404. The ruleset feeds M21-03's Raider.IO link.
 
 The Crew tab and the Character tab show item level, gear, guild and portrait for a player, each with its fetch time.
 
@@ -4235,6 +4237,8 @@ The panel works like this:
 - A reply that holds a proposal goes through the proposal validator and the confirm flow, then `guard` (L2).
 - Nothing is sent on a timer.
 
+*Amended 2026-11-23 (bookmark review):* replies must cite every spell, item or NPC as `[Label](spell:id)` / `(item:id)` / `(npc:id)`; the validator checks each id against the player's spellbook, gear, `gamedata` or the lookup index and marks or refuses unknown ids (wow-ai-log-analyzer's pattern), and the panel renders cited ids as Wowhead links (M21-03). The engine gets a short set of question-to-read routes (gear, binds, crew, twink gaps, combat-log summary) with reference notes shipped in the package.
+
 **Acceptance:** tests with a stub engine; the packet is shown before the send; a malformed reply plans nothing; the child process gets no inherited secrets beyond its own config. Reviewed by `code-reviewer` and `security-reviewer`. User-facing: yes.
 
 ---
@@ -4249,12 +4253,66 @@ One session, from a checklist the conductor writes. It covers:
 - the 29 twink list (M22-06);
 - QuestieDB data form (M22-08);
 - in-combat reads (M22-12);
-- the crew-book cold-start check (M21-09's README order); `/dump UnitFullName("player")` and `/dump GetNormalizedRealmName()` (M21-11 item 6); and `/dump C_PvP.GetScoreInfo(1)` on a battleground scoreboard (is the name `First Second`, `First-Second`, or with a realm?).
+- the crew-book cold-start check (M21-09's README order); `/dump UnitFullName("player")` and `/dump GetNormalizedRealmName()` (M21-11 item 6); and `/dump C_PvP.GetScoreInfo(1)` on a battleground scoreboard (is the name `First Second`, `First-Second`, or with a realm?); in a group, `/dump UnitName("party1")` (does a group member's second name come back as for a target? M21-11's domain review); and `/dump C_GameRules and C_GameRules.GetActiveGameMode and C_GameRules.GetActiveGameMode()` if present (the ruleset for M21-03's Raider.IO link) [verify].
+
+---
+
+## [ ] M22-16 — Where each addon came from (WowUp's records)
+**Size:** S · **Sources:** `docs/handoffs/wow-bookmarks-2026-11-23.md` (WowUp); LAB_IDEAS **addon-provenance**
+
+Read, read-only, the WowUp app's `addons.json` under its user-data folder (on macOS `~/Library/Application Support/WowUp/`; on Windows its AppData folder [verify]; never `sensitive.json`): per addon `providerName`, `externalId`, `externalUrl`, `installedVersion`, `latestVersion`, `installedFolders`, `clientType`, `installedAt`. Join it to the installed `Interface/AddOns` folders: each addon shows its source (Wago, CurseForge, GitHub, …), version and an update-available mark; a folder no manager claims is flagged. The owner's file (6 Wago addons, last written 2026-09-26) is older than the install, so stale records must show as stale. CurseForge's own records are [verify] (format unknown) and come later. The Addons view in the UI shows it (UI-first); `wowlab addons list --json` carries it.
+
+**Acceptance:** a real capture of `addons.json` (scrubbed by the capture tool; no secrets live in it) with a provenance row; tests for a missing file, a stale record and a folder no one claims. Reviewed by `code-reviewer` and `domain-reviewer`. User-facing: yes.
+
+---
+
+## [ ] M22-17 — "Open in WoWSims" without pasting
+**Size:** M · **Depends on:** M21-03 · **Sources:** wowsims/forever (MIT) `ui/sim/state/sim_links.ts`, `proto/`
+
+Build the sim's share link from the record: the page `https://wowsims.com/forever/{class}/{spec}/` plus a `#` hash holding the `IndividualSimSettings` protobuf, zlib-deflated and base64'd. A minimal stdlib protobuf encoder for just the fields M21-08 already fills (race, class, level, talents, gear with enchant and random suffix); field numbers from the pinned commit's `proto/`. The Character tab's "Copy for WoWSims" panel gains "Open in WoWSims". Oracle: a link built by the sim itself for the same settings, decoded with `wowsimcli decodelink` by hand and recorded.
+
+**Acceptance:** the oracle rebuilt byte for byte or decoded identically; the allowlist gains the origin. Reviewed by `code-reviewer` and `domain-reviewer`. User-facing: yes.
+
+---
+
+## [ ] M22-18 — Slash commands, binding commands and the talent string from Blizzard's UI source
+**Size:** S · **Depends on:** — · **Sources:** Gethe/wow-ui-source `forever` (71037); M21-09's `scripts/forever_api.py`
+
+Extend the dev-time script to also emit, from the same pinned commit, read only and committed as names only: the slash-command list (`Blizzard_ChatFrameBase/Shared/SlashCommands.lua`, `SlashCommandsRegistry.lua`), the binding command names and headers (`Bindings.xml` files, `Keybindings.xml`), and the documented `C_EncodingUtil` limits. The macros view then marks an unknown `/command` in a macro, and the binds view names "unexplained" binding commands (LAB_FORMATS item 8). Write the Forever talent loadout string format (`Blizzard_ClassTalentImportExport.lua`) into `docs/LAB_FORMATS.md` for M21-07 and char-planner.
+
+**Acceptance:** `check` covers the new lists; macros and binds views show the new marks on real fixtures. Reviewed by `code-reviewer` and `domain-reviewer`. User-facing: yes (macros and binds views).
+
+---
+
+## [ ] M22-19 — Share strings: show, compare and back up addon profile exports
+**Size:** M · **Depends on:** M22-08 (its CBOR reader) · **Sources:** the bookmark review (ElvUI, GSE, GRIP-EMS, Preheat/Pastes)
+
+A reader for pasted share strings, read only, nothing executed: `!E2!` (ElvUI profile, private, global or filters), `!GSE3!` (GSE sequences), `!EMS1!`/`!GRIP1!` (GRIP-EMS), `GEMSCP1` (GRIP CVar profile), `!EUI_` (EllesmereUI, LibDeflate print alphabet), and recognition of `!WA:2!` and other known prefixes ("what is this string?"). Decoding is base64 → raw Deflate (`zlib.decompress(data, -15)`) → CBOR, with Blizzard's own `C_EncodingUtil` limits as caps (M22-18). GSE's encrypted `!GSE3!+` is shown as "protected content, not shown" and never decrypted. A pasted string can be shown, compared with another, and saved as a dated backup under the user data directory; a GRIP CVar profile can be compared with `Config.wtf`. Nothing writes an addon's settings (that would be a later ticket through `guard`). UI: a "Share strings" panel; CLI `wowlab share show|diff|save`.
+
+**Acceptance:** constructed strings for every prefix (labelled; nothing copied from unlicensed repos); hostile inputs (bad base64, inflate bombs, deep CBOR) refused within the caps. Reviewed by `code-reviewer` and `security-reviewer`. User-facing: yes.
+
+---
+
+## [ ] M22-20 — Combat-log traps as graders, and a dummy-session summary
+**Size:** M · **Sources:** Sparxx947/gse-makrowerkstatt (MIT) `puppe-messen.py`, `log-casts.py`, `log-sequenz.py` headers
+
+Turn its recorded combat-log traps into grader cases for wowlab's log reader: `SWING_DAMAGE` puts the amount at a different index than `SPELL_DAMAGE`; pets need both `SPELL_SUMMON` and the owner GUID; on `SPELL_DAMAGE` the advanced fields describe the target; other players' damage on the same target must be filtered. Check each against a real Forever log slice (the `macos-71037` fixture or a new one). Then add a "practice session" summary for one log segment the player picks: casts per spell, GCD use, cooldown use and buff uptime, shown in the UI (feeds keybind-coach and the coach's combat-log route).
+
+**Acceptance:** each trap proven on a real slice or marked [verify]; the summary tested on a constructed and a real segment. Reviewed by `code-reviewer` and `domain-reviewer`. User-facing: yes.
+
+---
+
+## [ ] M22-21 — Read the header of an oversized addon TOC
+**Size:** S · **Sources:** M22-08's domain review (QuestieDB's 18.8 MB TOC)
+
+`layout`'s 1 MiB TOC cap makes `addons list` and `addons check` skip QuestieDB's TOC entirely. Read only the leading `##` directives of an oversized TOC (up to the first file line, within the cap), mark the result partial, and report Interface, Title, Version and Dependencies from it; `addons list` says when a TOC was not read whole. Do not raise the cap.
+
+**Acceptance:** a constructed oversized TOC; an owner `@live` check on QuestieDB. Reviewed by `code-reviewer` and `domain-reviewer`. User-facing: yes.
 
 ---
 
 ## [ ] M22-14 — Wave review
-**Size:** S · **Depends on:** M22-01 to M22-13, M22-O1
+**Size:** S · **Depends on:** M22-01 to M22-13, M22-15 to M22-21, M22-O1
 
 `docs/handoffs/M22-review.md`; dispatch stops until the owner's next pick.
 
