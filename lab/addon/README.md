@@ -1312,10 +1312,10 @@ which the call ran.
   and §5, on 69893 and 69913: files under `WTF/Account` never loaded on a
   cold start; per-character ones were restored across a `/reload` within
   one client run, account-wide ones not even then). No capture shows it
-  since. The evidence: `Labchard-Labrealmg` went from `probe.loads` 4 at
-  70009 to 8 at 70058, across a build change, so the client was launched
-  at least once in between and the counter did not go back to 1; and the
-  70888 `Sandgraal-Rizzen` file has `probe.loads` 25 with a barber-shop
+  since. The evidence: `Labchard-Labrealmg`, which the capture notes call
+  one character, reads `probe.loads` 4 at 70009 and 8 at 70058. The build
+  changed in between, so the client was launched at least once, and the
+  count is consistent with no reset. And the 70888 `Sandgraal-Rizzen` file has `probe.loads` 25 with a barber-shop
   record carried from load 6. Why that does not prove the bug is gone: no
   file records when the client was launched, so a launch whose load failed
   (the counter back to 1) followed by enough loads in one run could still
@@ -1330,11 +1330,13 @@ which the call ran.
   that. What is left is wowlab's snapshots, and the game's
   `WowLab.lua.bak`, believed to be the previous write ([verify],
   `docs/LAB_FILE_MAP.md`), which holds that copy only until the next save
-  replaces it. The owner's check, [verify]: take a wowlab snapshot first
-  (`wowlab snap create`); turn the crew book on and let it record; type
+  replaces it. The owner's check, [verify], in this order: if you already
+  have a real book, take a snapshot first (`wowlab snap create`); turn the
+  book on and let it record; exit the game, so the client writes the file;
+  take `wowlab snap create` with the client closed; then launch, type
   `/reload` and see that `/wowlab crew` still shows the book (the
-  account-wide `/reload` case); then exit the game, launch it again, and
-  check the same twice more.
+  account-wide `/reload` case), and exit, launch again and check the same
+  twice more.
 
 ## M11-03 [verify] checklist
 
