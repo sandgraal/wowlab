@@ -7321,6 +7321,96 @@ reaches a player kept only there, with no players row, and drops their name
 and GUID from every state in the database and every copy; `--all` deletes
 them with the database.
 
+*As built (2026-11-22, M20-19; ADR-0026, note of 2026-11-22): the lab-addon
+switches the combat log.* A new section, `combatlog` (`CombatLog.lua`),
+calls `LoggingCombat` by time and place only: **on** in the open world
+(`IsInInstance` false) and not in a raid group (`IsInRaid`), checked 15 s
+after each loading screen (the first after login waits as the first
+recording pass does, so `/wowlab skip combatlog` typed in that window stops
+the first call), on `ZONE_CHANGED_NEW_AREA` and `GROUP_ROSTER_UPDATE`;
+**off** in an instance, in a raid group, and after the idle time with no
+combat (`IDLE_MINUTES`, 10 by default, a saved setting from 1 to 120, from
+when the log went on or the last fight ended). After an idle switch-off only
+the next fight (`PLAYER_REGEN_DISABLED`) turns it back on, and that is the
+one thing it does in combat; a zone or group change in combat is checked
+when the fight ends. No PvP flag, no nearby players. It reads the log's
+state first and turns off only a log it turned on (`mine`, kept across
+`/reload`): a log found on that it did not turn on is the player's, left on
+and said once; one it turned on that the player turns off stays off for the
+session, said once. It checks each switch took; where `LoggingCombat` is
+missing, gives no state or does not switch, the section is dormant for the
+session, one line, written absent with the reason. One chat line per switch
+("combat log off (entered an instance)."), one line a session when
+`advancedCombatLogging` is off (read with `C_CVar.GetCVar`, never set).
+`/wowlab combatlog` gives its state; `on` and `off` are the section's
+`unskip` and `skip` (default on, saved per character); `idle <minutes>` sets
+the idle time. The record `WowLabCharDB.combatlog` (schema 5, no bump: a
+file without it reads as before) holds `idle_minutes`, `switches` (kept
+across sessions), `last_at`, `last_to`, `last_why`, `mine`, `log_on`,
+`hands_off` and `advanced`, never what the log holds; `char show` prints it.
+Core gains `ns.Say` and `ns.Wake` (a section's own timer, run out of combat
+only, through `gather`, so a skip stops it). The M20-13 rule that only the
+barber-shop section gathers on its event now names this section too, with
+its in-combat path pinned. The rule is graded on a Python model of the
+pinned Lua functions with a stub client (`tests/addon/test_m20_19_combatlog.py`).
+Not yet confirmed **[verify]**: that the owner's client gives addons
+`LoggingCombat` and lets it switch the log in and out of combat, that it
+answers true or false with no argument, that the log stays on across
+`/reload`, `IsInInstance` in the open world, the setting's name; the owner's
+first run is still to come.
+
+*Fix round 1 (2026-11-22, M20-19; supersedes the note above where they
+differ).* **Idle clock:** the idle timer is asked for whenever the addon's
+own log is on with no timer that ends in time, so after a `/reload` (the log
+still on, `mine` carried) the clock runs from the first check, and an idle
+check that finds the time not yet up (a longer `idle` set meanwhile) asks
+again; one timer at a time. **On and off:** `/wowlab combatlog off` and `on`
+pause and resume the switch at once (`paused` in the record), keeping
+`mine`, the count and the last switch; `/wowlab skip combatlog` still stops
+it as any section and drops the record. **Dormant:** the record keeps its
+shape and what was carried, with `dormant` (the reason); a switch refused in
+combat is counted (`refused_in_combat`) and tried again when the fight ends,
+and only a refusal out of combat makes the session dormant. **Words:** the
+log is the game's, for every character, and `mine` is per character, so the
+lines say "not turned on by WowLab" and "turned off outside WowLab", never
+who did it. **Limits:** after an idle switch-off the log returns once the
+fight has started, so the opening hit is not in it (a longer idle time
+avoids that); a log turned off and on by hand within 15 s of a loading
+screen cannot be told from WowLab's (do not toggle it then); another addon
+that switches the log by itself will fight this one. **Log files:** each
+switch-on may start a new `WoWCombatLog-*.txt` [verify], so `crew scan-log`
+with no PATH now reads every log in `Logs/` not read before, oldest first,
+each once (the newest 1,000 looked at; the each-log-once bookkeeping above;
+`logs`, `logs_read` and `logs_already_read` in `--json`), and says how many
+it read and how many had nothing new; a PATH reads that log only. Old logs
+are the player's to delete. Not yet confirmed **[verify]** in addition:
+across a logout to another character, whether a switch-on starts a new
+file, a switch in combat. The first run checks the chat lines (login, an
+instance, an idle, a fight) and counts the files in `Logs/` after a
+session. `doctor` does not show the switch; `char show` does.
+
+*Fix round 2 (2026-11-22, M20-19).* At the end of a fight the owed place
+check runs before a retry of a switch refused in combat, so a retry never
+turns the log on in an instance or a raid group. `/wowlab combatlog on`
+asks for a check at once through Core's `wake` (out of combat; in combat
+the end of the fight runs it). A log WowLab had on that is turned off and on
+by hand while paused is taken as WowLab's after `on`. The record's
+`dormant` is shown as "stopped switching that session", and
+`refused_in_combat` as "the game refused N switches in combat (each tried
+again after the fight)". `crew scan-log` with no PATH says it looks at the
+newest 1,000 logs and how many older ones it did not look at
+(`logs_not_looked_at`); a log it cannot open is skipped, named with its
+reason (`logs[].unreadable`, `logs_unreadable`) and the newer logs are read;
+a PATH that cannot be read is still an error.
+
+*Fix round 3 (2026-11-22, M20-19).* A pause typed in a fight hides the
+fight's end from the switch, so `/wowlab combatlog on` asks the client
+whether it is in combat (`InCombatLockdown`) before its check. The UI's
+Crew tab button now reads "Read the combat logs not read before"; a run
+stopped at the page's 120 s limit says that what was read is kept and that
+pressing the button again reads on (each part of a read is kept as it is
+read), and the UI's refusal of a path says that only the Logs folder is read.
+
 ### 21.4 The terms of ADR-0036, for the new store
 
 | Term | What holds it | Proof |

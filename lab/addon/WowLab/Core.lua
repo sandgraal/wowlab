@@ -190,6 +190,11 @@ local function say(message)
     print("|cff33ff99WowLab|r: " .. message)
 end
 
+-- One chat line for a section's own news (the combat-log switch, M20-19).
+function ns.Say(message)
+    say(message)
+end
+
 -- Events ----------------------------------------------------------------------
 
 local frame = CreateFrame("Frame")
@@ -568,6 +573,30 @@ local function sectionByKey(key)
         end
     end
     return nil
+end
+
+-- What ns.Wake's timer runs: the immediate section `key`, gathered with
+-- `event`, out of combat only (a timer that ends in combat is dropped; the
+-- section catches up when combat ends). A section switched off meanwhile is
+-- not gathered (gather refuses).
+local function wake(key, event)
+    local section = sectionByKey(key)
+    if section and section.immediate and not inCombat then
+        gather(section, event)
+    end
+end
+
+-- Gathers an immediate section again in `seconds`, its gather handed `event`
+-- (CombatLog.lua's own timers, M20-19). False, and nothing scheduled, without
+-- C_Timer.
+function ns.Wake(key, seconds, event)
+    if not timerAfter or type(seconds) ~= "number" or type(event) ~= "string" then
+        return false
+    end
+    timerAfter(seconds, function()
+        wake(key, event)
+    end)
+    return true
 end
 
 -- Switches a section off for the rest of the session and adds it to the skip
@@ -988,10 +1017,38 @@ local function debugCommand(word)
     )
 end
 
+-- `/wowlab combatlog [on|off|idle <minutes>]` (M20-19): handed to
+-- CombatLog.lua, which pauses and resumes the switch in its own record. A
+-- switch turned off with `/wowlab skip combatlog` is turned back on only by
+-- `/wowlab unskip combatlog`. The typed words are only compared; the minutes
+-- are read as a number.
+local function combatLogCommand(word, minutes)
+    local section = sectionByKey("combatlog")
+    if not section then
+        return
+    end
+    if section.off and word ~= "" then
+        say("the combat-log switch is switched off with /wowlab skip; /wowlab unskip combatlog  turns it back on.")
+    elseif word == "on" or word == "off" then
+        ns.CombatLogSwitch(word == "on")
+        -- Resumed: its check now, out of combat only (wake's guard); in
+        -- combat it runs when the fight ends.
+        if word == "on" then
+            wake("combatlog", "WOWLAB_COMBATLOG_ENTER")
+        end
+    elseif word == "idle" then
+        ns.CombatLogIdle(minutes)
+    elseif word == "" then
+        ns.CombatLogStatus(section.off)
+    else
+        say("/wowlab combatlog on  or  /wowlab combatlog off  or  /wowlab combatlog idle <minutes>")
+    end
+end
+
 SLASH_WOWLAB1 = "/wowlab"
 SlashCmdList.WOWLAB = function(message)
     -- The typed text is compared, never stored.
-    local command, key = string.match(message or "", "^%s*(%S*)%s*(%S*)")
+    local command, key, extra = string.match(message or "", "^%s*(%S*)%s*(%S*)%s*(%S*)")
     command = string.lower(command or "")
     key = string.lower(key or "")
     if command == "skip" or command == "unskip" then
@@ -1016,6 +1073,12 @@ SlashCmdList.WOWLAB = function(message)
         else
             say("in combat: nothing is gathered in combat. Type it again after the fight.")
         end
+    elseif command == "combatlog" then
+        if not ns.probe then
+            say("not loaded yet.")
+            return
+        end
+        combatLogCommand(key, extra)
     elseif command == "crew" then
         -- The crew book (Crew.lua), handed the whole typed text: a name and a
         -- note are not lowercased.
@@ -1024,6 +1087,10 @@ SlashCmdList.WOWLAB = function(message)
         say("/wowlab save  refreshes the tables in memory (written at the next /reload or logout).")
         say("/wowlab skip <section>  switches a section off; /wowlab unskip <section>  back on; /wowlab skip  lists.")
         say("/wowlab debug on|off  records the research probes from the next /reload or login (off by default).")
+        say(
+            "/wowlab combatlog on|off  switches WowLab's automatic combat log (on in the open world; off in instances, "
+                .. "in a raid group and when idle), at once; /wowlab combatlog  its state."
+        )
         say("/wowlab crew  the crew book of players you group with: off until you turn it on.")
     end
 end

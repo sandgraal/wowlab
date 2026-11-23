@@ -17,4 +17,5 @@ Currencies.lua
 Professions.lua
 Actions.lua
 Identity.lua
+CombatLog.lua
 Crew.lua

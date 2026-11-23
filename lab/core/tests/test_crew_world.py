@@ -621,3 +621,126 @@ def test_a_friendly_bystander_is_not_kept_in_a_log_state_constructed(make: Any, 
     _write_log(env, log(_at(_owner_as(SPELL_DAMAGE_YOU_TO_NPC, ALLY_C, FRIENDLY), 20)))
     _json(_scan(env, "--json"))
     assert not [n for n, data in _all_bytes(env) if ALLY_C[0].encode() in data]
+
+
+# ─── every log not read before (M20-19) ──────────────────────────────────────
+#
+# The lab-addon's combat-log switch starts a new log at each switch-on
+# [verify]: `crew scan-log` with no PATH reads every log of the Logs folder
+# not read before, oldest first, each once.
+
+SECOND_NAME = "WoWCombatLog-040226_000000.txt"
+THIRD_NAME = "WoWCombatLog-040326_000000.txt"
+
+
+def _third_log() -> bytes:
+    """A third session's log (its first line two days later): a fight with B."""
+    later = HEADER.replace("4/1/2026", "4/3/2026")
+    return ("\r\n".join([later, zone(0), hits_you(FOE_B, 9000)]) + "\r\n").encode()
+
+
+def _aged(path: Path, seconds: int) -> None:
+    os.utime(path, (seconds, seconds))
+
+
+def test_scan_log_reads_every_log_not_read_before_oldest_first_constructed(
+    make: Any, owner: Any
+) -> None:
+    env = make(_book())
+    _aged(_write_log(env, _fight()), 1_000_000)
+    first = cli.CrewScanLogReport.model_validate(_json(_scan(env, "--json")))
+    assert (first.logs_read, first.logs_already_read, len(first.logs)) == (1, 0, 1)
+    _aged(_write_log(env, _third_log(), name=THIRD_NAME), 3_000_000)
+    _aged(_write_log(env, _second_log(), name=SECOND_NAME), 2_000_000)
+    report = cli.CrewScanLogReport.model_validate(_json(_scan(env, "--json")))
+    assert [f.log for f in report.logs] == [
+        f"Logs/{LOG_NAME}",
+        f"Logs/{SECOND_NAME}",
+        f"Logs/{THIRD_NAME}",
+    ]
+    assert [f.scan.state for f in report.logs] == ["unchanged", "scanned", "scanned"]
+    assert (report.logs_read, report.logs_already_read) == (2, 1)
+    assert report.log == f"Logs/{THIRD_NAME}" and report.scan.encounters_added == 1
+    # Each fight once: the first log's encounter, then D's and B's.
+    assert [e.foes for e in crewdb.world_encounters(FLAVOR, ACCOUNT)] == [
+        [KEY_B],
+        [KEY_D],
+        [KEY_A, KEY_B],
+    ]
+    again = cli.CrewScanLogReport.model_validate(_json(_scan(env, "--json")))
+    assert (again.logs_read, again.logs_already_read) == (0, 3)
+    assert len(crewdb.world_encounters(FLAVOR, ACCOUNT)) == 3
+
+
+def test_scan_log_text_names_each_log_it_read_constructed(make: Any, owner: Any) -> None:
+    env = make(_book())
+    _aged(_write_log(env, _fight()), 1_000_000)
+    _aged(_write_log(env, _second_log(), name=SECOND_NAME), 2_000_000)
+    text = _scan(env)
+    assert text.exit_code == 0, text.output
+    shown = text.stdout.splitlines()
+    assert shown[0].startswith("Read 2 combat logs of 2 in the Logs folder (0 read before")
+    assert "2 open-world encounters added" in shown[0]
+    assert any(line.startswith(f"  Logs/{LOG_NAME}: ") for line in shown)
+    assert any(line.startswith(f"  Logs/{SECOND_NAME}: ") for line in shown)
+    again = _scan(env)
+    assert again.stdout.splitlines()[0].startswith(
+        "Read 0 combat logs of 2 in the Logs folder (2 read before, nothing new)"
+    )
+
+
+def test_scan_log_with_a_path_reads_only_that_log_constructed(make: Any, owner: Any) -> None:
+    env = make(_book())
+    _aged(_write_log(env, _fight()), 1_000_000)
+    second = _write_log(env, _second_log(), name=SECOND_NAME)
+    _aged(second, 2_000_000)
+    report = cli.CrewScanLogReport.model_validate(_json(_scan(env, str(second), "--json")))
+    assert [f.log for f in report.logs] == [f"Logs/{SECOND_NAME}"]
+    assert [e.foes for e in crewdb.world_encounters(FLAVOR, ACCOUNT)] == [[KEY_D]]
+
+
+@pytest.mark.skipif(
+    sys.platform == "win32" or (hasattr(os, "geteuid") and os.geteuid() == 0),
+    reason="chmod 000 does not make a file unreadable here",
+)
+def test_scan_log_skips_and_names_a_log_it_cannot_read_constructed(make: Any, owner: Any) -> None:
+    env = make(_book())
+    _aged(_write_log(env, _fight()), 1_000_000)
+    second = _write_log(env, _second_log(), name=SECOND_NAME)
+    _aged(second, 2_000_000)
+    _aged(_write_log(env, _third_log(), name=THIRD_NAME), 3_000_000)
+    second.chmod(0)
+    try:
+        report = cli.CrewScanLogReport.model_validate(_json(_scan(env, "--json")))
+        assert (report.logs_read, report.logs_unreadable) == (2, 1)
+        [bad] = [f for f in report.logs if f.unreadable is not None]
+        assert bad.log == f"Logs/{SECOND_NAME}" and bad.scan is None
+        assert bad.unreadable is not None
+        assert bad.unreadable.startswith("the file could not be opened: ")
+        assert report.log == f"Logs/{THIRD_NAME}"
+        text = _scan(env)
+        assert text.exit_code == 0, text.output
+        assert "1 could not be read" in text.stdout.splitlines()[0]
+        assert any(f"Logs/{SECOND_NAME}: not read, skipped" in x for x in text.stdout.splitlines())
+        # With PATH, the error stays an error.
+        alone = _scan(env, str(second))
+        assert alone.exit_code != 0 and "is not readable" in alone.output
+    finally:
+        second.chmod(0o644)
+    later = cli.CrewScanLogReport.model_validate(_json(_scan(env, "--json")))
+    assert (later.logs_read, later.logs_already_read, later.logs_unreadable) == (1, 2, 0)
+
+
+def test_scan_log_says_how_many_older_logs_it_did_not_look_at_constructed(
+    make: Any, owner: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(cli, "_MAX_LOGS", 2)
+    env = make(_book())
+    _aged(_write_log(env, _fight()), 1_000_000)
+    _aged(_write_log(env, _second_log(), name=SECOND_NAME), 2_000_000)
+    _aged(_write_log(env, _third_log(), name=THIRD_NAME), 3_000_000)
+    report = cli.CrewScanLogReport.model_validate(_json(_scan(env, "--json")))
+    assert report.logs_not_looked_at == 1
+    assert [f.log for f in report.logs] == [f"Logs/{SECOND_NAME}", f"Logs/{THIRD_NAME}"]
+    text = _scan(env).stdout.splitlines()
+    assert "  1 older log not looked at: only the newest 2 are." in text

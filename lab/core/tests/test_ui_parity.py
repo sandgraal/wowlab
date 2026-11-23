@@ -114,9 +114,10 @@ REFUSED_PARAMS: Mapping[tuple[str, ...], Mapping[str, str]] = {
     ("char", "model"): {
         "out": "from the UI the model goes only to its default place in wowlab's data folder"
     },
-    # M20-18: `crew scan-log` reads only the newest log from the UI.
+    # M20-18: `crew scan-log` reads only the Logs folder from the UI (M20-19:
+    # every log there not read before).
     ("crew", "scan-log"): {
-        "path": "from the UI only the newest log in the game's Logs folder is read"
+        "path": "from the UI only the game's Logs folder is read: every combat log there not read before"
     },
 }
 """Parameters the UI refuses on a leaf that otherwise runs."""

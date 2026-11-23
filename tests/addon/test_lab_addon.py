@@ -2651,6 +2651,8 @@ def test_skip_section_keys_are_the_plan_keys() -> None:
         "identity",
         # Schema 5 (M20-13).
         "macros",
+        # Schema 5 (M20-19): the combat-log switch.
+        "combatlog",
     }
 
 
@@ -3670,6 +3672,8 @@ SECTIONLESS_CALLERS: dict[tuple[str, str], dict[tuple[str, str], int]] = {
         ("Core.lua", "gatherAtLogout"): 2,
         ("Core.lua", "onEvent"): 1,  # an immediate section's change event
         ("Core.lua", "ns.Refresh"): 1,
+        # M20-19: ns.Wake's timer, for the combat-log switch's own checks
+        ("Core.lua", "wake"): 1,
     },
     ("Core.lua", "ns.Write"): {
         ("Core.lua", 'ns.On("PLAYER_LOGOUT")'): 1,
@@ -3731,6 +3735,15 @@ HANDED_ON: dict[tuple[str, str, str], str] = {
     ("Talents.lua", "legacyConfigs", "ns . Call ( bySystem , value )"): (
         "a Constants value, tested as a number just before, handed now to "
         "C_Traits.GetConfigIDBySystemID through ns.Call"
+    ),
+    # M20-19: the combat-log switch asks Core for its own timers (the check
+    # after a loading screen, the idle check). The callback does not run on
+    # the spot, but it reaches the client only through `gather`, which
+    # refuses a section switched off meanwhile, so `/wowlab skip` still
+    # stops it.
+    ("Core.lua", "ns.Wake", "timerAfter ( seconds , function ( ) wake ( key , event ) end )"): (
+        "a timer that runs `wake`: the immediate section's gather, through `gather`, which "
+        "returns at once for a section switched off"
     ),
 }
 
@@ -5035,6 +5048,11 @@ def test_m11_37_the_scan_sees_exactly_the_std_names() -> None:
     assert roots == std, (sorted(roots - std), sorted(std - roots))
     with_sections = {path.name for path in sorted(ADDON.glob("*.lua")) if _keys_in(path)}
     in_section = {ref.file for ref in scan.refs if ref.in_section}
+    # M20-19: Core.lua's ns.Wake is called only from the combat-log switch's
+    # gather, so its timer reference is section code; nothing else in Core.lua.
+    core = {(r.function, r.api) for r in scan.refs if r.in_section and r.file == "Core.lua"}
+    assert core == {("ns.Wake", "timerAfter")}, sorted(core)
+    in_section -= {"Core.lua"}
     assert in_section == with_sections, (sorted(in_section), sorted(with_sections))
 
 
@@ -8071,6 +8089,7 @@ _NOT_CREW = (
     "Professions.lua",
     "Actions.lua",
     "Identity.lua",
+    "CombatLog.lua",
     "crew.lua",
     "CREW.lua",
     "Crew.LUA",
@@ -9070,8 +9089,12 @@ _M20_13_GATHER_GUARDS: dict[tuple[str | None, str], tuple[str, ...]] = {
     # ns.Refresh returns at once in combat (pinned above).
     ("ns.Refresh", "gather"): ("if section . on_world and not section . off then",),
     # An immediate section (customization, on BARBER_SHOP_OPEN and
-    # BARBER_SHOP_APPLIED): the barber shop is not reachable in combat.
+    # BARBER_SHOP_APPLIED): the barber shop is not reachable in combat. M20-19:
+    # and the combat-log switch, whose in-combat path is pinned in
+    # test_m20_19_combatlog.py.
     ("onEvent", "gather"): ("if section . immediate then",),
+    # M20-19: ns.Wake's timer gathers an immediate section out of combat only.
+    ("wake", "gather"): ("if section and section . immediate and not inCombat then",),
 }
 
 
@@ -9085,6 +9108,12 @@ def test_m20_13_core_gathers_nothing_in_combat() -> None:
 # Customization.lua. Anywhere else (Gear.lua's section would gather on
 # PLAYER_EQUIPMENT_CHANGED, which fires in combat on a weapon swap) fails.
 _M20_13_IMMEDIATE = ("Customization.lua", "customization")
+# M20-19 (ADR-0026, note of 2026-11-22): the combat-log switch gathers on its
+# events, the start of a fight among them, because the owner's rule turns the
+# log back on at the next fight. What it does in combat (one call that turns
+# a log it turned off for idling back on, nothing else) is pinned in
+# tests/addon/test_m20_19_combatlog.py.
+_M20_19_IMMEDIATE = ("CombatLog.lua", "combatlog")
 
 
 def _m20_13_immediate_keys(path: Path) -> list[str]:
@@ -9114,9 +9143,10 @@ def _m20_13_immediate_keys(path: Path) -> list[str]:
 
 def _m20_13_immediate_problems(path: Path) -> list[str]:
     return [
-        f"{path.name}: section {key} is immediate; only the barber-shop section may be"
+        f"{path.name}: section {key} is immediate; only the barber-shop section and the "
+        "combat-log switch may be"
         for key in _m20_13_immediate_keys(path)
-        if (path.name, key) != _M20_13_IMMEDIATE
+        if (path.name, key) not in (_M20_13_IMMEDIATE, _M20_19_IMMEDIATE)
     ]
 
 

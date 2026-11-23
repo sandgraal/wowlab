@@ -92,6 +92,9 @@ WowLabCharDB = {
                guid | guid_absent, name | name_absent, realm | realm_absent, guild | guild_absent,  -- the last four: schema 5
                realm_from, realm_normalized,  -- M20-16: the realm's source, and true when only its form without spaces was given
                realm_tried },  -- M20-17: what the sources asked before realm_from gave
+  -- schema 5 (M20-19), the combat-log switch; what it did, never what the log holds:
+  combatlog = { idle_minutes, switches, last_at, last_to = "on"|"off", last_why, mine, paused?, log_on, hands_off, advanced,
+                dormant?, refused_in_combat? } | { absent },  -- absent only when switched off with /wowlab skip
 }
 probes = { { api, present, calls, errors, answered, secret } }  -- one per API the section asks, in a fixed order, then issecretvalue, C_Secrets, canaccessvalue
 <config> = { id, type, trees = { { id, system_id, currencies = { { id, quantity, max_quantity, spent } }, nodes = { { id, ranks_purchased, active_rank, current_rank, max_ranks, is_visible, entries, sub_tree, active_entry, active_entry_rank } } } } }
@@ -610,6 +613,7 @@ hold several sections:
 - `Professions.lua`: `professions`
 - `Actions.lua`: `spellbook`, `actionbars`, `bindings`, `macros`
 - `Identity.lua`: `identity`
+- `CombatLog.lua`: `combatlog`
 - `Core.lua` holds no section: events, tables and the slash command.
 - `Crew.lua` holds no section: the crew book, switched by `/wowlab crew on`
   and `off` ("The crew book" below).
@@ -657,6 +661,78 @@ What the switch does not do:
   crash seen (M11-20) came about 4 s after entering the world on the old
   timing. If it cannot be typed in time, untick the addon at character
   select.
+
+### The combat-log switch
+
+`CombatLog.lua` (the `combatlog` section, M20-19; ADR-0026, note of
+2026-11-22) turns the game's combat log on and off by time and place only,
+so world PvP can be read from the log at the desk:
+
+- **On** in the open world (outside any instance) and not in a raid group:
+  15 s after each loading screen (the first check after login waits, as the
+  first recording pass does), on a zone change and on a group change.
+- **Off** on entering an instance, on joining a raid group, and after the
+  idle time with no combat (10 min by default, from when the log went on or
+  the last fight ended; after a `/reload`, from the first check). After an
+  idle switch-off only the next fight turns it back on in the open world; a
+  zone change does not. The log comes back once the fight has started, so
+  the hit that started it is not in the log: a longer idle time
+  (`/wowlab combatlog idle 60`) avoids that.
+- Nothing else decides it: not the PvP flag, not who is near.
+- **Only its own log.** It reads the log's state first. A log it finds on
+  that it did not turn on is left on, never turned off, and it says so once
+  ("not turned on by WowLab"). A log it turned on that is turned off outside
+  WowLab (`/combatlog`, or another addon) stays off until the next `/reload`
+  or login, said once. Which log is "its own" is kept per character, while
+  the log is the game's, for every character. A log turned off and on again
+  by hand within the 15 s after a loading screen cannot be told apart from
+  WowLab's: do not toggle it by hand then. Another addon that switches the
+  combat log by itself will fight this one; use one of them.
+- **In combat** it does one thing: turn back on a log it turned off for
+  idling. A zone or group change in combat is checked when the fight ends. A
+  switch the game refuses in combat is counted (`refused_in_combat`) and
+  tried again when the fight ends, after the owed place check, so never in
+  an instance or a raid group; refused out of combat, the switch stops
+  switching for the session.
+- **Chat:** one line per switch, with the reason (`WowLab: combat log on
+  (open world).`); one line once a session when Advanced Combat Logging is
+  off (it never changes that setting).
+- `/wowlab combatlog` says whether the switch is on, the idle time, how many
+  switches it has made and the last one. `/wowlab combatlog off` and `on`
+  pause and resume it at once, kept in its record, so the count and whether
+  the log is WowLab's are kept. Paused, the log is left as it is; `on`
+  checks it at once (in combat, when the fight ends). A log WowLab had on
+  that is turned off and on again by hand while paused is taken as
+  WowLab's after `on`; one turned off by hand while paused stays off for
+  the session.
+  `/wowlab combatlog idle <minutes>` sets the idle time, 1 to 120. Both are
+  saved at the next `/reload` or logout. `/wowlab skip combatlog` stops it as
+  it stops any section, and drops its record.
+- **Stopped for the session** where the game gives addons no
+  `LoggingCombat`, or the log does not change when asked out of combat: one
+  line, no error; the record keeps its count and says why (`dormant`), and
+  `/wowlab combatlog` says "stopped switching this session".
+- **Log files.** Each switch-on may start a new `WoWCombatLog-*.txt` in
+  `Logs/` [verify]; they pile up there, and deleting old ones is yours to
+  do. `wowlab crew scan-log` with no file reads every log not read before
+  (the newest 1,000), oldest first; one it cannot open is skipped and named,
+  and the others are read.
+- The record, `WowLabCharDB.combatlog`: `idle_minutes`, `switches` (a count
+  kept across sessions), `last_at` (`time()` of the last switch), `last_to`
+  (`"on"` or `"off"`), `last_why`, `mine` (the log is on because WowLab
+  turned it on), `paused`, `log_on`, `hands_off`, `advanced` (the setting at
+  the last switch on), `dormant` and `refused_in_combat`; nothing the log
+  holds. `wowlab char show` prints it.
+
+**Not yet confirmed [verify]:** that the owner's client gives addons
+`LoggingCombat` and lets a call switch the log, out of combat and in combat;
+that `LoggingCombat()` with no argument returns `true` or `false`; that the
+log stays on across `/reload` and across a logout to another character;
+whether each switch-on starts a new log file; whether entering an instance
+fires `ZONE_CHANGED_NEW_AREA` before the 15 s check; the setting's name
+`advancedCombatLogging`. The owner's first run should check: the chat lines
+at login, an instance and an idle; a switch in combat; and how many files
+`Logs/` holds after a session.
 
 ### The crew book
 
@@ -1052,7 +1128,7 @@ on from one, fails the test until someone lists it on purpose.
 | `GetBinding` | bindings: each command (first return only) | ran on 70425 (M13-05 capture: 299 of 299 answered); whether it lists a spell dragged onto a key: [verify] | yes |
 | `GetBindingKey` | bindings: the keys bound to a command now | ran on 70425 (M13-05 capture: 124 of 298 with a key; the 8 `bindings-cache.wtf` lines match, the other bound commands are unexplained); other builds: [verify] | yes |
 | `IsInGroup` | crew book: whether a pass reads the group at all (not in a group: `current` is emptied) | [verify] | yes |
-| `IsInRaid` | crew book: `raidN` units in a raid, `partyN` otherwise | [verify] | yes |
+| `IsInRaid` | crew book: `raidN` units in a raid, `partyN` otherwise; combatlog: a raid group turns the log off | [verify] | yes |
 | `UnitIsUnit` | crew book: the owner skipped (`raidN` includes the owner), never by comparing names; the target is not the owner | [verify] | yes |
 | `UnitIsPlayer` | crew book: `/wowlab crew good`, `bad`, `clear` and `note` use the target only when it is a player; the tooltip line is shown only for a player (`mouseover`) | [verify] | yes |
 | `UnitName` | crew book: a member's or the target's name and realm (nil or empty realm: the owner's own); identity (schema 5): the character's `name` | [verify] | yes |
@@ -1079,6 +1155,9 @@ on from one, fails the test until someone lists it on purpose.
 | `GetBattlefieldWinner` | crew book: a match is read once it gives a winner; `won` when it is 0 or 1; the probe: the winner as a whole number | [verify] | not checked |
 | `GetBattlefieldArenaFaction` | crew book: the player's own side when the own row is not found; the probe: the same as a whole number | [verify] | not checked |
 | `IsActiveBattlefieldArena` | crew book's scoreboard probe: whether it exists (not called) | [verify] | not checked |
+| `LoggingCombat` | combatlog: with no argument, whether the combat log is on (true or false); with `true` or `false`, turns it on or off, then asked again to check it changed | [verify] | not checked |
+| `IsInInstance` | combatlog: its first return, `true` in an instance (the log goes off), `false` in the open world | [verify] | not checked |
+| `C_CVar.GetCVar` | combatlog: `advancedCombatLogging` only, `"1"` or `"0"`, read after a switch on; never set | [verify] | not checked |
 
 Addon-defined globals: `WowLabCharDB`, `WowLabDB`, `WowLabCrewDB` (the crew book), `SLASH_WOWLAB1`.
 
@@ -1095,7 +1174,9 @@ they are **[verify]** like every other event: `ACTIVE_COMBAT_CONFIG_CHANGED`, `P
 `PET_JOURNAL_LIST_UPDATE`, `CURRENCY_DISPLAY_UPDATE`,
 `SKILL_LINES_CHANGED`, and since schema 3 `SPELLS_CHANGED`,
 `ACTIONBAR_SLOT_CHANGED`, `UPDATE_BINDINGS` and `PLAYER_REGEN_ENABLED` (a
-retry event: it re-gathers only a section a blocked gather left dirty). An
+retry event: it re-gathers only a section a blocked gather left dirty), and
+for `combatlog` (M20-19) `ZONE_CHANGED_NEW_AREA`, `GROUP_ROSTER_UPDATE`,
+`PLAYER_REGEN_DISABLED` and `PLAYER_REGEN_ENABLED`. An
 event the client does not know is skipped and
 listed in the section's `events_unregistered` (an empty list when none was
 refused).
