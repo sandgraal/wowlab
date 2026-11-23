@@ -1,0 +1,184 @@
+# What wowsims/forever's individual sim reads from its "Addon" import, for
+# `wowlab char sim-export` (M21-08, `wowlab_core.simexport`).
+#
+# Read by hand from wowsims/forever, https://github.com/wowsims/forever, at
+# commit 57df2a7a5a2bb085bfce15890a33d655bb7fd66f (2026-11-23, after v1.0.2).
+# Nothing is fetched at run time; a newer sim is read again by hand and this
+# file and `[source] commit` change together.
+#
+# The talent tables below are copied from that repository's
+# `ui/sim/talents/trees/<class>.json` (each tree's `talents[].definitionId`,
+# in the order listed), which is:
+#
+#   MIT License, Copyright (c) 2022 wowsims team
+#
+#   Permission is hereby granted, free of charge, to any person obtaining a
+#   copy of this software and associated documentation files (the
+#   "Software"), to deal in the Software without restriction, including
+#   without limitation the rights to use, copy, modify, merge, publish,
+#   distribute, sublicense, and/or sell copies of the Software, and to permit
+#   persons to whom the Software is furnished to do so, subject to the
+#   following conditions:
+#
+#   The above copyright notice and this permission notice shall be included
+#   in all copies or substantial portions of the Software.
+#
+#   THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
+#   OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+#   MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN
+#   NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM,
+#   DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR
+#   OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE
+#   USE OR OTHER DEALINGS IN THE SOFTWARE.
+
+[source]
+repository = "https://github.com/wowsims/forever"
+commit = "57df2a7a5a2bb085bfce15890a33d655bb7fd66f"
+# The files each table below was read from, at that commit.
+read = [
+    "ui/features/import-export/importers/addon.ts",
+    "ui/features/import-export/importers/finish_individual_import.ts",
+    "proto/common.proto",
+    "ui/sim/proto/names.ts",
+    "ui/sim/proto/database.ts",
+    "ui/sim/talents/trees/<class>.json",
+    "tools/database/dbc/random_suffix.go",
+]
+
+[format]
+# `flavor` in the export: addon.ts applies the talent string only when it is
+# this word (a string built for another game's trees would spend the points
+# on other talents). It names the sim's format, not a client folder.
+flavor = "forever"
+# The sim's `ItemSlot` values 0 to 16 (proto/common.proto), in order, as the
+# client's inventory slot numbers (the numbers `gear_slots.toml` names): Head,
+# Neck, Shoulder, Back, Chest, Wrist, Hands, Waist, Legs, Feet, Finger 1,
+# Finger 2, Trinket 1, Trinket 2, Main Hand, Off Hand, Ranged. A slot not in
+# this list (the shirt, 4, and the tabard, 19) has no place in the sim.
+slots = [1, 2, 3, 15, 5, 9, 10, 6, 7, 8, 11, 12, 13, 14, 16, 17, 18]
+
+[races]
+# The character's race id (a ChrRaces row id) = the sim's English race name
+# (names.ts `raceNames`, matched by `nameToRace`). The ids are the
+# ChrRaces rows of those names in the recorded 1.60.1.70058 table
+# (lab/core/tests/fixtures/wago/ChrRaces.1.60.1.70058.csv); 95 and 96, the
+# two Skyborne rows, are [verify] at later builds.
+"1" = "Human"
+"2" = "Orc"
+"3" = "Dwarf"
+"4" = "Night Elf"
+"5" = "Undead"
+"6" = "Tauren"
+"7" = "Gnome"
+"8" = "Troll"
+"10" = "Blood Elf"
+"95" = "High Order Skyborne"
+"96" = "Windshaper Skyborne"
+
+[classes]
+# The character's class id (a ChrClasses row id) = the sim's class name. The
+# sim's `Class` enum (proto/common.proto) numbers its classes by ChrClasses
+# id; `nameToClass` reads these lower-case names.
+"1" = "warrior"
+"2" = "paladin"
+"3" = "hunter"
+"4" = "rogue"
+"5" = "priest"
+"7" = "shaman"
+"8" = "mage"
+"9" = "warlock"
+"11" = "druid"
+
+# Each class's three talent trees in the sim's order: digit i of tree t of the
+# export's talent string is the rank of the TraitDefinition id at position i
+# of tree t. The record holds trait entry ids; the game's TraitNodeEntry table
+# (cached by `wowlab db2 fetch TraitNodeEntry`) gives each one's definition.
+[talents.druid]
+trees = [
+    # Balance, 16 talents
+    [134384, 134385, 134386, 134392, 134388, 134390, 134387, 134389, 134391, 134393, 134394, 142590, 134395, 134396, 134397, 134398],
+    # Feral Combat, 20 talents
+    [134399, 134400, 134404, 134401, 134402, 134403, 134406, 134409, 134405, 134407, 134413, 134410, 134412, 134408, 134416, 134411, 134414, 134415, 134417, 145859],
+    # Restoration, 16 talents
+    [134418, 134419, 134383, 134381, 134380, 134378, 134377, 134379, 134376, 134375, 134373, 134382, 134372, 134370, 134374, 134371],
+]
+
+[talents.hunter]
+trees = [
+    # Beast Mastery, 16 talents
+    [134422, 134438, 134437, 134436, 134434, 134435, 134432, 134431, 134430, 134429, 134428, 134427, 134426, 134425, 134424, 134423],
+    # Marksmanship, 16 talents
+    [134478, 134477, 134476, 142622, 134474, 134473, 134470, 134471, 134472, 134469, 134467, 134464, 134466, 134465, 134463, 134462],
+    # Survival, 18 talents
+    [134461, 134460, 134459, 134458, 134457, 134455, 134456, 134452, 134451, 134453, 142607, 134454, 134448, 134450, 142606, 134446, 142605, 134449],
+]
+
+[talents.mage]
+trees = [
+    # Arcane, 18 talents
+    [135345, 135343, 135332, 135342, 135341, 135340, 135339, 135338, 135337, 135336, 135335, 135334, 135333, 145958, 135331, 135330, 135329, 135328],
+    # Fire, 17 talents
+    [135326, 135325, 135324, 135323, 135322, 135319, 135321, 135320, 135327, 135318, 135317, 135316, 135315, 135314, 135313, 135312, 135311],
+    # Frost, 18 talents
+    [135310, 135309, 135308, 135307, 135304, 135305, 135306, 135302, 135301, 135297, 135300, 135299, 135298, 135295, 135296, 135294, 135293, 135292],
+]
+
+[talents.paladin]
+trees = [
+    # Holy, 17 talents
+    [134830, 145961, 134828, 142623, 134829, 134822, 134820, 134824, 135234, 134819, 142625, 134825, 142624, 134818, 145962, 134816, 134815],
+    # Protection, 17 talents
+    [134827, 135151, 135163, 135162, 135157, 135150, 135158, 142626, 135155, 142630, 135159, 135161, 135164, 135153, 135152, 142631, 142627],
+    # Retribution, 17 talents
+    [135237, 135236, 135235, 135233, 135231, 135232, 134826, 135226, 135229, 135228, 135230, 135227, 145960, 135224, 135223, 142634, 135222],
+]
+
+[talents.priest]
+trees = [
+    # Discipline, 18 talents
+    [142599, 135380, 135379, 135378, 142598, 135367, 135375, 135372, 135374, 135376, 135373, 135371, 135368, 135369, 135364, 135365, 135370, 135366],
+    # Holy, 17 talents
+    [135397, 135396, 142601, 135394, 135393, 135392, 135391, 135390, 135389, 135388, 135387, 135386, 135385, 135384, 135383, 135382, 135381],
+    # Shadow, 17 talents
+    [142597, 135362, 135363, 135361, 135360, 135359, 135358, 135356, 135355, 135353, 135350, 135351, 135354, 135349, 142600, 135348, 135347],
+]
+
+[talents.rogue]
+trees = [
+    # Assassination, 17 talents
+    [135272, 135253, 135252, 135251, 135247, 135269, 135250, 135248, 135246, 135244, 135245, 135243, 145964, 135242, 135241, 135240, 135239],
+    # Combat, 19 talents
+    [135238, 135271, 145370, 135249, 135268, 135267, 135262, 135266, 135265, 135289, 135263, 138268, 135256, 135260, 145965, 135258, 135257, 135270, 135254],
+    # Subtlety, 18 talents
+    [135281, 135291, 135290, 135275, 135286, 135279, 135287, 135285, 135273, 135282, 135283, 135284, 142619, 135277, 135276, 135278, 135280, 142618],
+]
+
+[talents.shaman]
+trees = [
+    # Elemental, 16 talents
+    [134234, 134233, 134230, 134228, 134232, 134231, 134229, 134226, 134225, 134224, 134223, 134222, 134221, 134220, 134227, 134219],
+    # Enhancement, 18 talents
+    [134218, 134214, 134217, 134215, 134216, 134212, 134211, 134210, 134209, 134207, 134208, 134204, 134213, 134206, 134205, 134203, 134202, 134201],
+    # Restoration, 16 talents
+    [134200, 134190, 134195, 134197, 134196, 134198, 134192, 134194, 134193, 134199, 134191, 134189, 134188, 134187, 134186, 134185],
+]
+
+[talents.warlock]
+trees = [
+    # Affliction, 17 talents
+    [135452, 135456, 135455, 135454, 135453, 135451, 135450, 135449, 135447, 135448, 142628, 135445, 135444, 135443, 135442, 135441, 135440],
+    # Demonology, 19 talents
+    [135436, 135439, 135438, 135437, 135433, 135435, 135434, 135430, 135432, 135431, 135429, 135428, 135426, 135427, 135425, 135423, 135424, 135422, 135421],
+    # Destruction, 16 talents
+    [135412, 135420, 135419, 135416, 135418, 135417, 135414, 135415, 135413, 135410, 135411, 135409, 135407, 135408, 135406, 135405],
+]
+
+[talents.warrior]
+trees = [
+    # Arms, 17 talents
+    [135489, 135488, 135487, 135486, 135485, 135483, 135482, 135481, 135480, 135479, 135478, 141974, 135476, 135475, 142604, 135473, 135472],
+    # Fury, 18 talents
+    [135469, 135470, 142603, 135468, 135484, 135466, 135465, 135462, 135464, 145966, 135463, 135509, 135458, 145863, 135457, 135508, 135459, 135461],
+    # Protection, 18 talents
+    [135505, 135507, 145864, 135506, 135500, 135503, 135501, 135502, 135498, 142602, 135499, 135497, 135494, 135495, 135496, 135492, 135493, 135490],
+]

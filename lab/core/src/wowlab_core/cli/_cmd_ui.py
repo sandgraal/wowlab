@@ -44,10 +44,11 @@ def ui_command() -> None:
     undo, sv merge, macros fix, crew forget, crew rate and crew note refuse
     when something changed after the plan;
     the others apply what is there when you confirm. ui itself, log tail
-    --follow, looks page --out, casc cat --out, char model --out, crew
-    scan-log PATH, snap export and snap rm are not offered, so casc cat and
-    char model write only to their default places and crew scan-log reads
-    only the newest combat log. If no browser opens, the URL is printed once on stdout."""
+    --follow, looks page --out, casc cat --out, char model --out, char
+    sim-export --out, crew scan-log PATH, snap export and snap rm are not
+    offered, so casc cat and char model write only to their default places,
+    char sim-export writes no file and crew scan-log reads only the newest
+    combat log. If no browser opens, the URL is printed once on stdout."""
     # The browser is opened on a thread: `webbrowser` waits for a browser it
     # runs in the foreground (a text browser, or a `BROWSER` program), and
     # that browser's request must find the server already serving. What it

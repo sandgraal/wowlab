@@ -98,7 +98,15 @@
 <p class="char-dress">
 <a id="char-dressing-link" class="dressing-link" target="_blank" rel="noopener noreferrer" hidden>See it dressed</a>
 <span id="char-dressing-short" class="dressing-short"></span>
+<button id="char-sim-button" class="sim-button" type="button" aria-controls="char-sim" aria-expanded="false" hidden>Copy for WoWSims</button>
 </p>
+<div id="char-sim" class="char-sim" hidden>
+<p id="char-sim-status" class="sim-status" role="status"></p>
+<pre id="char-sim-text" class="sim-text" tabindex="0" hidden></pre>
+<p id="char-sim-copy" class="sim-copy"></p>
+<ul id="char-sim-left" class="sim-left" hidden></ul>
+<p id="char-sim-note" class="sim-note"></p>
+</div>
 </section>
 <div class="char-grid">
 <section id="char-gear-panel" class="panel char-panel" aria-labelledby="char-gear-title">
@@ -145,7 +153,7 @@
 </section>
 </div>
 <details class="about"><summary>About this data</summary>
-<p class="intro">One character as the lab-addon last saved it: the file it wrote at logout or <code>/reload</code>, never the session in progress, beside the key bindings and macros the client last wrote, and its earlier saves that your backups hold. Read only: this page runs <code>wowlab char list</code>, <code>wowlab char gear</code>, <code>wowlab char binds</code>, <code>wowlab char macros</code> and <code>wowlab char history</code>, or, for a character kept only in a backup, <code>wowlab char kept</code>, and nothing else; the professions are the ones <code>wowlab char list --summary</code> read for All characters. An item's name is its link's own text, and nothing is fetched. <strong>See it dressed</strong> opens an outside dressing room in your own browser, and only when you click it; this page makes no request to it.</p>
+<p class="intro">One character as the lab-addon last saved it: the file it wrote at logout or <code>/reload</code>, never the session in progress, beside the key bindings and macros the client last wrote, and its earlier saves that your backups hold. Read only: this page runs <code>wowlab char list</code>, <code>wowlab char gear</code>, <code>wowlab char binds</code>, <code>wowlab char macros</code> and <code>wowlab char history</code>, or, for a character kept only in a backup, <code>wowlab char kept</code>, and, when you click <strong>Copy for WoWSims</strong>, <code>wowlab char sim-export</code>, and nothing else; the professions are the ones <code>wowlab char list --summary</code> read for All characters. An item's name is its link's own text, and nothing is fetched. <strong>See it dressed</strong> opens an outside dressing room in your own browser, and only when you click it; this page makes no request to it. <strong>Copy for WoWSims</strong> shows the character as the text WoWSims' Addon Import reads, to copy and paste there yourself; wowlab sends nothing to WoWSims.</p>
 <div id="char-about" class="char-about">
 <div id="char-sources"></div>
 <div id="char-dressing" class="char-dressing" hidden>

@@ -528,6 +528,9 @@ def test_the_explorer_runs_only_listed_read_commands(server: Any) -> None:
         ("char", "binds"),
         ("char", "macros"),
         ("char", "history"),
+        # M21-08: the Character tab's Copy for WoWSims runs `char sim-export`
+        # on a click, never with --out; graded in test_ui_sim_export.py.
+        ("char", "sim-export"),
         ("looks", "page"),
         ("snap", "create"),
         ("snap", "diff"),

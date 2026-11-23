@@ -78,6 +78,9 @@ READS = {
     ("char", "binds"),
     ("char", "macros"),
     ("char", "history"),
+    # M21-08: Copy for WoWSims, on a click; without --out (which the server
+    # refuses) it writes nothing.
+    ("char", "sim-export"),
 }
 # The picker asks for no record (M13-72): `char list --json --brief`.
 LIST_PARAMS = {"brief": True}

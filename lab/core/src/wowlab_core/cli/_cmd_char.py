@@ -26,6 +26,7 @@ from wowlab_core import (
     luadata,
     macrocheck,
     macroplace,
+    simexport,
     snapshot,
     wtfconfig,
 )
@@ -82,6 +83,7 @@ from wowlab_core.cli._common import (
     _plural,
     _safe,
     _say,
+    _say_err,
     _say_note,
     _say_notes,
     _say_prose,
@@ -1592,6 +1594,180 @@ def char_gear(
         "replaces the shipped one."
     )
     _say_notes([*standing, *_char_notes(record)], notes_out, keep=[_home_words(table.user_file)])
+
+
+class CharSimExportReport(_Out):
+    """`wowlab char sim-export --json` (M21-08): one character as the JSON
+    WoWSims' individual sim imports (`simexport.SimExport`: `text` to paste,
+    the same object as `export`, and `left_out`, what the record holds that
+    the export does not carry, each with why), and `path`, the file
+    `--out` wrote, or None."""
+
+    character: str  # "<realm folder>/<character folder>"
+    file: str  # relative to the flavor folder
+    mtime_ns: int
+    flavor_folder: str
+    sim: simexport.SimExport
+    path: str | None
+    notes: list[str]
+
+
+def _talent_table(builds: Sequence[str | None]) -> tuple[dict[int, int] | None, str | None, str]:
+    """The trait entry definitions from the first of `builds` whose
+    `TraitNodeEntry` table is cached, that build, and, when none is, why.
+    Never fetches."""
+    tried: list[str] = []
+    for build in dict.fromkeys(b for b in builds if b):
+        try:
+            rows = gamedata.cached_rows(simexport.TALENT_TABLE, build)
+            if rows is None:
+                tried.append(build)
+                continue
+            return simexport.definitions(rows), build, ""
+        except (ValueError, OSError, gamedata.GameDataError) as exc:
+            return (
+                None,
+                None,
+                f"the cached {simexport.TALENT_TABLE} table of {build} cannot be read ({exc})",
+            )
+    if not tried:
+        return None, None, "neither the record nor the install names a game version"
+    fetch = f"wowlab db2 fetch {simexport.TALENT_TABLE} --build {tried[0]}"
+    return (
+        None,
+        None,
+        f"the game table {simexport.TALENT_TABLE} is not cached for {' or '.join(tried)}; "
+        f"{fetch} downloads it once",
+    )
+
+
+@char_app.command("sim-export", short_help="One character as the JSON WoWSims' Addon Import reads.")
+@_handled
+def char_sim_export(
+    character: CharacterOpt = None,
+    account: AccountOpt = None,
+    out: Annotated[
+        str | None,
+        typer.Option(
+            "--out",
+            metavar="<name>",
+            help=f"Write the export to this file name in wowlab's {simexport.EXPORTS_DIR} folder "
+            "(under its data folder), replacing an earlier export of that name, instead of "
+            "printing it. A plain file name only.",
+        ),
+    ] = None,
+    root: RootOpt = None,
+    flavor: FlavorOpt = None,
+    json_out: JsonOpt = False,
+    notes_out: NotesOpt = False,
+) -> None:
+    """One character as the JSON WoWSims (wowsims/forever) reads in its Addon
+    Import: class, race, level, talents, and each slot's item id, enchant
+    and random suffix, from what the lab-addon recorded. Without --character,
+    the character whose WowLab.lua was written last. Printed on its own on
+    stdout, to paste or redirect; what the record holds that the export
+    leaves out is listed on stderr. The talents need the game table
+    TraitNodeEntry in wowlab's cache (wowlab db2 fetch TraitNodeEntry);
+    nothing is fetched here and nothing is sent anywhere. Reads only, except
+    the file --out writes in wowlab's data folder.
+
+    \f
+    JSON: CharSimExportReport."""
+    if out is not None:
+        try:
+            simexport.out_path(out)
+        except simexport.OutError as exc:
+            raise CliError(str(exc), EXIT_USAGE) from exc
+    _, chosen, lay = _open_char(root, flavor, account)
+    acct = _select_account(lay, account)
+    files = [f for f in lay.saved_variables() if f.account == acct.folder and _is_lab_file(f)]
+    target, how, tie = _lab_char_file(acct, files, character)
+    record = _listed(labaddon.read_char, lay, target.path)
+    identity = labaddon.identity_of(record)
+    gear_absent = _no_gear(record, target.path)
+    slots: list[gear.GearSlot] = []
+    if gear_absent is None:
+        section = record.gear
+        assert isinstance(section, labaddon.Gear)  # _no_gear said so
+        try:
+            slots, _ = gear.rows(section, _slot_table().table)
+        except itemlink.ItemLinkError as exc:  # the record reader admits no such link
+            raise CliError(f"{target.path}: an item link wowlab cannot read: {exc}") from exc
+    try:
+        fmt = simexport.load_format()
+        klass = simexport.class_name(identity, fmt)
+    except simexport.FormatError as exc:
+        raise CliError(f"the shipped {simexport.FORMAT_FILE} cannot be used: {exc}") from exc
+    except simexport.SimExportError as exc:
+        raise CliError(f"{target.path}: no export: {exc}") from exc
+    table, table_build, table_absent = _talent_table(
+        [labaddon.client_build(record), chosen.version]
+    )
+    talents = simexport.talents_of(
+        simexport.purchased(record),
+        klass,
+        table,
+        table_build=table_build,
+        table_absent=table_absent,
+        fmt=fmt,
+    )
+    sim = simexport.build(
+        identity,
+        slots,
+        level=dressing.level_of(record),
+        talents=talents,
+        gear_absent=gear_absent,
+        fmt=fmt,
+    )
+    notes = _char_notes(record)
+    if how == "latest":
+        notes.append(
+            "The character is the one whose WowLab.lua has the newest modification time; "
+            "choose another with --character."
+        )
+    notes.append(sim.note)
+    path: Path | None = None
+    if out is not None:
+        try:
+            path = simexport.write_export(sim.text, out)
+        except simexport.OutError as exc:
+            raise CliError(str(exc)) from exc
+    report = CharSimExportReport(
+        character=f"{target.realm_folder}/{target.character_folder}",
+        file=target.path,
+        mtime_ns=target.mtime_ns,
+        flavor_folder=chosen.folder,
+        sim=sim,
+        path=None if path is None else str(path),
+        notes=notes,
+    )
+    if json_out:
+        _emit(report)
+        return
+    if path is None:
+        # The export alone on stdout, so it can be redirected to a file.
+        _say(sim.text)
+    else:
+        where = _home_words(str(path))
+        _say_prose(f"Written to {where}", keep=[where])
+    who = f"{report.character} in account {acct.folder}{_picked_words(how, tie)}"
+    _note("Character: {}", who)
+    if talents.table_build is not None:
+        _note(
+            "Talents read with the game table {} of {}.",
+            simexport.TALENT_TABLE,
+            talents.table_build,
+        )
+    for item in sim.left_out:
+        _note("Left out: {}: {}", item.what, item.why)
+    # The notes go to stderr too: stdout holds the export alone.
+    if notes_out:
+        _say_err("Notes:")
+        for note in notes:
+            _say_err("  - " + _player_copy(note))
+    else:
+        them = "it" if len(notes) == 1 else "them"
+        _say_err(f"{_plural(len(notes), 'note')}: --notes shows {them}")
 
 
 class CharBindsFile(_Out):
