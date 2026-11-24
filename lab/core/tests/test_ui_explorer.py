@@ -568,6 +568,10 @@ def test_the_explorer_runs_only_listed_read_commands(server: Any) -> None:
         # writes only into wowlab's own game-table cache, on a click
         # (graded in test_ui_crew_map_table.py).
         ("db2", "fetch"),
+        # M22-01: the Crew tab's Seen by Spy reads with `spy list` and `spy
+        # show`, which only read (graded in test_ui_spy.py).
+        ("spy", "list"),
+        ("spy", "show"),
     }, used
     for path in used:
         assert path in offered, path
