@@ -128,9 +128,10 @@ def test_the_button_is_static_markup_with_no_link() -> None:
     script = (_TEMPLATES / "page.js").read_text(encoding="utf-8")
     assert "wowsims.com" not in page.lower() and "wowsims.com" not in script.lower()
     # The dressing-room link, since M21-03 the three saved links, and since
-    # M22-06 the Twink panel's planner and Wowhead links, and since M21-06
-    # See my look; none for WoWSims.
-    assert len(re.findall(r"<a\b", page)) == 7
+    # M22-06 the Twink panel's planner and Wowhead links, and since M21-04
+    # the Profiles row's four, the guild's and the gear rows' twenty; none
+    # for WoWSims. M21-06 added See my look.
+    assert len(re.findall(r"<a\b", page)) == 32
 
 
 def test_the_csp_is_unchanged_by_the_export(server: Any) -> None:

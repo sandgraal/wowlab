@@ -306,6 +306,119 @@
   "region": null,
   "region_absent": "there is no WTF/Config.wtf",
   "saved_links": [],
+  "links": {
+    "profiles": [
+      {
+        "link": "armory_character",
+        "site": "blizzard",
+        "site_name": "Armory",
+        "label": "Armory",
+        "why": "the character's region is not known"
+      },
+      {
+        "link": "journey",
+        "site": "journey",
+        "site_name": "Journey Companion",
+        "label": "Journey Companion",
+        "why": "the character's region is not known"
+      }
+    ],
+    "guild": null,
+    "guild_absent": "this record does not hold the guild; log in and out on this character with a current lab-addon (wowlab addon install lab updates it)",
+    "guild_link": null
+  },
+  "item_links": [
+    {
+      "slot": 5,
+      "link": {
+        "link": "wowhead_item",
+        "site": "wowhead",
+        "site_name": "Wowhead",
+        "label": "Wowhead",
+        "url": "https://www.wowhead.com/forever/item=9749"
+      }
+    },
+    {
+      "slot": 6,
+      "link": {
+        "link": "wowhead_item",
+        "site": "wowhead",
+        "site_name": "Wowhead",
+        "label": "Wowhead",
+        "url": "https://www.wowhead.com/forever/item=11848"
+      }
+    },
+    {
+      "slot": 7,
+      "link": {
+        "link": "wowhead_item",
+        "site": "wowhead",
+        "site_name": "Wowhead",
+        "label": "Wowhead",
+        "url": "https://www.wowhead.com/forever/item=9747"
+      }
+    },
+    {
+      "slot": 8,
+      "link": {
+        "link": "wowhead_item",
+        "site": "wowhead",
+        "site_name": "Wowhead",
+        "label": "Wowhead",
+        "url": "https://www.wowhead.com/forever/item=3274"
+      }
+    },
+    {
+      "slot": 9,
+      "link": {
+        "link": "wowhead_item",
+        "site": "wowhead",
+        "site_name": "Wowhead",
+        "label": "Wowhead",
+        "url": "https://www.wowhead.com/forever/item=3365"
+      }
+    },
+    {
+      "slot": 10,
+      "link": {
+        "link": "wowhead_item",
+        "site": "wowhead",
+        "site_name": "Wowhead",
+        "label": "Wowhead",
+        "url": "https://www.wowhead.com/forever/item=1377"
+      }
+    },
+    {
+      "slot": 15,
+      "link": {
+        "link": "wowhead_item",
+        "site": "wowhead",
+        "site_name": "Wowhead",
+        "label": "Wowhead",
+        "url": "https://www.wowhead.com/forever/item=6514"
+      }
+    },
+    {
+      "slot": 16,
+      "link": {
+        "link": "wowhead_item",
+        "site": "wowhead",
+        "site_name": "Wowhead",
+        "label": "Wowhead",
+        "url": "https://www.wowhead.com/forever/item=2632"
+      }
+    },
+    {
+      "slot": 18,
+      "link": {
+        "link": "wowhead_item",
+        "site": "wowhead",
+        "site_name": "Wowhead",
+        "label": "Wowhead",
+        "url": "https://www.wowhead.com/forever/item=5071"
+      }
+    }
+  ],
   "purist": {
     "link": "purist_look",
     "site": "purist",
