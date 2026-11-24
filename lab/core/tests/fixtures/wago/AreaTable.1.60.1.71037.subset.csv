@@ -1,0 +1,6 @@
+ID,ZoneName,AreaName_lang,ContinentID,ParentAreaID,AreaBit,SoundProviderPref,SoundProviderPrefUnderwater,AmbienceID,UwAmbience,ZoneMusic,UwZoneMusic,ExplorationLevel,IntroSound,UwIntroSound,FactionGroupMask,Ambient_multiplier,MountFlags,PvpCombatWorldStateID,WildBattlePetLevelMin,WildBattlePetLevelMax,WindSettingsID,ContentTuningID,Flags_0,Flags_1,LiquidTypeID_0,LiquidTypeID_1,LiquidTypeID_2,LiquidTypeID_3
+10,Duskwood,Duskwood,0,0,617,0,0,40,2172,2,0,0,0,0,0,0.80000001192,1,-1,0,0,0,0,64,0,0,0,0,0
+12,ElwynnForest,"Elwynn Forest",0,0,126,0,11,3051,2172,1,0,0,0,0,2,0,1,-1,0,0,0,0,64,0,0,0,0,0
+14,Durotar,Durotar,1,0,127,86,11,25,2172,9,0,0,0,0,4,0,1,-1,0,0,0,0,64,0,0,0,0,0
+331,Ashenvale,Ashenvale,1,0,61,0,11,48,2172,11,0,0,0,0,0,0,1,-1,0,0,0,0,64,0,0,0,0,0
+1637,Orgrimmar,Orgrimmar,1,0,707,0,0,36,2172,7,0,10,62,0,4,0,1,-1,0,0,0,0,312,0,0,0,0,0
