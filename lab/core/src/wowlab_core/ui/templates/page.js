@@ -4281,15 +4281,15 @@
   // report names is never trusted. A link with no address, or one that does
   // not pass, is a line of text saying why, through `visible()`. The page
   // builds no address and requests nothing from any of the sites.
-  const PROFILE_SLOTS = [
+  const PLAYER_PROFILE_SLOTS = [
     { link: "armory_character", site: "blizzard", slot: "armory", label: "Armory" },
     { link: "journey", site: "journey", slot: "journey", label: "Journey Companion" },
     { link: "raiderio", site: "raiderio", slot: "raiderio", label: "Raider.IO" },
   ];
 
   // `panel` is "crew" or "spy": the prefix of the panel's static ids.
-  function clearProfiles(panel) {
-    for (const slot of PROFILE_SLOTS) {
+  function clearPlayerProfiles(panel) {
+    for (const slot of PLAYER_PROFILE_SLOTS) {
       const link = byId(panel + "-profile-" + slot.slot);
       link.removeAttribute("href");
       link.hidden = true;
@@ -4299,13 +4299,13 @@
     byId(panel + "-profiles-why").hidden = true;
   }
 
-  function drawProfiles(panel, given) {
-    clearProfiles(panel);
+  function drawPlayerProfiles(panel, given) {
+    clearPlayerProfiles(panel);
     const made = Array.isArray(given) ? given.filter((l) => l && typeof l === "object") : [];
     if (made.length === 0) return;
     const why = [];
     let any = false;
-    for (const slot of PROFILE_SLOTS) {
+    for (const slot of PLAYER_PROFILE_SLOTS) {
       const one = made.find((l) => l.link === slot.link);
       if (!one) continue;
       const checked = typeof one.url === "string" ? outsideAddress(one.url, slot.site) : null;
@@ -4335,7 +4335,7 @@
   // Every name, guild and place is other people's text: it reaches the page
   // only as text, through `visible()`, never in an attribute, a class or an
   // id, and the page builds no link or address from it. A player's profile
-  // links are addresses Python built (M21-05), drawn by `drawProfiles`.
+  // links are addresses Python built (M21-05), drawn by `drawPlayerProfiles`.
   const spySeen = { listSeq: 0, showSeq: 0, searchTimer: null, read: false };
   const SPY_FILTER = [["", "Everyone"], ["enemies", "Enemies"], ["kos", "Kill on sight"]];
   const SPY_SORT = [["last", "Last seen, newest first"], ["name", "By name"], ["level", "Highest level first"]];
@@ -4475,7 +4475,7 @@
     const seq = ++spySeen.showSeq;
     byId("spy-player").hidden = false;
     byId("spy-player-title").textContent = visible(key);
-    clearProfiles("spy");
+    clearPlayerProfiles("spy");
     const lines = byId("spy-player-lines");
     lines.replaceChildren(make("li", "Reading…"));
     const reply = await runJson(["spy", "show"], { name: key }, true);
@@ -4487,7 +4487,7 @@
       return;
     }
     lines.replaceChildren(...said.map((line) => make("li", visible(line.trim()))));
-    drawProfiles("spy", spyProfileLinks(report));
+    drawPlayerProfiles("spy", spyProfileLinks(report));
     byId("spy-player-title").focus();
   }
 
@@ -4658,7 +4658,7 @@
   // only as text, through `visible()`, never in an attribute, a class or
   // an id, and the page builds no link or address from it. A player's
   // profile links are addresses Python built (M21-05), drawn by
-  // `drawProfiles`; a player a match or fight names opens their panel.
+  // `drawPlayerProfiles`; a player a match or fight names opens their panel.
 
   const crew = {
     report: null, // the CrewReport the table was drawn from
@@ -5078,7 +5078,7 @@
     crewActSay("", false);
     byId("crew-player").hidden = true;
     byId("crew-player-lines").replaceChildren();
-    clearProfiles("crew");
+    clearPlayerProfiles("crew");
     clearPlayerMatches();
   }
 
@@ -5101,7 +5101,7 @@
     byId("crew-actions").hidden = true;
     byId("crew-note-codes").hidden = true;
     clearPlayerMatches();
-    clearProfiles("crew");
+    clearPlayerProfiles("crew");
     byId("crew-player-title").textContent = visible(key);
     const lines = byId("crew-player-lines");
     lines.replaceChildren(make("li", "Reading…"));
@@ -5116,7 +5116,7 @@
     }
     lines.replaceChildren(...said.map((line) => make("li", visible(line.trim()))));
     const player = report.player && typeof report.player === "object" ? report.player : null;
-    if (player) drawProfiles("crew", player.links);
+    if (player) drawPlayerProfiles("crew", player.links);
     if (player) {
       byId("crew-rate-value").value = hubStr(player.rating) || "none";
       // The note as it is shown: a control character in it is shown as its
