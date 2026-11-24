@@ -346,24 +346,49 @@ def _guarded_folder(folder: Path) -> bool:
     return True
 
 
+def _same_file(a: Path, b: Path) -> bool:
+    """Whether `a` and `b` name one file: equal absolute paths, or, when
+    both are there, the same file on disk (`Path.samefile`)."""
+    if a.absolute() == b.absolute():
+        return True
+    try:
+        return a.exists() and b.exists() and a.samefile(b)
+    except OSError:
+        return False
+
+
 def _move_old_credentials() -> None:
     """The first build's place for the API client (the data folder), under
     the same refusals as every write: its folder in a game install, or a
-    link, is refused before anything is read, written or removed; a file
-    there is moved to `credentials_path()` (unless one is there already,
-    which wins) and removed. Nothing happens when the old folder is not
-    there."""
+    link, is refused before anything is read, written or removed. Nothing
+    happens when the old folder is not there, or when the old place and
+    `credentials_path()` are one file (on macOS and Windows the config and
+    data folders are the same folder). Otherwise a file there is copied to
+    `credentials_path()` when none is there yet, and the old one is removed
+    only when the new one is a different file that now holds the same
+    client; a different client already in the config folder wins, and the
+    old file is left alone."""
+    old = _old_credentials_path()
+    new = credentials_path()
+    if _same_file(old, new):
+        return
     if not _guarded_folder(blizzard_dir()):
         return
-    old = _old_credentials_path()
     _refuse_file(old)
     data = _read_file(old)
     if data is None:
         return
-    if not credentials_path().exists():
-        creds = _parse_credentials(old, data)
-        _write_private(credentials_path(), _credentials_bytes(creds), outside=True)
-    old.unlink()
+    creds = _parse_credentials(old, data)
+    if not (new.exists() or new.is_symlink()):
+        _write_private(new, _credentials_bytes(creds), outside=True)
+    if _same_file(old, new):
+        return
+    moved = _read_file(new)
+    if moved is None:
+        return
+    held = _parse_credentials(new, moved)
+    if (held.client_id, held.secret()) == (creds.client_id, creds.secret()):
+        old.unlink()
 
 
 def save_credentials(credentials: Credentials) -> Path:

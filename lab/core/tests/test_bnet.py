@@ -199,14 +199,22 @@ def no_network(monkeypatch: pytest.MonkeyPatch) -> list[object]:
     return tried
 
 
-@pytest.fixture(autouse=True)
-def user_data(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
-    """The user data and config directories, both under `tmp_path`."""
+@pytest.fixture(autouse=True, params=["apart", "same"])
+def user_data(
+    request: pytest.FixtureRequest, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> Path:
+    """The user data and config directories, both under `tmp_path`: apart
+    (Linux) and, as on macOS and Windows, one folder (`same`)."""
     redirected = tmp_path / "userdata" / "wowlab"
     monkeypatch.setattr(platformdirs, "user_data_path", lambda *a, **k: redirected)
-    config = tmp_path / "userconfig" / "wowlab"
+    config = redirected if request.param == "same" else tmp_path / "userconfig" / "wowlab"
     monkeypatch.setattr(platformdirs, "user_config_path", lambda *a, **k: config)
     return redirected
+
+
+def folders_apart() -> bool:
+    """Whether the config and data folders differ (Linux's layout)."""
+    return bnet.config_dir() != bnet.blizzard_dir()
 
 
 @pytest.fixture
@@ -657,9 +665,14 @@ def test_credentials_hide_the_secret_and_refuse_odd_values() -> None:
 def test_the_secret_is_kept_owner_only_and_read_back(user_data: Path) -> None:
     assert bnet.read_credentials() is None
     path = bnet.save_credentials(creds())
-    # ADR-0040 (2): the user config directory, not the data folder.
-    assert path == user_data.parent.parent / "userconfig" / "wowlab" / "blizzard" / "client.json"
-    assert not (user_data / "blizzard").exists()
+    # ADR-0040 (2): the user config directory, not the data folder (one
+    # folder on macOS and Windows).
+    assert path == bnet.config_dir() / "client.json"
+    if folders_apart():
+        assert (
+            path == user_data.parent.parent / "userconfig" / "wowlab" / "blizzard" / "client.json"
+        )
+        assert not (user_data / "blizzard").exists()
     got = bnet.read_credentials()
     assert got is not None and (got.client_id, got.secret()) == (CLIENT_ID, SECRET)
     if os.name == "posix":
@@ -745,6 +758,8 @@ def test_nothing_is_kept_inside_a_game_install_constructed(
 
 
 def test_the_first_builds_copy_in_the_data_folder_is_moved_once(user_data: Path) -> None:
+    if not folders_apart():
+        pytest.skip("one folder: nothing to move")
     old = user_data / "blizzard" / "client.json"
     old.parent.mkdir(parents=True)
     old.write_text(json.dumps({"client_id": CLIENT_ID, "client_secret": SECRET}), encoding="utf-8")
@@ -754,14 +769,55 @@ def test_the_first_builds_copy_in_the_data_folder_is_moved_once(user_data: Path)
     assert not old.exists() and bnet.credentials_path().is_file()
     if os.name == "posix":
         assert stat.S_IMODE(bnet.credentials_path().stat().st_mode) == 0o600
-    # A copy found again later never replaces the one in the config folder.
+    # A different client found there later never replaces the one in the
+    # config folder, and is left alone (only a copy of it is removed).
     old.write_text(
         json.dumps({"client_id": CLIENT_ID, "client_secret": SECRET[::-1]}),
         encoding="utf-8",
     )
     old.chmod(0o600)
     again = bnet.read_credentials()
-    assert again is not None and again.secret() == SECRET and not old.exists()
+    assert again is not None and again.secret() == SECRET and old.exists()
+
+
+def test_one_folder_for_config_and_data_keeps_the_client(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """macOS and Windows: platformdirs gives one folder for config and data,
+    so the first build's place and `credentials_path()` are one file. Login,
+    then reads, keep it (the re-check of 2026-11-24 found the move removing
+    the only copy)."""
+    one = tmp_path / "Application Support" / "wowlab"
+    monkeypatch.setattr(platformdirs, "user_data_path", lambda *a, **k: one)
+    monkeypatch.setattr(platformdirs, "user_config_path", lambda *a, **k: one)
+    path = bnet.save_credentials(creds())
+    assert path == one / "blizzard" / "client.json"
+    for _ in range(3):
+        got = bnet.read_credentials()
+        assert got is not None and got.secret() == SECRET
+        assert path.is_file()
+    bnet.save_credentials(creds())
+    assert bnet.read_credentials() is not None and path.is_file()
+    assert bnet.clear_credentials() is True and not path.exists()
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="symlinks need privileges on Windows")
+def test_a_config_folder_reached_another_way_is_still_one_file_constructed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The two places spelled differently (a link above them) but one file:
+    `os.path.samefile` decides, and nothing is removed."""
+    real = tmp_path / "real"
+    real.mkdir()
+    (tmp_path / "alias").symlink_to(real, target_is_directory=True)
+    monkeypatch.setattr(platformdirs, "user_data_path", lambda *a, **k: real / "wowlab")
+    monkeypatch.setattr(
+        platformdirs, "user_config_path", lambda *a, **k: tmp_path / "alias" / "wowlab"
+    )
+    path = bnet.save_credentials(creds())
+    for _ in range(2):
+        assert bnet.read_credentials() is not None
+    assert path.is_file() and (real / "wowlab" / "blizzard" / "client.json").is_file()
 
 
 @pytest.mark.skipif(sys.platform == "win32", reason="symlinks need privileges on Windows")
@@ -781,7 +837,8 @@ def test_a_linked_old_data_folder_is_refused_before_anything_constructed(
         with pytest.raises(bnet.BnetError, match="is a link"):
             call()
     assert (elsewhere / "client.json").read_bytes() == b"left alone\n"
-    assert not bnet.credentials_path().exists()
+    if folders_apart():
+        assert not bnet.credentials_path().exists()
 
 
 @pytest.mark.skipif(not hasattr(os, "mkfifo"), reason="named pipes are POSIX")

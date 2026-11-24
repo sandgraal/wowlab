@@ -35,14 +35,22 @@ CLIENT_ID = recorded.CLIENT_ID
 runner = CliRunner()
 
 
-@pytest.fixture(autouse=True)
-def user_data(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
-    """The user data and config directories, both under `tmp_path`."""
+@pytest.fixture(autouse=True, params=["apart", "same"])
+def user_data(
+    request: pytest.FixtureRequest, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> Path:
+    """The user data and config directories, both under `tmp_path`: apart
+    (Linux) and, as on macOS and Windows, one folder (`same`)."""
     redirected = tmp_path / "userdata" / "wowlab"
     monkeypatch.setattr(platformdirs, "user_data_path", lambda *a, **k: redirected)
-    config = tmp_path / "userconfig" / "wowlab"
+    config = redirected if request.param == "same" else tmp_path / "userconfig" / "wowlab"
     monkeypatch.setattr(platformdirs, "user_config_path", lambda *a, **k: config)
     return redirected
+
+
+def folders_apart() -> bool:
+    """Whether the config and data folders differ (Linux's layout)."""
+    return bnet.config_dir() != bnet.blizzard_dir()
 
 
 @pytest.fixture(autouse=True)
@@ -66,8 +74,9 @@ def blizzard(monkeypatch: pytest.MonkeyPatch) -> recorded.Recorded:
 
 
 def _config(user_data: Path) -> Path:
-    """The redirected user config directory beside the data directory."""
-    return user_data.parent.parent / "userconfig" / "wowlab"
+    """The redirected user config directory (the data directory itself when
+    the two are one folder, as on macOS and Windows)."""
+    return bnet.config_dir().parent
 
 
 def run(*args: str, stdin: str | None = None) -> Any:
@@ -171,6 +180,17 @@ def test_no_secret_given_saves_nothing(user_data: Path) -> None:
     assert done.exit_code == 1
     assert "nothing was saved" in done.stderr
     assert not (_config(user_data) / "blizzard" / "client.json").exists()
+
+
+def test_login_then_status_show_and_fetch_keep_the_client(blizzard: recorded.Recorded) -> None:
+    """Every later run reads the kept client and leaves it there, whether the
+    config and data folders are apart or one folder (macOS, Windows)."""
+    login()
+    for _ in range(2):
+        assert json.loads(run("status", "--json").stdout)["configured"] is True
+        assert json.loads(run("show", NAME, "--json").stdout)["configured"] is True
+        assert run("fetch", NAME).exit_code == 0
+    assert bnet.credentials_path().is_file()
 
 
 def test_logout_forgets_the_client() -> None:
