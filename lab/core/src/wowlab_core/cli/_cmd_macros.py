@@ -38,6 +38,7 @@ from wowlab_core.cli._common import (
     _account_words,
     _bytes,
     _chosen_lab_file,
+    _client_facts,
     _confirm,
     _emit,
     _handled,
@@ -232,8 +233,10 @@ def macros_check(
 ) -> None:
     """Check the account's macros, and one character's with --character, for
     a body over 255, a spell not in the spellbook, a macro on no action bar,
-    duplicate names or bodies, unbalanced [ ] and a #showtooltip (or #show,
-    the same rule assumed, not yet confirmed) that is not the first line. The
+    duplicate names or bodies, unbalanced [ ], a #showtooltip (or #show,
+    the same rule assumed, not yet confirmed) that is not the first line, and
+    a /command the game's own interface does not have (an addon's, or a
+    typo). The
     spellbook and action bars come from the character's lab-addon record;
     without it, or when the record says it dropped values, those
     two rules say "cannot judge". Reads only.
@@ -274,7 +277,9 @@ def macros_check(
         no_record = "no spellbook record (no character chosen; use --character)"
     else:
         no_record = macrocheck.NO_RECORD
-    result = macrocheck.check(macros, record, character=who, no_record=no_record)
+    result = macrocheck.check(
+        macros, record, character=who, no_record=no_record, client=_client_facts(lay, chosen)
+    )
     report = MacrosCheckReport(
         flavor_folder=chosen.folder,
         account=acct.folder,
@@ -539,7 +544,12 @@ def macros_fix(
             "plan",
             EXIT_REFUSED,
         )
-    plan = macrofix.plan(wtfconfig.parse_macros(data), scope=scope, file=path)
+    plan = macrofix.plan(
+        wtfconfig.parse_macros(data),
+        scope=scope,
+        file=path,
+        client=_client_facts(lay, chosen),
+    )
     after = hashlib.sha256(plan.data).hexdigest() if plan.fixes else None
     if expect_fixed is not None and expect_fixed != after:
         if json_out:
