@@ -255,7 +255,11 @@ local function pvpSnapshot()
             for i = 1, ns.Number(packed.n) or 0 do
                 snap.positions[i] = type(packed[i])
             end
-            if not read then
+            -- M21-11: only a row the wrapper found. At 71037 the 12.0.1
+            -- deprecation wrapper answers for a row C_PvP.GetScoreInfo does
+            -- not have, with a nil name and side 0, so the sixth value is a
+            -- side only when the first is not nil (type only, never compared).
+            if not read and type(packed[1]) ~= "nil" then
                 name = packed[1]
                 side = packed[6]
             end
@@ -367,6 +371,21 @@ local function addSkipped()
     WowLabCrewDB.skipped = (ns.Number(WowLabCrewDB.skipped) or 0) + 1
 end
 
+-- M21-11: a read of a member the game named with no second part (no second
+-- name on Forever, no realm elsewhere) while no home realm was found is
+-- skipped, and counted here, one per read (each roster pass), never reset
+-- while the book lasts, so the owner's check can see whether it happens
+-- [verify].
+local function addNoSecond()
+    if not crewOn() then
+        return
+    end
+    if crewBlocked() then
+        return
+    end
+    WowLabCrewDB.no_second = (ns.Number(WowLabCrewDB.no_second) or 0) + 1
+end
+
 -- Why the book cannot record at all, or nil.
 local function featureMissing()
     if not crewOn() then
@@ -391,14 +410,18 @@ local function featureMissing()
 end
 
 -- The owner's home realm, the realm part of a same-realm player's key
--- (M20-17), or nil; and true when a source gave a value the client calls
--- secret. GetNormalizedRealmName(), else the second return of
--- UnitFullName("player"): on the owner's run on 71037 (2026-11-20) the
--- identity gather got a realm only from the second. Either answer is kept
--- with every space and hyphen removed, the way the client is believed to
--- normalize a realm name ([verify], not yet confirmed), so a player's key is
--- the same whichever source answered. Read when a key needs it; kept for the
--- session once found, never while no source gave one.
+-- (M20-17), or nil; and true when the source gave a value the client calls
+-- secret. GetNormalizedRealmName() only, kept with every space and hyphen
+-- removed, the way the client is believed to normalize a realm name
+-- ([verify], not yet confirmed). M21-11: the second return of
+-- UnitFullName("player") is no longer taken when that gives none. On a
+-- client whose realm calls give no realm (Forever: the owner's runs on
+-- 71037, 2026-11-20) that slot holds the character's second name, not a
+-- realm (UnitName("target") gave "Tay", "Soulrend" on 2026-11-23), and it
+-- would have keyed another player with the owner's second name; [verify]
+-- with /dump UnitFullName("player") and /dump GetNormalizedRealmName().
+-- Read when a key needs it; kept for the session once found, never while
+-- the source gave none.
 local homeFound = nil
 local function homeRealm()
     if not crewOn() then
@@ -424,19 +447,6 @@ local function homeRealm()
             end
         end
     end
-    if type(UnitFullName) == "function" then
-        local _, fullRealm = UnitFullName("player")
-        if secret(fullRealm) then
-            hidden = true
-        end
-        if not secret(fullRealm) and type(fullRealm) == "string" then
-            local bare = string.gsub(fullRealm, "[%s%-]", "")
-            if bare ~= "" then
-                homeFound = bare
-                return homeFound, false
-            end
-        end
-    end
     return nil, hidden
 end
 
@@ -449,10 +459,14 @@ local function fieldsMissing()
         return
     end
     local missing = ""
-    if homeRealm() == nil then
+    -- M21-11: said only when a member was skipped that way (addNoSecond).
+    local noSecond = ns.Number(WowLabCrewDB.no_second) or 0
+    if noSecond > 0 then
         missing = missing
-            .. " Players from your own realm are skipped: no home realm could be found"
-            .. " (neither GetNormalizedRealmName nor your full name gave one)."
+            .. " "
+            .. noSecond
+            .. " reads of a group member came back with no second name or realm and were skipped,"
+            .. " since the book was started (not yet confirmed)."
     end
     if type(UnitClass) ~= "function" then
         missing = missing .. " No class: the client has no UnitClass function."
@@ -843,6 +857,10 @@ local function readMember(unit)
                 addSkipped()
                 return
             end
+            -- M21-11: with no home realm the member is skipped, and counted.
+            if home == nil then
+                addNoSecond()
+            end
             if type(home) == "string" then
                 local key = name .. "-" .. home
                 entry = admit(key)
@@ -1194,18 +1212,25 @@ local function recordMatch()
     -- Each row's key, built as a group member's is; the own row left out.
     local keys = {}
     local ownAt = nil
+    -- M21-11: rows whose name has no second part while no home realm was
+    -- found get no key; counted in the match record as `rows_unkeyed`, the
+    -- player's own row (known by its GUID) left out of the count.
+    local unkeyed = 0
     for i = 1, #rows do
         local score = rows[i]
         local name = score.name
         local key = nil
+        local ownGuid = mine ~= nil and score.guid == mine
         if type(name) == "string" and name ~= "" and name ~= UNKNOWNOBJECT then
             if string.find(name, "-", 1, true) ~= nil then
                 key = name
             elseif home ~= nil then
                 key = name .. "-" .. home
+            elseif not ownGuid then
+                unkeyed = unkeyed + 1
             end
         end
-        local isOwn = (ownKey ~= nil and key == ownKey) or (mine ~= nil and score.guid == mine)
+        local isOwn = (ownKey ~= nil and key == ownKey) or ownGuid
         if isOwn then
             key = nil
             ownAt = i
@@ -1316,6 +1341,9 @@ local function recordMatch()
     local record = { at = now, map = ns.String(mapName), map_id = mapId, kind = matchKind, team = team, foes = foes }
     if result ~= nil then
         record.won = result
+    end
+    if unkeyed > 0 then
+        record.rows_unkeyed = unkeyed
     end
     if type(WowLabCrewDB.matches) ~= "table" then
         WowLabCrewDB.matches = {}

@@ -116,9 +116,14 @@ def test_an_entry_edited_by_hand_is_refused_when_read_constructed(
     )
     data.write_text(json.dumps(edited), encoding="utf-8")
     stored = linkstore.read()
-    assert linkstore.links_for(stored.file, KEY) == []
+    assert linkstore.links_for(stored.shown, KEY) == []
     assert [(r.key, r.site, r.kind) for r in stored.refused] == [(KEY, site, kind)]
-    assert [s.url for s in linkstore.links_for(stored.file, OTHER)] == [FT]
+    assert [s.url for s in linkstore.links_for(stored.shown, OTHER)] == [FT]
+    # Not shown, but still in the file as read: a change for another
+    # character writes it back untouched (code review, M21-03).
+    assert [s.url for s in linkstore.links_for(stored.file, KEY)] == [url]
+    after, _, _ = linkstore.save(stored.file, OTHER, links.check_pasted(BUILD), now=NOW)
+    assert [s.url for s in linkstore.links_for(after, KEY)] == [url]
 
 
 @pytest.mark.parametrize(
@@ -160,3 +165,27 @@ def test_the_store_is_never_inside_an_install_constructed(tmp_path: Path) -> Non
     with pytest.raises(linkstore.LinkStoreError, match="install"):
         linkstore.read(inside)
     assert not (root / "_forever_" / "wowlab").exists()
+
+
+def test_the_refusals_say_what_is_wrong(data: Path) -> None:
+    file = linkstore.StoreFile(
+        characters=[
+            linkstore.CharacterLinks(
+                key=KEY,
+                links=[
+                    linkstore.StoredLink(
+                        site="forevertwinking", kind="profile", url=BUILD, saved_at="x"
+                    ),
+                    linkstore.StoredLink(
+                        site="warcraftlogs", kind="report", url=WCL + "?x=1", saved_at="x"
+                    ),
+                ],
+            )
+        ]
+    )
+    shown, refused = linkstore.checked(file)
+    assert shown.characters == []
+    assert [r.why for r in refused] == [
+        "the address is a ForeverTwinking build address, not a profile address",
+        f"the address is not kept as wowlab keeps it (that would be {WCL})",
+    ]

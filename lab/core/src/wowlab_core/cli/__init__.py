@@ -1023,10 +1023,19 @@ if TYPE_CHECKING:
         LinkDryRunOpt as LinkDryRunOpt,
     )
     from wowlab_core.cli._cmd_charlink import (
+        _link_folder_gone as _link_folder_gone,
+    )
+    from wowlab_core.cli._cmd_charlink import (
         _link_key as _link_key,
     )
     from wowlab_core.cli._cmd_charlink import (
+        _link_part as _link_part,
+    )
+    from wowlab_core.cli._cmd_charlink import (
         _link_read as _link_read,
+    )
+    from wowlab_core.cli._cmd_charlink import (
+        _link_shown as _link_shown,
     )
     from wowlab_core.cli._cmd_charlink import (
         _link_who as _link_who,
@@ -2935,6 +2944,9 @@ if TYPE_CHECKING:
     )
     from wowlab_core.cli._common import (
         _click_wording as _click_wording,
+    )
+    from wowlab_core.cli._common import (
+        _client_facts as _client_facts,
     )
     from wowlab_core.cli._common import (
         _client_names as _client_names,
