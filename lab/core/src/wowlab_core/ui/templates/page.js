@@ -3807,18 +3807,19 @@
   // Commands, Looks). A section with more than one view has its own row of
   // tabs. `showTab` shows one view and marks its section and its tab.
   const SECTIONS = {
-    characters: ["account", "character", "crew"],
+    characters: ["account", "character", "crew", "lookup"],
     backups: ["backups"],
     addons: ["addons"],
     keybinds: ["keybinds"],
+    live: ["live"],
     advanced: ["explorer", "gaps", "commands", "looks"],
   };
   // The views with a tab, in their order; the first is shown when the page opens.
-  const TABS = ["account", "character", "crew", "explorer", "gaps", "commands", "looks"];
+  const TABS = ["account", "character", "crew", "lookup", "explorer", "gaps", "commands", "looks"];
   // Every view's element. Keybinds shows the character page's own element
   // with its keys and macros panels alone, so the picker and the keys are
   // one; the character page shows the rest.
-  const VIEWS = ["account", "character", "crew", "backups", "addons", "explorer", "gaps", "commands", "looks"];
+  const VIEWS = ["account", "character", "crew", "lookup", "backups", "addons", "live", "explorer", "gaps", "commands", "looks"];
   const CHARACTER_PANELS = ["char-page", "char-about"];
   const KEYBIND_PANELS = ["char-keys-panel", "char-macros-panel"];
   // The view each section showed last, so going back to it lands there.
@@ -3864,6 +3865,9 @@
     if (name === "addons") alone(sourcesSay, () => loadSources());
     if (name === "gaps") loadGaps();
     if (name === "crew") loadCrew();
+    if (name === "lookup") byId("lookup-query").focus();
+    if (name === "live") startLive();
+    else stopLive();
     if (name === "character" || keys) {
       const listed = loadCharacters();
       if (keys && character.kept) {
@@ -4059,6 +4063,135 @@
       spyAgain();
     }, 300);
   });
+
+  // ─── the Live view (M22-05) ───
+  // For a second screen while the game runs. While the view is shown (and
+  // the browser tab is not hidden) it asks the server every few seconds
+  // (`GET /api/live`, the interval the server gives): the newest time of
+  // the SavedVariables, which the game writes at /reload and logout, and
+  // the newest combat log with its count of zone lines and arena end lines.
+  // When one of those changed, it runs `live recap --json` and draws its
+  // `lines`: the match's, up to the first empty line, then the session's.
+  // The server reads the files; the page reads only the server. Zone,
+  // file and player names are text from the machine: textContent only.
+  const liveState = {
+    timer: null, // the next poll
+    seq: 0, // bumped when the view closes, so a late reply draws nothing
+    seen: null, // what the last poll saw, as one string
+    running: false, // a recap run in progress
+    again: false, // something changed while it ran: run it once more
+    seconds: 3,
+    started: false, // whether the view is polling
+  };
+
+  function liveKey(watch) {
+    const saved = watch.saved || {};
+    const log = watch.log || {};
+    return [watch.flavor_folder, saved.newest_ns, log.name, log.zone_changes, log.match_ends].join("|");
+  }
+
+  function liveWatchWords(watch) {
+    const parts = [];
+    const log = watch.log;
+    if (log) {
+      let where = "the log has not named a place yet";
+      if (typeof log.zone === "string" && log.zone) {
+        where = "the log last showed " + visible(log.zone);
+        if (typeof log.zone_at === "number") where += " (at " + new Date(log.zone_at * 1000).toLocaleTimeString() + ")";
+      }
+      parts.push("Combat log: " + visible(String(log.name)) + "; " + where);
+    } else {
+      parts.push("No combat log yet: type /combatlog in game to start one");
+    }
+    const saved = watch.saved || {};
+    if (typeof saved.newest_ns === "number") {
+      parts.push("last save " + new Date(saved.newest_ns / 1e6).toLocaleString());
+    }
+    parts.push("checked " + new Date().toLocaleTimeString() + " in " + Math.max(1, Math.round(watch.cost_us / 1000)) + " ms");
+    return parts.join(" · ") + ".";
+  }
+
+  async function liveRecap() {
+    if (liveState.running) {
+      liveState.again = true;
+      return;
+    }
+    liveState.running = true;
+    const seq = liveState.seq;
+    announce(byId("live-status"), "Reading the latest match and your last save…", false);
+    try {
+      const got = await runJson(["live", "recap"], {});
+      if (seq !== liveState.seq) return;
+      if (got.error && !got.data) {
+        announce(byId("live-status"), got.error, true);
+        return;
+      }
+      const lines = Array.isArray(got.data.lines) ? got.data.lines.map((l) => String(l)) : [];
+      const cut = lines.indexOf("");
+      const match = cut < 0 ? lines : lines.slice(0, cut);
+      const session = cut < 0 ? [] : lines.slice(cut + 1);
+      byId("live-match-lines").replaceChildren(...match.map((l) => make("li", visible(l))));
+      byId("live-session-lines").replaceChildren(...session.map((l) => make("li", visible(l))));
+      announce(byId("live-status"), "Read at " + new Date().toLocaleTimeString() + ".", false);
+    } finally {
+      liveState.running = false;
+      // Asked again while it ran, or the view was left and opened again
+      // meanwhile (this run's reply was dropped): read once more while the
+      // view is open, so what it shows is never left behind.
+      if (liveState.started && (liveState.again || seq !== liveState.seq)) {
+        liveState.again = false;
+        liveRecap();
+      }
+    }
+  }
+
+  async function livePoll() {
+    const seq = liveState.seq;
+    liveState.timer = null;
+    if (!document.hidden) {
+      let reply;
+      let body;
+      try {
+        await runFlavor.ready;
+        const query = runFlavor.picked ? "?flavor=" + encodeURIComponent(runFlavor.picked) : "";
+        reply = await fetch(api("/api/live") + query, { cache: "no-store", credentials: "omit", headers: keyed() });
+        body = await reply.json();
+      } catch (error) {
+        body = null;
+      }
+      if (seq !== liveState.seq) return;
+      if (!reply || !reply.ok || !body) {
+        announce(byId("live-watch"), "wowlab could not check your game folder: " + ((body && body.error) || "no answer") + ".", true);
+      } else if (!body.found) {
+        announce(byId("live-watch"), String(body.words || "wowlab found no game folder to watch."), true);
+      } else {
+        if (typeof body.poll_seconds === "number" && body.poll_seconds >= 1) liveState.seconds = body.poll_seconds;
+        announce(byId("live-watch"), liveWatchWords(body.watch), false);
+        const key = liveKey(body.watch);
+        if (key !== liveState.seen) {
+          liveState.seen = key;
+          liveRecap();
+        }
+      }
+    }
+    if (seq === liveState.seq) liveState.timer = setTimeout(livePoll, liveState.seconds * 1000);
+  }
+
+  function startLive() {
+    if (liveState.timer !== null || liveState.started) return;
+    liveState.started = true;
+    livePoll();
+  }
+
+  function stopLive() {
+    if (!liveState.started) return;
+    liveState.started = false;
+    liveState.seq += 1;
+    liveState.seen = null;
+    liveState.again = false;
+    if (liveState.timer !== null) clearTimeout(liveState.timer);
+    liveState.timer = null;
+  }
 
   // ─── the crew book (M19-06, docs/LAB_PLAN.md §20.4) ───
   // The players the lab-addon's crew book keeps, from `crew list --json`:
@@ -4625,6 +4758,141 @@
   byId("crew-note").addEventListener("click", () => crewPlan(["crew", "note"], { text: byId("crew-note-text").value }));
   byId("crew-forget").addEventListener("click", () => crewPlan(["crew", "forget"], {}));
   byId("crew-confirm").addEventListener("click", () => crewConfirm());
+
+
+  // ─── look up (M22-08) ───
+  // What `lookup --json` finds in the game version's QuestieDB addon and the
+  // game's item and zone tables: each hit's heading and lines are the
+  // command's own text, shown through `visible()` only, never in an
+  // attribute, a class or an id, and no link or address is built from them.
+  // Typing searches after a pause; the button searches now. The download
+  // offer runs the same command with `fetch`, which fetches only the tables
+  // not here yet.
+
+  const LOOKUP_KINDS = [
+    ["", "Everything"],
+    ["item", "Items"],
+    ["npc", "NPCs"],
+    ["quest", "Quests"],
+    ["object", "Objects"],
+  ];
+  const lookupState = { seq: 0, timer: null, fetching: false, running: false, queued: null, waiters: [] };
+  fillSelect(byId("lookup-kind"), LOOKUP_KINDS);
+
+  function lookupSay(text, isError) {
+    const node = byId("lookup-status");
+    announce(node, text, Boolean(isError));
+    node.classList.toggle("error", Boolean(isError));
+  }
+
+  function lookupParams(fetch) {
+    const params = { query: byId("lookup-query").value.trim(), limit: "10" };
+    if (byId("lookup-kind").value) params.kind = byId("lookup-kind").value;
+    if (fetch) params.fetch = true;
+    return params;
+  }
+
+  function lookupHit(hit) {
+    const box = make("section");
+    box.className = "panel lookup-hit";
+    box.appendChild(make("h3", visible(typeof hit.heading === "string" ? hit.heading : "")));
+    const list = make("ul");
+    list.className = "crew-lines";
+    for (const line of Array.isArray(hit.lines) ? hit.lines : []) {
+      if (typeof line === "string") list.appendChild(make("li", visible(line)));
+    }
+    box.appendChild(list);
+    return box;
+  }
+
+  function drawLookup(report) {
+    const hits = Array.isArray(report.hits) ? report.hits.filter((h) => h && typeof h === "object") : [];
+    byId("lookup-hits").replaceChildren(...hits.map(lookupHit));
+    const tables = Array.isArray(report.game_tables) ? report.game_tables : [];
+    const missing = tables.some((t) => t && t.state === "missing");
+    byId("lookup-offer").hidden = !missing;
+    byId("lookup-fetch").disabled = lookupState.fetching;
+    // The caveat and the notes are the command's own sentences, the ones
+    // its text output prints (one fact, one place).
+    const caveat = typeof report.caveat === "string" ? report.caveat : "";
+    byId("lookup-caveat").textContent = visible(caveat);
+    byId("lookup-caveat").hidden = !caveat;
+    const notes = Array.isArray(report.notes) ? report.notes.filter((n) => typeof n === "string") : [];
+    byId("lookup-left-out").replaceChildren(...notes.map((n) => make("li", visible(n))));
+    byId("lookup-left-out").hidden = notes.length === 0;
+  }
+
+  // One run at a time: a search asked for while one runs waits, and only the
+  // latest of those runs when it ends, so typing never stacks up runs.
+  async function runLookup(fetch) {
+    const query = byId("lookup-query").value.trim();
+    if (!query && !fetch) {
+      lookupState.seq += 1;
+      lookupState.queued = null;
+      byId("lookup-hits").replaceChildren();
+      lookupSay("", false);
+      return;
+    }
+    if (lookupState.running) {
+      lookupState.queued = { fetch: Boolean(fetch) || Boolean(lookupState.queued && lookupState.queued.fetch) };
+      // Settled once the queued run has run, so a caller (the download
+      // button) waits for it.
+      return new Promise((resolve) => lookupState.waiters.push(resolve));
+    }
+    lookupState.running = true;
+    const seq = ++lookupState.seq;
+    try {
+      lookupSay(fetch ? "Downloading zone and item names…" : "Looking up…", false);
+      const reply = await runJson(["lookup"], lookupParams(fetch), true);
+      if (seq !== lookupState.seq) return;
+      const report = reply.data;
+      if (!report || typeof report !== "object" || typeof report.words !== "string") {
+        byId("lookup-hits").replaceChildren();
+        byId("lookup-caveat").hidden = true;
+        lookupSay(reply.error ? shown(reply.error) : "The lookup came back in a shape this page does not know.", true);
+        return;
+      }
+      drawLookup(report);
+      lookupSay(visible(report.words), Boolean(reply.error));
+    } finally {
+      lookupState.running = false;
+      const next = lookupState.queued;
+      const waiters = lookupState.waiters;
+      lookupState.queued = null;
+      lookupState.waiters = [];
+      if (next) await runLookup(next.fetch);
+      for (const resolve of waiters) resolve();
+    }
+  }
+
+  function lookupSoon() {
+    if (lookupState.timer !== null) clearTimeout(lookupState.timer);
+    lookupState.timer = setTimeout(() => {
+      lookupState.timer = null;
+      runLookup(false);
+    }, 400);
+  }
+
+  async function fetchLookupTables() {
+    if (lookupState.fetching) return;
+    lookupState.fetching = true;
+    byId("lookup-fetch").disabled = true;
+    try {
+      await runLookup(true);
+    } finally {
+      lookupState.fetching = false;
+      byId("lookup-fetch").disabled = false;
+    }
+  }
+
+  byId("lookup-query").addEventListener("input", () => lookupSoon());
+  byId("lookup-kind").addEventListener("change", () => runLookup(false));
+  byId("lookup-go").addEventListener("click", () => {
+    if (lookupState.timer !== null) clearTimeout(lookupState.timer);
+    lookupState.timer = null;
+    runLookup(false);
+  });
+  byId("lookup-fetch").addEventListener("click", () => fetchLookupTables());
 
   // ─── the Characters home (M18-04, docs/design/COMPANION.md) ───
   // Above the table of every character: two status cards, then one card per

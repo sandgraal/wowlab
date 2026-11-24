@@ -15,7 +15,7 @@ is refused, not opened for reading): `addons.json`, and from
 entry. `sensitive.json`, which holds WowUp's own keys, is never opened.
 
 `addons.json` is electron-store JSON: one object keyed by WowUp's record
-id, each value one addon (`docs/LAB_FORMATS.md` §14). The fields read are
+id, each value one addon (`docs/LAB_FORMATS.md` §15). The fields read are
 `name`, `providerName` (Wago, CurseForge, GitHub, …; `Unknown` for an addon
 WowUp found on disk but did not install **[verify]**), `externalId`,
 `externalUrl`, `installedVersion`, `latestVersion`, `installedFolderList`

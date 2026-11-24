@@ -361,6 +361,7 @@ def test_no_external_url_appears_in_the_page(server: Any) -> None:
         "/api/commands",
         "/api/run",
         "/api/looks-page",
+        "/api/live",  # M22-05: the Live view's poll
     }
     for sink in (
         "XMLHttpRequest",
@@ -566,6 +567,13 @@ def test_the_explorer_runs_only_listed_read_commands(server: Any) -> None:
         # M22-16: the Addons view's "Where they came from" reads `addons list`
         # (graded in test_ui_addon_sources.py).
         ("addons", "list"),
+        # M22-08: the Look up tab's search runs the read `lookup`; its
+        # download offer adds `fetch`, which writes only into wowlab's own
+        # game-table cache (graded in test_ui_lookup.py).
+        ("lookup",),
+        # M22-05: the Live view reads with `live recap` (graded in
+        # test_ui_live.py).
+        ("live", "recap"),
         # M22-01: the Crew tab's Seen by Spy reads with `spy list` and `spy
         # show`, which only read (graded in test_ui_spy.py).
         ("spy", "list"),
