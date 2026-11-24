@@ -106,6 +106,7 @@ def test_constructed_a_book_that_is_on_reads_every_field(
         "resolved_realm": None,
         "resolved_eighth": None,
         "resolved_at": None,
+        "resolve_tried_at": None,
         "in_current_group": True,
         "other_keys": [],
     }
