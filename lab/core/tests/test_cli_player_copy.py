@@ -45,6 +45,7 @@ import platformdirs
 import psutil
 import pytest
 import typer
+from _user_dirs import no_wowup_list
 from pydantic import BaseModel
 from typer.testing import CliRunner
 
@@ -344,6 +345,7 @@ class _NoClient:
 
 def sandbox(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, overlay: str) -> Path:
     """The fixture sandbox, as `_make_sandbox.sh <name> [overlay]` builds it."""
+    no_wowup_list(monkeypatch, tmp_path / "wowup")
     root = tmp_path / "World of Warcraft"
     root.mkdir()
     shutil.copy2(FIXTURES / "macos" / ".build.info", root / ".build.info")
