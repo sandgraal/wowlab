@@ -630,6 +630,8 @@ pre:empty { display: none; }
 .crew-player { margin-top: var(--space-3); padding: var(--space-3) var(--space-4); }
 .crew-player h3 { margin: 0 0 var(--space-2); font-family: var(--font-display); font-size: 18px; overflow-wrap: anywhere; unicode-bidi: isolate; }
 .crew-player h4 { margin: 0 0 var(--space-2); font-family: var(--font-display); font-size: 16px; font-weight: 600; color: var(--text); }
+.lookup-hit { margin-top: var(--space-3); padding: var(--space-3) var(--space-4); }
+.lookup-hit h3 { margin: 0 0 var(--space-2); font-family: var(--font-display); font-size: 18px; overflow-wrap: anywhere; unicode-bidi: isolate; }
 .crew-actions { display: flex; flex-wrap: wrap; gap: var(--space-3); margin: var(--space-3) 0; }
 .crew-action { display: inline-flex; align-items: center; gap: var(--space-2); }
 .crew-action label { display: inline-flex; align-items: center; gap: var(--space-2); font-size: 14px; font-weight: 500; color: var(--muted); }

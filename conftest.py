@@ -70,6 +70,8 @@ SERIAL_FILES: frozenset[str] = frozenset(
         "lab/core/tests/review/test_review_m16_25_macros_record_density.py",
         # RSS of a child decoding a 4096 x 4096 DXT5 of random blocks (M15-07).
         "lab/core/tests/parser/test_blp_peak_rss_constructed.py",
+        # A CPU clock read by a helper of the scan-time probe (M22-08).
+        "lab/core/tests/review/test_review_m22_08_drop_corrections_scan_quadratic_time_target.py",
     }
 )
 
