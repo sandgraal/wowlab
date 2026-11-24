@@ -144,6 +144,9 @@ EXCLUDED: dict[str, str] = {
     "looks page": "writes a page into wowlab's user data directory",
     "casc cat": "writes an extracted file into wowlab's user data directory",
     "char model": "writes a model into wowlab's user data directory and downloads tables",
+    # M21-03: the addresses a player pastes, kept in wowlab's links.json.
+    "char link set": "writes into wowlab's user data directory",
+    "char link forget": "writes into wowlab's user data directory",
     "snap export": "writes a file outside the install",
     "db2 fetch": "downloads a table into wowlab's cache",
     "db2 builds": "asks wago.tools for its list of versions",
@@ -703,6 +706,7 @@ def run_commands(inst: install.Install, sweep: Sweep) -> None:
     sweep.cli("tree", "--install", "--json")
     sweep.hide_rows(_report(sweep.cli("char", "list", "--json")), "characters", "label")
     sweep.cli("char", "list", "--summary", "--json")
+    sweep.cli("char", "link", "list", "--json")  # M21-03: every saved address
     kept = _report(sweep.cli("char", "kept", "--json"))
     sweep.hide_rows(kept, "kept", "label")
     rows = [r for r in (kept or {}).get("kept", []) if isinstance(r, dict)]
@@ -809,6 +813,8 @@ def run_commands(inst: install.Install, sweep: Sweep) -> None:
         # M21-08: `char sim-export` reads only without --out, which the sweep never passes.
         for sub in ("show", "gear", "binds", "macros", "history", "sim-export"):
             sweep.cli("char", sub, *ch, "--json")
+        # M21-03: the addresses saved for this character, from wowlab's links.json.
+        sweep.cli("char", "link", "list", *ch, "--json")
         # M22-05: the Live view's recap reads the logs, the store and the book.
         sweep.cli("live", "recap", *ch, "--json")
         # M22-06: `char twink` downloads its game tables on a first run, so it

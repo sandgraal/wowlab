@@ -38,7 +38,7 @@ from test_ui_character import (
 )
 from test_ui_explorer import FLAVOR, _node, _page
 
-from wowlab_core import dressing, ui
+from wowlab_core import dressing, links, ui
 
 home = first_stage.home
 install = first_stage.install
@@ -154,17 +154,26 @@ def _only_api(out: dict[str, Any]) -> None:
 def test_the_link_is_static_markup_with_no_href(server: Any) -> None:
     page = (_TEMPLATES / "page.html").read_text(encoding="utf-8")
     anchors = re.findall(r"<a\b[^>]*>", page)
-    # M22-06 added the Twink panel's two links, graded in test_ui_twink.py.
+    # M21-03 added the three links of the addresses the player saved, graded
+    # in test_ui_links.py, and M22-06 the Twink panel's two, graded in
+    # test_ui_twink.py.
+    saved = [
+        "char-saved-ft-profile",
+        "char-saved-ft-build",
+        "char-saved-wcl-report",
+        "char-twink-planner",
+        "char-twink-wowhead",
+    ]
     assert anchors == [
         '<a id="char-dressing-link" class="dressing-link" target="_blank" '
         'rel="noopener noreferrer" hidden>',
-        '<a id="char-twink-planner" class="dressing-link" target="_blank" '
-        'rel="noopener noreferrer" hidden>',
-        '<a id="char-twink-wowhead" class="dressing-link" target="_blank" '
-        'rel="noopener noreferrer" hidden>',
+        *(
+            f'<a id="{i}" class="dressing-link" target="_blank" rel="noopener noreferrer" hidden>'
+            for i in saved
+        ),
     ]
     body = _page(server).body.decode("utf-8")
-    assert body.count('target="_blank" rel="noopener noreferrer"') == 3
+    assert body.count('target="_blank" rel="noopener noreferrer"') == 6
     assert "See it dressed</a>" in body
 
 
@@ -290,14 +299,16 @@ def test_a_later_pick_clears_the_link(server: Any, forever: Path, tmp_path: Path
     assert last["ids"] == ["1 <b>2</b>"]
 
 
-def test_the_origin_constant_is_the_shipped_sites() -> None:
+def test_the_dressing_origin_is_served_from_the_shipped_sites(server: Any) -> None:
+    """M21-03: the page names no origin; the dressing room's is the Wowhead
+    origin the server sends from `link_sites.toml`, which equals
+    `dressing_sites.toml`'s, and the link is checked against it by site."""
     script = (_TEMPLATES / "page.js").read_text(encoding="utf-8")
-    # The other `://` is the SVG namespace (M17-03), a name, not an origin.
+    # The one `://` is the SVG namespace (M17-03), a name, not an origin.
     namespace = 'const SVG_NS = "http://www.w3.org/2000/svg";'
     assert script.count(namespace) == 1
-    # And, since M22-06, the Twink panel's planner origin (test_ui_twink.py).
-    planner = 'const PLANNER_ORIGIN = "https://forevertwinking.com";'
-    assert script.count(planner) == 1
-    assert script.replace(namespace, "").replace(planner, "").count("://") == 1
-    assert f'const DRESSING_ORIGIN = "{dressing.load_sites().site.origin}";' in script
+    assert script.replace(namespace, "").count("://") == 0
+    served = first_stage._send(server, "GET", "/api/commands").json()["link_origins"]
+    assert served["wowhead"] == dressing.load_sites().site.origin == links.origins()["wowhead"]
+    assert 'return outsideAddress(value, "wowhead");' in script
     assert script.count(".href") == 1 and "link.href = checked;" in script
