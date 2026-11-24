@@ -610,7 +610,9 @@ def test_the_tab_with_the_book_never_turned_on_says_so_constructed(
     assert view["about"]["keeps"] == cli.CREW_BOOK_SENTENCE
     assert view["toolsHidden"] is True and view["tableHidden"] is True and view["rows"] == []
     assert view["player"]["hidden"] is True
-    assert _bodies(view) == [{"command": ["crew", "list"], "params": {"sort": "last"}}]
+    assert _bodies(view) == [
+        {"command": ["crew", "list"], "params": {"sort": "last", "no_links": True}}
+    ]
 
 
 def test_the_tab_with_the_book_turned_off_lists_what_it_keeps_constructed(
@@ -660,16 +662,21 @@ def test_the_list_searches_filters_and_orders_through_the_command_constructed(
         NOTE,
     ]
     assert tab["status"] == "3 players." and tab["toolsHidden"] is False
-    assert _bodies(by_met) == [{"command": ["crew", "list"], "params": {"sort": "met"}}]
+    assert _bodies(by_met) == [
+        {"command": ["crew", "list"], "params": {"sort": "met", "no_links": True}}
+    ]
     assert by_met["rows"][0][0] == KEY_B
     assert _bodies(good) == [
-        {"command": ["crew", "list"], "params": {"sort": "met", "rated": "good"}}
+        {"command": ["crew", "list"], "params": {"sort": "met", "rated": "good", "no_links": True}}
     ]
     assert [r[0] for r in good["rows"]] == [KEY_B] and good["status"] == "Showing 1 of 3 players."
     assert len(everyone["rows"]) == 3
     # The search is the command's: case and spaces folded by Python.
     assert _bodies(searched) == [
-        {"command": ["crew", "list"], "params": {"sort": "met", "search": "kept the GROUP"}}
+        {
+            "command": ["crew", "list"],
+            "params": {"sort": "met", "search": "kept the GROUP", "no_links": True},
+        }
     ]
     assert [r[0] for r in searched["rows"]] == [KEY_A]
 
@@ -899,17 +906,28 @@ def test_the_match_filters_and_history_go_through_the_command_constructed(
     out = _drive(crew, tmp_path / "node", steps)
     tab, faced, _, by_allied, on_ring, _, since, history, opened, theirs = out["steps"]
     # Opening the tab reads the list alone, as before.
-    assert _bodies(tab) == [{"command": ["crew", "list"], "params": {"sort": "last"}}]
+    assert _bodies(tab) == [
+        {"command": ["crew", "list"], "params": {"sort": "last", "no_links": True}}
+    ]
     assert tab["matches"]["hidden"] is True
-    assert _bodies(faced) == [{"command": ["crew", "list"], "params": {"faced": True}}]
+    assert _bodies(faced) == [
+        {"command": ["crew", "list"], "params": {"faced": True, "no_links": True}}
+    ]
     assert [r[0] for r in faced["rows"]] == [KEY_C]
     assert by_allied["rows"][0][0] == KEY_A
-    assert _bodies(on_ring)[0]["params"] == {"sort": "allied", "map_text": "ring"}
+    assert _bodies(on_ring)[0]["params"] == {"sort": "allied", "map_text": "ring", "no_links": True}
     assert [r[0] for r in on_ring["rows"]] == [KEY_A]
-    assert _bodies(since)[0]["params"] == {"sort": "allied", "since": "2026-11-01"}
+    assert _bodies(since)[0]["params"] == {
+        "sort": "allied",
+        "since": "2026-11-01",
+        "no_links": True,
+    }
     # The history is `crew matches`' own words and lines.
     assert _bodies(history) == [
-        {"command": ["crew", "matches"], "params": {"account": ACCOUNT, "flavor": FLAVOR}}
+        {
+            "command": ["crew", "matches"],
+            "params": {"account": ACCOUNT, "flavor": FLAVOR, "no_links": True},
+        }
     ]
     report = crew.report(MATCHES, {})
     assert history["matches"]["hidden"] is False
@@ -923,7 +941,7 @@ def test_the_match_filters_and_history_go_through_the_command_constructed(
     assert _bodies(theirs) == [
         {
             "command": ["crew", "matches"],
-            "params": {"account": ACCOUNT, "flavor": FLAVOR, "name": key},
+            "params": {"account": ACCOUNT, "flavor": FLAVOR, "name": key, "no_links": True},
         }
     ]
     mine = crew.report(MATCHES, {"name": key})
@@ -1091,12 +1109,14 @@ def test_the_open_world_buttons_and_filter_go_through_the_command_constructed(
     ]
     out = _drive(crew, tmp_path / "node", steps)
     _, world, _, fights, scanned = out["steps"]
-    assert _bodies(world) == [{"command": ["crew", "list"], "params": {"world": True}}]
+    assert _bodies(world) == [
+        {"command": ["crew", "list"], "params": {"world": True, "no_links": True}}
+    ]
     assert world["rows"] == []
     assert _bodies(fights) == [
         {
             "command": ["crew", "matches"],
-            "params": {"account": ACCOUNT, "flavor": FLAVOR, "world": True},
+            "params": {"account": ACCOUNT, "flavor": FLAVOR, "world": True, "no_links": True},
         }
     ]
     report = crew.report(MATCHES, {"world": True})
@@ -1202,10 +1222,14 @@ def test_the_record_the_two_badges_and_the_two_views_come_from_the_command_const
     _inert(tab)
     assert tab["rule"]["hidden"] is True
     # Each view is the command's own filter, and says its own rule.
-    assert _bodies(nemeses) == [{"command": ["crew", "list"], "params": {"nemeses": True}}]
+    assert _bodies(nemeses) == [
+        {"command": ["crew", "list"], "params": {"nemeses": True, "no_links": True}}
+    ]
     assert [r[0] for r in nemeses["rows"]] == [d_name]
     assert nemeses["rule"] == {"text": listed["nemesis_rule"], "hidden": False}
-    assert _bodies(rivals) == [{"command": ["crew", "list"], "params": {"rivals": True}}]
+    assert _bodies(rivals) == [
+        {"command": ["crew", "list"], "params": {"rivals": True, "no_links": True}}
+    ]
     assert [r[0] for r in rivals["rows"]] == [c_name]
     assert rivals["rule"] == {"text": listed["rival_rule"], "hidden": False}
     assert everyone["rule"]["hidden"] is True and len(everyone["rows"]) == 4
@@ -1218,17 +1242,23 @@ def test_the_record_the_two_badges_and_the_two_views_come_from_the_command_const
         "last",
     ]
     # An order picked in the box is sent, and wins over the view's own.
-    assert _bodies(again) == [{"command": ["crew", "list"], "params": {"nemeses": True}}]
+    assert _bodies(again) == [
+        {"command": ["crew", "list"], "params": {"nemeses": True, "no_links": True}}
+    ]
     assert again["sort"] == "deaths"
     assert _bodies(by_name) == [
-        {"command": ["crew", "list"], "params": {"sort": "name", "nemeses": True}}
+        {"command": ["crew", "list"], "params": {"sort": "name", "nemeses": True, "no_links": True}}
     ]
     assert by_name["sort"] == "name" and [r[0] for r in by_name["rows"]] == [d_name]
     # The two sorts, through the command's own orders.
-    assert _bodies(by_deaths) == [{"command": ["crew", "list"], "params": {"sort": "deaths"}}]
+    assert _bodies(by_deaths) == [
+        {"command": ["crew", "list"], "params": {"sort": "deaths", "no_links": True}}
+    ]
     # D killed you 3 times; the others never did, so they follow by key.
     assert [r[0] for r in by_deaths["rows"]] == [d_name, KEY_A, KEY_B, c_name]
-    assert _bodies(by_team) == [{"command": ["crew", "list"], "params": {"sort": "team_losses"}}]
+    assert _bodies(by_team) == [
+        {"command": ["crew", "list"], "params": {"sort": "team_losses", "no_links": True}}
+    ]
     assert [r[0] for r in by_team["rows"]][:2] == [c_name, d_name]
     # The player's panel shows `crew show`'s record lines.
     shown = crew.report(SHOW, {"name": KEY_C})

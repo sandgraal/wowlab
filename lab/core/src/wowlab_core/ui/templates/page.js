@@ -4390,6 +4390,61 @@
     byId("tab-account").focus();
   });
 
+  // ─── other players' profile links (M21-05) ───
+  // The Crew tab's player panel and the Spy panel's player show the profile
+  // links Python built for the player (`links` of a `crew show --json`
+  // player or a `spy show --json` row): the armory, the Journey Companion
+  // and Raider.IO. Each goes into its own static link of page.html (each
+  // opens in a new tab, `rel="noopener noreferrer"`) only when
+  // `outsideAddress` passes it for the site that link is for; the site the
+  // report names is never trusted. A link with no address, or one that does
+  // not pass, is a line of text saying why, through `visible()`. The page
+  // builds no address and requests nothing from any of the sites.
+  const PLAYER_PROFILE_SLOTS = [
+    { link: "armory_character", site: "blizzard", slot: "armory", label: "Armory" },
+    { link: "journey", site: "journey", slot: "journey", label: "Journey Companion" },
+    { link: "raiderio", site: "raiderio", slot: "raiderio", label: "Raider.IO" },
+  ];
+
+  // `panel` is "crew" or "spy": the prefix of the panel's static ids.
+  function clearPlayerProfiles(panel) {
+    for (const slot of PLAYER_PROFILE_SLOTS) {
+      const link = byId(panel + "-profile-" + slot.slot);
+      link.removeAttribute("href");
+      link.hidden = true;
+    }
+    byId(panel + "-profiles").hidden = true;
+    byId(panel + "-profiles-why").replaceChildren();
+    byId(panel + "-profiles-why").hidden = true;
+  }
+
+  function drawPlayerProfiles(panel, given) {
+    clearPlayerProfiles(panel);
+    const made = Array.isArray(given) ? given.filter((l) => l && typeof l === "object") : [];
+    if (made.length === 0) return;
+    const why = [];
+    let any = false;
+    for (const slot of PLAYER_PROFILE_SLOTS) {
+      const one = made.find((l) => l.link === slot.link);
+      if (!one) continue;
+      const checked = typeof one.url === "string" ? outsideAddress(one.url, slot.site) : null;
+      if (checked !== null) {
+        const profile = byId(panel + "-profile-" + slot.slot);
+        pointLink(profile, checked);
+        profile.hidden = false;
+        any = true;
+      } else if (typeof one.url === "string") {
+        why.push(slot.label + ": no link: its address is not one this page links to");
+      } else {
+        why.push(slot.label + ": no link: " + visible(typeof one.why === "string" ? one.why : "not said"));
+      }
+    }
+    byId(panel + "-profiles").hidden = !any;
+    const list = byId(panel + "-profiles-why");
+    list.replaceChildren(...why.map((line) => make("li", line)));
+    list.hidden = why.length === 0;
+  }
+
   // ─── Seen by Spy (M22-01) ───
 
   // What the Spy addon saved, from `spy list --json`: its search, filters
@@ -4398,7 +4453,8 @@
   // sent the row's key as an argument. Read only: nothing here writes.
   // Every name, guild and place is other people's text: it reaches the page
   // only as text, through `visible()`, never in an attribute, a class or an
-  // id, and no link or address is built from it.
+  // id, and the page builds no link or address from it. A player's profile
+  // links are addresses Python built (M21-05), drawn by `drawPlayerProfiles`.
   const spySeen = { listSeq: 0, showSeq: 0, searchTimer: null, read: false };
   const SPY_FILTER = [["", "Everyone"], ["enemies", "Enemies"], ["kos", "Kill on sight"]];
   const SPY_SORT = [["last", "Last seen, newest first"], ["name", "By name"], ["level", "Highest level first"]];
@@ -4538,6 +4594,7 @@
     const seq = ++spySeen.showSeq;
     byId("spy-player").hidden = false;
     byId("spy-player-title").textContent = visible(key);
+    clearPlayerProfiles("spy");
     const lines = byId("spy-player-lines");
     lines.replaceChildren(make("li", "Reading…"));
     const reply = await runJson(["spy", "show"], { name: key }, true);
@@ -4549,7 +4606,16 @@
       return;
     }
     lines.replaceChildren(...said.map((line) => make("li", visible(line.trim()))));
+    drawPlayerProfiles("spy", spyProfileLinks(report));
     byId("spy-player-title").focus();
+  }
+
+  // The profile links of the player `spy show` read (M21-05): those of its
+  // first row (each row is one character's sighting of the same player, so
+  // every row carries the same links); none when Spy kept no row of theirs.
+  function spyProfileLinks(report) {
+    const rows = Array.isArray(report.players) ? report.players.filter((p) => p && typeof p === "object") : [];
+    return rows.length > 0 ? rows[0].links : null;
   }
 
   function spyAgain() {
@@ -4709,7 +4775,9 @@
   // argument, which the server puts after `--`. Every name, realm, guild,
   // note and instance name is other people's text: it reaches the page
   // only as text, through `visible()`, never in an attribute, a class or
-  // an id, and no link or address is built from it.
+  // an id, and the page builds no link or address from it. A player's
+  // profile links are addresses Python built (M21-05), drawn by
+  // `drawPlayerProfiles`; a player a match or fight names opens their panel.
 
   const crew = {
     report: null, // the CrewReport the table was drawn from
@@ -4946,7 +5014,10 @@
   async function loadCrew() {
     const seq = ++crew.listSeq;
     crewSay("Reading the crew book…", false);
-    const reply = await runJson(["crew", "list"], crewFilters());
+    // `no_links` (M21-05): the list draws no profile link, so it asks for
+    // none, which keeps a long list's report small; the player opened
+    // gets theirs from crew show.
+    const reply = await runJson(["crew", "list"], Object.assign(crewFilters(), { no_links: true }));
     if (seq !== crew.listSeq) return;
     const report = reply.data;
     if (!report || typeof report !== "object" || typeof report.state !== "string") {
@@ -4998,7 +5069,8 @@
   // it is. Each line is the command's own text, shown through `visible()`.
   // With `world`, `crew matches --world` (M20-18): the open-world fights.
   async function readCrewMatches(key, world) {
-    const extra = key === null ? {} : { name: key };
+    // No profile links (M21-05): a player listed here opens their own panel.
+    const extra = key === null ? { no_links: true } : { name: key, no_links: true };
     if (world) extra.world = true;
     const reply = await runJson(["crew", "matches"], crewParams(extra));
     const report = reply.data;
@@ -5006,7 +5078,34 @@
     if (!lines || typeof report.words !== "string") {
       return { error: reply.error ? shown(reply.error) : "The match history came back in a shape this page does not know." };
     }
-    return { words: visible(report.words), lines: lines.map((line) => make("li", visible(line.trim()))) };
+    return {
+      words: visible(report.words),
+      lines: lines.map((line) => make("li", visible(line.trim()))),
+      people: crewPeople(report.profiles),
+    };
+  }
+
+  // The players the listed matches or fights name (M21-05), from the
+  // report's `profiles`: a button each, by stored key, that opens their
+  // panel with their profile links.
+  function crewPeople(profiles) {
+    const keys = Array.isArray(profiles) ? profiles.filter((p) => p && typeof p.key === "string").map((p) => p.key) : [];
+    return keys.map((key) => {
+      const item = make("li");
+      const open = make("button", visible(key));
+      open.type = "button";
+      open.className = "hub-open";
+      open.addEventListener("click", () => openCrewPlayer(key));
+      item.appendChild(open);
+      return item;
+    });
+  }
+
+  function drawCrewPeople(people) {
+    const list = byId("crew-matches-people");
+    list.replaceChildren(...(people || []));
+    list.hidden = list.children.length === 0;
+    byId("crew-matches-people-words").hidden = list.hidden;
   }
 
   async function showCrewMatches(focus, world) {
@@ -5017,10 +5116,12 @@
     byId("crew-matches-title").textContent = crew.world ? "Open-world fights" : "Match history";
     byId("crew-matches-words").textContent = crew.world ? "Reading the open-world fights…" : "Reading the match history…";
     byId("crew-matches-lines").replaceChildren();
+    drawCrewPeople(null);
     const got = await readCrewMatches(null, crew.world);
     if (seq !== crew.matchSeq) return;
     byId("crew-matches-words").textContent = got.error || got.words;
     byId("crew-matches-lines").replaceChildren(...(got.lines || []));
+    drawCrewPeople(got.people);
     if (focus) byId("crew-matches-title").focus();
   }
 
@@ -5096,6 +5197,7 @@
     crewActSay("", false);
     byId("crew-player").hidden = true;
     byId("crew-player-lines").replaceChildren();
+    clearPlayerProfiles("crew");
     clearPlayerMatches();
   }
 
@@ -5118,6 +5220,7 @@
     byId("crew-actions").hidden = true;
     byId("crew-note-codes").hidden = true;
     clearPlayerMatches();
+    clearPlayerProfiles("crew");
     byId("crew-player-title").textContent = visible(key);
     const lines = byId("crew-player-lines");
     lines.replaceChildren(make("li", "Reading…"));
@@ -5132,6 +5235,7 @@
     }
     lines.replaceChildren(...said.map((line) => make("li", visible(line.trim()))));
     const player = report.player && typeof report.player === "object" ? report.player : null;
+    if (player) drawPlayerProfiles("crew", player.links);
     if (player) {
       byId("crew-rate-value").value = hubStr(player.rating) || "none";
       // The note as it is shown: a control character in it is shown as its
