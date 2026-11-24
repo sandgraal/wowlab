@@ -101,6 +101,12 @@ def test_constructed_a_book_that_is_on_reads_every_field(
         "spec": None,
         "honor_level": None,
         "score": None,
+        # What the game gave for the GUID (M21-12, schema 3): none here.
+        "resolved_name": None,
+        "resolved_realm": None,
+        "resolved_eighth": None,
+        "resolved_at": None,
+        "resolve_tried_at": None,
         "in_current_group": True,
         "other_keys": [],
     }
@@ -113,20 +119,22 @@ def test_constructed_an_empty_book_reads_with_no_player() -> None:
     assert read.state == "on" and read.players == [] and read.unread == []
 
 
-# M20-03: schema 2 is read now; schema 3 is the next one refused.
-@pytest.mark.parametrize("schema", [3, 0, 9999])
+# M20-03: schema 2 is read now; M21-12: schema 3 too, so 4 is the next one
+# refused.
+@pytest.mark.parametrize("schema", [4, 0, 9999])
 def test_constructed_an_unknown_schema_is_refused_with_its_number(schema: int) -> None:
     data = account_file(book({KEY_A: player()}, schema=schema))
     with pytest.raises(crewbook.CrewBookError) as caught:
         crewbook.parse_book(data)
     assert str(caught.value) == (
         "This crew book was written by another version of the lab-addon (book version "
-        f"{schema}; this wowlab reads versions 1 and 2). Nothing was read; updating wowlab may "
+        f"{schema}; this wowlab reads versions 1, 2 and 3). Nothing was read; updating wowlab "
+        "may "
         "read it."
     )
     assert (
         caught.value.detail
-        == f"WowLabCrewDB is schema {schema}; this reader knows schema 1, 2 only"
+        == f"WowLabCrewDB is schema {schema}; this reader knows schema 1, 2, 3 only"
     )
 
 

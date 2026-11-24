@@ -7055,6 +7055,33 @@ combat is still read once combat ends. The first snapshot (`probe.pvp[1]`) is ta
 before the data is requested (the request follows its reads), so 0 rows and no fields there
 mean the data had not arrived yet, not that a call is missing.
 
+*Note (2026-11-24, M21-12, schema 3, as built).* The book's `schema` becomes 3. At the end
+of each roster pass (so only while the book is on and out of combat) the addon records the
+game's region once per book (`region`, the text of `GetCurrentRegionName()`, `"US"` on the
+owner's launch client), and asks `GetPlayerInfoByGUID` for each kept player with a `guid` and
+no `resolved_name`: the sixth value is `resolved_name` (`"<First> <Second>"` on Forever), the
+seventh `resolved_realm` (empty for the player checked on 2026-11-23; retail leaves it empty for
+your own realm, **[verify]**), the eighth `resolved_eighth` (probably the level, **[verify]**),
+with `resolved_at`; the region is kept with `region_at`. *Fix round 1 (2026-11-24, code and
+domain review):* the client is believed to name only a player it has met lately, and the 71037
+event list has no event for a late answer, so the order is: players met this session (a group
+member, a scoreboard row; the scoreboard pass asks too), with no limit; players never asked;
+one more ask, at a pass at least `RETRY_SECONDS` (5) later, of a GUID that gave nothing this
+session; then earlier sessions' misses, the oldest first. All but the first kind share
+`MAX_RESOLVES` (100) asks per pass, and the last kind also 100 per login or `/reload`. A miss
+keeps `resolve_tried_at`, the time of the ask, so it goes to the back of the queue; a name
+clears it. The pinned migration takes a schema 1 or 2 book that is on to 3
+(a schema 1 book also gains its empty `matches`); nothing else is stored. The desk reads
+schema 1 to 3. The database (§21.3) keeps the four values per player (its schema 7, after M22-22's 6) and the
+book's region as the `meta` row `book_region` (with `book_region_at`, the book's `region_at`
+or the first sync that saw it), and fills each row's first and second name and
+region with their source: `names_from` (`game`, `log`, `borrowed` or `key`) and `region_from`
+(`log`, `book`, `borrowed` or `settings`). A player only a combat log named borrows both from
+the row the game's list gave with the same GUID (`borrowed_from`, through the aliases of
+§21.3). When the book's region and the `portal` setting name different regions, a row whose
+region would come from either has none and says both (`region_conflict`). Whether the client
+answers for a GUID it met in an earlier session is **[verify]** (M21-O2).
+
 ### 21.3 The database (ADR-0039)
 
 One file per book: `<user data>/wowlab/crew/<flavor folder>/<account

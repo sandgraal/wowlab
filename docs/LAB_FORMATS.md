@@ -1746,6 +1746,21 @@ Dated entries, newest last. Each names the fixture that prompted it.
   with it. How the client writes the lists (positional entries with
   `-- [n]` comments, §4.2) is expected and not yet seen in a capture
   **[verify]**, as is every field the addon of M20-05 and M20-08 writes.
+- **2026-11-24, §4, schema 3 of the crew book (M21-12; no fixture yet: the
+  reader is graded on constructed books).** `WowLabCrewDB.schema` 3 is
+  schema 2 plus, at the top level, `region` (text, as the client's
+  `GetCurrentRegionName()` gave it, `"US"` on the owner's launch client;
+  left out until read, never changed after) and `region_at` (a time, when
+  it was recorded), and on each player entry `resolved_name` and
+  `resolved_realm` (text: `GetPlayerInfoByGUID`'s sixth and seventh values,
+  `"<First> <Second>"` on Forever and `""` for the player checked on
+  2026-11-23; retail leaves the realm empty for your own realm **[verify]**),
+  `resolved_eighth` (a whole number, its eighth value, probably the level
+  **[verify]**) and `resolved_at` (a time), all left out until the client
+  answered for the player's GUID, and `resolve_tried_at` (a time: the last
+  ask the client gave no name to; removed once it does). The addon's migration gives a schema 2
+  book that is on only the new number. `wowlab` reads schema 1 to 3; at 1
+  and 2 the new fields are keys it does not know.
 - **2026-11-19, §12, bone tracks and their keys (M15-26,
   `macos-70959/derived/charmodel.json`, rows `sheath_rotation_keys` and
   `hand_bone_keys`; read by `scripts/charmodel_facts.py`, the library

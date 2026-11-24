@@ -33,7 +33,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _crew_build import ACCOUNT, FLAVOR, KEY_A, KEY_D
 from _world_lines import FOE_A, FOE_D, hits_you, log, you_hit, zone
 from test_crew_world import _book, _json, _scan, _write_log, owner  # noqa: F401 - fixture
-from test_crewdb import Env, make  # noqa: F401 - the fixture
+from test_crewdb import Env, before_schema_7, make  # noqa: F401 - the fixture
 
 MAP_TABLE = Path(__file__).resolve().parent / "fixtures" / "wago" / "Map.1.60.1.71037.csv"
 
@@ -78,10 +78,12 @@ def _encounters(env: Env) -> list[tuple[Any, ...]]:
 
 
 def _as_schema_5(env: Env) -> None:
-    """The database as M21-02's schema 5 left it: no `by_map`."""
+    """The database as M21-02's schema 5 left it: no `by_map` (nor M21-12's
+    schema 7 columns)."""
     conn = sqlite3.connect(env.db(), isolation_level=None)
     try:
         conn.execute("ALTER TABLE world_encounters DROP COLUMN by_map")
+        before_schema_7(conn)
         conn.execute("PRAGMA user_version = 5")
     finally:
         conn.close()

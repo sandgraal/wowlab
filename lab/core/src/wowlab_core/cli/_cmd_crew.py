@@ -405,6 +405,70 @@ def _crew_region_line(reading: region.RegionReading | None, *, unconfirmed: bool
     return _region_text(reading.region, reading.absent, source)
 
 
+def _names_words(p: crewdb.CrewRow) -> str:
+    """Where a crew row's names came from (M21-12), in the player's words;
+    a name the game gave is dated, since it is not asked again (fix round 1)."""
+    if p.names_from == "game":
+        return f"as the game gave it for the character's id on {_date(p.resolved_at)}"
+    if p.names_from == "log":
+        return "from a combat log's name for them"
+    if p.names_from == "borrowed":
+        return f"from {p.borrowed_from}, the same character by the game's id"
+    return "from the name the crew book keeps"
+
+
+def _crew_names_line(p: crewdb.CrewRow, *, second_names: bool) -> str:
+    """`crew show`'s line naming the player's first and second name and
+    where they came from (M21-12). On a flavor whose characters have no
+    second name, a row with none says "name", not "first name" (fix round 1)."""
+    plain = p.second_name is None and not second_names
+    parts = [f"name {p.first_name}" if plain else f"first name {p.first_name}"]
+    if p.second_name is not None:
+        parts.append(f"second name {p.second_name}")
+    if p.realm is not None:
+        parts.append(f"realm {p.realm}")
+    return f"  Name in game: {p.game_name} ({', '.join(parts)}; {_names_words(p)})"
+
+
+# Said of a region the crew book recorded (fix round 1): it is your
+# connection's region, given to the other player by an assumption.
+_CREW_BOOK_REGION_SOURCE = "your region as the game gave it to the crew book on {date}"
+_CREW_ASSUMED = "wowlab assumes every player is in your region"
+
+
+def _crew_player_region_line(
+    p: crewdb.CrewRow, reading: region.RegionReading | None, *, unconfirmed: bool
+) -> str | None:
+    """`crew show`'s region line (M21-12): the player's own region and where
+    it came from; the book's line (`_crew_region_line`) when it is the
+    flavor's settings or there is none. A region from the crew book keeps
+    the assumption and its date, and a book and settings that name
+    different regions are both said, with no region (fix round 1)."""
+    if p.region_conflict:
+        book, settings = (r.upper() for r in p.region_conflict)
+        return (
+            f"Region: not known: the crew book recorded {book} as your region on "
+            f"{_date(p.region_recorded_at)}, but your game's settings name {settings}"
+        )
+    if p.region is None or p.region_from in (None, "settings"):
+        return _crew_region_line(reading, unconfirmed=unconfirmed)
+    caveat = ", not yet confirmed" if unconfirmed else ""
+    if p.region_from == "log":
+        source = "from a combat log's name for them"
+    elif p.region_from == "book":
+        source = (
+            _CREW_BOOK_REGION_SOURCE.format(date=_date(p.region_recorded_at))
+            + f"; {_CREW_ASSUMED}{caveat}"
+        )
+    else:
+        source = (
+            f"from {p.borrowed_from}, the same character by the game's id: "
+            + _CREW_BOOK_REGION_SOURCE.format(date=_date(p.region_recorded_at))
+            + f"; {_CREW_ASSUMED}{caveat}"
+        )
+    return _region_text(p.region, None, source)
+
+
 def _crew_second_names(opened: _Opened) -> bool:
     """Whether the chosen book's flavor names characters by first and
     second name (M21-02): a digits-only folder of one of its accounts holds
@@ -987,7 +1051,8 @@ def crew_show(
         assert place is not None
         lines = [f"{player.key}, from the crew book of {_place_words(place)}, {_AS_OF}:"]
         lines += _field_lines(player)
-        region_line = _crew_region_line(reading, unconfirmed=not notes)
+        lines.append(_crew_names_line(player, second_names=_crew_second_names(opened)))
+        region_line = _crew_player_region_line(player, reading, unconfirmed=not notes)
         if region_line is not None:
             lines.append(f"  {region_line}")
         if player.also_known_as:

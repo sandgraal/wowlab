@@ -52,6 +52,17 @@ CREW_MIGRATE = (
     "WowLabCrewDB . schema = CREW_SCHEMA "
     "WowLabCrewDB . matches = { } end"
 )
+# M21-12 (schema 3): the migration the real file holds from schema 3 on. A
+# schema 1 book gains the empty `matches` schema 2 added, and a schema 1 or 2
+# book takes the new number; schema 3 adds only fields that are left out until
+# read, so nothing else is stored. Called from the same two pinned places.
+CREW_MIGRATE_3 = (
+    "local function crewMigrate ( ) "
+    'if type ( WowLabCrewDB ) ~= "table" then return end '
+    "if WowLabCrewDB . schema ~= 1 and WowLabCrewDB . schema ~= 2 then return end "
+    "if WowLabCrewDB . schema == 1 then WowLabCrewDB . matches = { } end "
+    "WowLabCrewDB . schema = CREW_SCHEMA end"
+)
 # The probe handler at schema 2: it migrates a book that is on, then raises
 # `probe.loads` in place (so `probe.pvp` survives a load) for a book of this
 # schema only.

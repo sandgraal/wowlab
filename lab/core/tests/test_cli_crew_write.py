@@ -498,13 +498,13 @@ def test_forget_refuses_a_name_inside_a_nested_table_of_a_match_constructed(make
 
 @pytest.mark.parametrize("command", ["forget", "rate", "note"])
 def test_an_unknown_schema_is_refused_constructed(make: Any, command: str) -> None:
-    # Schema 3: this wowlab reads 1 and 2 (M20-03; it was 2 before).
-    data = account_file(book({KEY_A: player()}, schema=3))
+    # Schema 4: this wowlab reads 1 to 3 (M21-12; it was 3 before, 2 before M20-03).
+    data = account_file(book({KEY_A: player()}, schema=4))
     env = make(data)
     extra = {"forget": (), "rate": ("good",), "note": (NOTE,)}[command]
     result = env.run("crew", command, KEY_A, *extra, "--yes")
     assert result.exit_code == 1, (result.stdout, result.stderr)
-    assert "book version 3" in result.stderr
+    assert "book version 4" in result.stderr
     assert env.live() == data and guard.history() == ()
 
 
