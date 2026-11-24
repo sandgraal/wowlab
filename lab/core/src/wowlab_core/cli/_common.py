@@ -40,6 +40,7 @@ from typer.core import TyperGroup
 
 from wowlab_core import (
     __version__,
+    clientlists,
     crewcount,
     guard,
     install,
@@ -2069,6 +2070,25 @@ def _listed[T](read: Callable[..., T], lay: layout.Layout, rel: str, **kwargs: A
         return read(lay.flavor_path / rel, root=lay.install_root, **kwargs)
     except snapshot.LinkedPathError as exc:
         raise exc.changed_while_read(lay.flavor_path) from exc
+
+
+def _client_facts(lay: layout.Layout, chosen: install.Flavor) -> clientlists.Client:
+    """What the game's shipped command lists judge against (M22-18): the
+    opened flavor's build, as discovered from `.build.info`, and the text
+    language its `Config.wtf` sets (`textLocale`), None when there is no
+    such file or line or the file cannot be read."""
+    language: str | None = None
+    found = [
+        f for f in lay.wtf_files() if f.scope == "machine" and f.name.casefold() == "config.wtf"
+    ]
+    if found:
+        try:
+            cvar = _listed(wtfconfig.read_config, lay, found[0].path).get("textLocale")
+        except (OSError, ValueError, WowlabError):  # no language, as with no file
+            cvar = None
+        if cvar is not None and re.fullmatch(r"[a-z]{2}[A-Z]{2}", cvar.value):
+            language = cvar.value
+    return clientlists.Client(build=chosen.version, language=language)
 
 
 # What each kind of snapshot is, in words (M16-09): `snap show` prints it, and
