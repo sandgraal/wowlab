@@ -2392,6 +2392,7 @@
       const link = byId("char-talents-link");
       pointLink(link, checked);
       link.title = "Opens " + site + " in a new tab; wowlab sends nothing";
+      link.textContent = "Open my talents";
       link.hidden = false;
       return;
     }
