@@ -4320,8 +4320,17 @@ The owner's launch-client log writes `ZONE_CHANGE,33,"Shadowfang Keep",0`: a dun
 
 ---
 
+## [ ] M22-23 — Hotfix cache: item stats wago.tools leaves out
+**Size:** M · **Sources:** ADR-0033 note of 2026-11-23 (owner decision); ADR-0022; GLOSSARY "Hotfix cache"; the domain review of M22-06; wowsims/forever (MIT) `tools/db2tool/wdc/hotfix.go` as the format reference
+
+The owner's `_forever_/Cache/ADB/enUS/DBCache.bin` (header `XFTH`, version 9, build 71037, 104,618 records) holds 8,401 valid ItemSparse and Item rows; they cover 5,265 of the 11,158 weapons and armour wago.tools' 71037 CSV lacks (4,108 of the 4,944 classic-range ones), including the owner's worn 6537, 6541, 6543, 14113 and dagger 2632. `wowlab_core.hotfix` reads the file read-only, matches table hashes (SStrHash, as wowsims does), and decodes Item and ItemSparse records (strings first, then fixed-width fields, per the build's layout); `gamedata` overlays them on the cached tables only when the cache's build equals the tables' build: status 1 adds or replaces a row, 2 and 3 remove one. Every overlaid row says it came from the hotfix cache. No decryption, no key read. `docs/LAB_FORMATS.md` gains a DBCache.bin section. M22-06's twink panel and M21-08's export use the overlay. A `doctor` line names the cache's build and how many rows it adds.
+
+**Acceptance:** constructed `XFTH` files (labelled) for the header, hashes, statuses and a decoded ItemSparse record; derived fixtures (decoded values with provenance, never the file's bytes) checked against wowsims' `leftover_db.json` for 6537, 6541, 6543, 14113 and 2632; an owner-run `@live` test on the real cache; a build mismatch refuses the overlay with its reason. Reviewed by `code-reviewer`, `domain-reviewer` and `security-reviewer` (a new binary parser). User-facing: yes.
+
+---
+
 ## [ ] M22-14 — Wave review
-**Size:** S · **Depends on:** M22-01 to M22-13, M22-15 to M22-22, M22-O1
+**Size:** S · **Depends on:** M22-01 to M22-13, M22-15 to M22-23, M22-O1
 
 `docs/handoffs/M22-review.md`; dispatch stops until the owner's next pick.
 
