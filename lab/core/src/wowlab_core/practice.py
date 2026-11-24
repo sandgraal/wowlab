@@ -22,7 +22,9 @@ Forever log slice (`test_practice_traps.py`):
    there (`damage_amount`). Reading 30 everywhere reads a swing's school.
 2. *A companion is found two ways* (`Companions`): a `SPELL_SUMMON` whose
    source is the player names the unit summoned, which may never act and so
-   never names its owner (a totem, a campfire); the advanced block's owner
+   never names its owner (the real slice's Campfire Marker; a totem that
+   casts names its owner on its casts, as the owner's 2026-11-23 13:30 log
+   shows for a Searing Totem); the advanced block's owner
    slot names a pet that was out before the log began, for which there is
    no `SPELL_SUMMON`. Either alone misses companions. GUIDs only, never
    names: other players summon units of the same name.
@@ -47,8 +49,9 @@ the block on every line that has one (two real logs of build 1.60.1.71037).
 **A segment** is a run of your activity (your cast starts and casts, and
 your or your companions' damage) with no pause longer than `gap` seconds
 (`DEFAULT_GAP_SECONDS`, the source's 10 s), ended early by a new
-`COMBAT_LOG_VERSION` line (logging was switched off and on) or by another of
-your characters acting. Each keeps the line numbers it spans, so the summary
+`COMBAT_LOG_VERSION` line (a new log header: logging switched off and on,
+or a relog or reload, the cause **[verify]**) or by another of your
+characters acting. Your pets' and summons' hits keep a segment open too. Each keeps the line numbers it spans, so the summary
 reads exactly those lines.
 
 **The global cooldown.** A cast with a cast time keeps you busy from the
@@ -58,28 +61,33 @@ cooldown, which is the spell's `StartRecoveryTime` in the build's
 for every cast when it is not. A spell with no row in the table is counted
 as not on the global cooldown (`no_gcd_data`): auto-repeat shots, food and
 bandages have none. Haste and talents that shorten it are not read (not yet
-confirmed whether Forever applies any). A channelled spell counts only its
-global cooldown: the log writes no channel's end.
+confirmed whether Forever applies any). wowlab counts only the global
+cooldown of a channelled spell: it reads no channel's end.
 
 **Cooldown use.** For a spell whose cooldown (the larger of `RecoveryTime`
 and `CategoryRecoveryTime`) is longer than its global cooldown, the casts
-in the segment out of the most the segment allowed (its length over the
-cooldown, plus one for the first cast). Talents that shorten a cooldown are
-not read. Spells you cast elsewhere in the log and not in this segment are
+in the segment out of at most what the segment allowed (its length over
+the cooldown, plus one for the first cast). That bound is an upper one:
+a category cooldown several spells share, a cooldown already running when
+the segment starts, and a cooldown that starts only when the effect ends
+each allow fewer. Talents that shorten a cooldown are not read. Spells you cast elsewhere in the log and not in this segment are
 listed with no casts.
 
 **Buff uptime.** The share of the segment each buff on you was up, from its
-applied, refreshed, dose and removed lines. A buff removed with no earlier
-applied line in the log was on you when logging began
-(`on_before_log`); a buff still on at the segment's end counts to its end.
+applied, refreshed, dose and removed lines, read on past the segment's
+end up to the next log header. A buff refreshed, dosed or removed with no
+earlier applied line since the log header was on you when logging began
+(`on_before_log`), and counts from the segment's start; a buff still on
+at the segment's end counts to its end.
 
 **Times** are read from the timestamp to the millisecond, with its UTC
 offset; a line with no year in its timestamp is not read (`no_time`).
 
 **Bounds.** At most `MAX_SEGMENTS` segments are listed (`segments_left_out`
-counts the rest), `MAX_COMPANIONS` companions are remembered, and
-`MAX_SPELLS` spells and buffs are kept in a summary; memory does not grow
-with the log beyond these.
+counts the rest), `MAX_COMPANIONS` companions and as many of your own
+GUIDs are remembered (`players_left_out`), `MAX_SPELLS` spells and buffs
+and `MAX_SEGMENT_CASTS` casts are kept in a summary, and one cast start
+is pending at a time; memory does not grow with the log beyond these.
 """
 
 from __future__ import annotations
@@ -103,6 +111,7 @@ __all__ = [
     "DEFAULT_GAP_SECONDS",
     "MAX_COMPANIONS",
     "MAX_SEGMENTS",
+    "MAX_SEGMENT_CASTS",
     "MAX_SPELLS",
     "PAUSE_SECONDS",
     "PRACTICE_EVENTS",
@@ -142,6 +151,9 @@ TIMING_TABLE = "SpellCooldowns"
 MAX_SEGMENTS = 2_000
 MAX_COMPANIONS = 10_000
 MAX_SPELLS = 500
+MAX_SEGMENT_CASTS = 50_000
+"""At most this many casts of one segment are kept for its summary
+(`casts_left_out` counts the rest)."""
 MAX_TARGET_NAMES = 5
 ADVANCED_FIELDS = 19
 """The advanced block's width on every real line that carries it."""
@@ -158,13 +170,23 @@ _AURA_TYPE = 11
 _PREFIX: dict[str, int] = {"SWING": 0, "SPELL": 3, "RANGE": 3, "ENVIRONMENTAL": 1}
 
 DAMAGE_EVENTS = frozenset({"SWING_DAMAGE", "RANGE_DAMAGE", "SPELL_DAMAGE", "SPELL_PERIODIC_DAMAGE"})
-"""The damage lines totalled. `SWING_DAMAGE_LANDED` repeats a swing's amount
-(LAB_FORMATS §8), so counting it too would count melee twice."""
+"""The damage lines totalled. Melee is `SWING_DAMAGE` only, as logged:
+the beta client writes a `SWING_DAMAGE_LANDED` after each swing with the
+same amount (counting both would count it twice), and the launch client
+writes a player's or pet's swing on a creature as `SWING_DAMAGE` with no
+`LANDED`, and a creature's swing on a player as `LANDED` with no
+`SWING_DAMAGE` (LAB_FORMATS §8, 2026-11-24). Whether the logging player's
+own swings are written as `SWING_DAMAGE` on the launch client is **[verify]**."""
 _CAST_SUCCESS = "SPELL_CAST_SUCCESS"
 _CAST_START = "SPELL_CAST_START"
 _CAST_FAILED = "SPELL_CAST_FAILED"
 _SUMMON = "SPELL_SUMMON"
-_AURA_ON = frozenset({"SPELL_AURA_APPLIED", "SPELL_AURA_REFRESH", "SPELL_AURA_APPLIED_DOSE"})
+_AURA_APPLIED = "SPELL_AURA_APPLIED"
+# Lines that show a buff already on: a refresh or a dose change.
+_AURA_STILL_ON = frozenset(
+    {"SPELL_AURA_REFRESH", "SPELL_AURA_APPLIED_DOSE", "SPELL_AURA_REMOVED_DOSE"}
+)
+_AURA_ON = frozenset({_AURA_APPLIED, *_AURA_STILL_ON})
 _AURA_OFF = "SPELL_AURA_REMOVED"
 _HEADER = "COMBAT_LOG_VERSION"
 PRACTICE_EVENTS = frozenset(
@@ -478,8 +500,8 @@ class PracticeSegment(_Model):
 class SegmentScan(_Model):
     """The segments of a log (`find_segments`), oldest first, and counts:
     lines read, lines that would not tokenize, lines whose time could not be
-    read, segments past `MAX_SEGMENTS`, and companions past
-    `MAX_COMPANIONS`."""
+    read, segments past `MAX_SEGMENTS`, and companions and GUIDs of yours
+    past `MAX_COMPANIONS`."""
 
     segments: tuple[PracticeSegment, ...] = ()
     lines: int = 0
@@ -487,6 +509,7 @@ class SegmentScan(_Model):
     no_time: int = 0
     segments_left_out: int = 0
     companions_left_out: int = 0
+    players_left_out: int = 0
     gap: float = DEFAULT_GAP_SECONDS
 
 
@@ -522,7 +545,7 @@ def find_segments(
     # upper GUID -> as written, for the players whose activity counts
     players: dict[str, str] = {g.upper(): g for g in guids or ()}
     done: list[PracticeSegment] = []
-    left_out = lines = unparsed = no_time = 0
+    left_out = lines = unparsed = no_time = players_left_out = 0
     cur: _Open | None = None
 
     def close() -> None:
@@ -567,8 +590,11 @@ def find_segments(
         source = f[_SOURCE]
         if not isinstance(source, str):
             continue
-        if not fixed and _is_player(_flags(f[_SOURCE_FLAGS])):
-            players.setdefault(source.upper(), source)
+        if not fixed and source.upper() not in players and _is_player(_flags(f[_SOURCE_FLAGS])):
+            if len(players) < MAX_COMPANIONS:
+                players[source.upper()] = source
+            else:
+                players_left_out += 1
         who: str | None = None
         cast = rec.event == _CAST_SUCCESS
         amount: int | None = None
@@ -612,6 +638,7 @@ def find_segments(
         no_time=no_time,
         segments_left_out=left_out,
         companions_left_out=companions.left_out,
+        players_left_out=players_left_out,
         gap=gap,
     )
 
@@ -723,6 +750,7 @@ class PracticeSummary(_Model):
     dps: float
     timings: Literal["table", "assumed"]
     spells_left_out: int = 0
+    casts_left_out: int = 0  # casts past MAX_SEGMENT_CASTS, not kept
     no_time: int = 0
 
 
@@ -742,6 +770,7 @@ def _union(intervals: list[tuple[float, float]], lo: float, hi: float) -> list[t
 class _Aura:
     def __init__(self, name: str) -> None:
         self.name = name
+        self.known = False  # a line of it was seen since the log header
         self.since: float | None = None
         self.up = 0.0
         self.before = False
@@ -749,15 +778,31 @@ class _Aura:
 
 class _Casts:
     """Your casts while lines are fed: per spell, the global cooldown and the
-    time each cast kept you busy."""
+    time each cast kept you busy. One cast start is pending at a time: you
+    cast one spell at a time."""
 
     def __init__(self, timings: Mapping[int, SpellTiming] | None) -> None:
         self.timings = timings
         self.times: dict[tuple[int, str], list[float]] = {}
         self.elsewhere: dict[tuple[int, str], None] = {}
         self.busy: list[tuple[float, float]] = []
-        self.on_gcd = self.off_gcd = self.no_data = self.left_out = 0
-        self.started: dict[int, float] = {}
+        self.on_gcd = self.off_gcd = self.no_data = self.left_out = self.casts_left_out = 0
+        self.kept = 0
+        self.pending: tuple[int, float] | None = None  # the latest cast start: spell, time
+
+    def start(self, spell: int, t: float) -> None:
+        self.pending = (spell, t)
+
+    def failed(self, spell: int) -> None:
+        if self.pending is not None and self.pending[0] == spell:
+            self.pending = None
+
+    def _began(self, spell: int) -> float | None:
+        if self.pending is None or self.pending[0] != spell:
+            return None
+        began = self.pending[1]
+        self.pending = None
+        return began
 
     def gcd(self, spell: int) -> float:
         if self.timings is None:
@@ -774,10 +819,14 @@ class _Casts:
         return timing.gcd_ms / 1000
 
     def success(self, key: tuple[int, str], t: float) -> None:
-        began = self.started.pop(key[0], None)
+        began = self._began(key[0])
+        if self.kept >= MAX_SEGMENT_CASTS:
+            self.casts_left_out += 1
+            return
         if key not in self.times and len(self.times) >= MAX_SPELLS:
             self.left_out += 1
             return
+        self.kept += 1
         self.times.setdefault(key, []).append(t)
         cast_time = t - began if began is not None and 0 < t - began <= _LONGEST_CAST else 0.0
         start = t - cast_time
@@ -786,13 +835,18 @@ class _Casts:
             self.busy.append((start, end))
 
     def seen_elsewhere(self, key: tuple[int, str]) -> None:
+        self._began(key[0])
         if key not in self.times and len(self.elsewhere) < MAX_SPELLS:
             self.elsewhere.setdefault(key, None)
 
 
+_AuraLine = Literal["applied", "still_on", "removed"]
+
+
 class _Buffs:
     """The buffs on you while lines are fed, and how long each was up
-    between `t0` and `t1`."""
+    between `t0` and `t1`. Fed past `t1` too, up to the next log header, so
+    a buff removed after the segment, or one only refreshed, counts."""
 
     def __init__(self, t0: float, t1: float) -> None:
         self.t0, self.t1 = t0, t1
@@ -801,9 +855,10 @@ class _Buffs:
         self.left_out = 0
 
     def restart(self) -> None:
-        """Logging was switched off and on: what was on before is not known."""
+        """A new log header: what was on before it is not known."""
         for aura in self.auras.values():
             aura.since = None
+            aura.known = False
         self.log_start = None
 
     def add(self, aura: _Aura, a: float, b: float) -> None:
@@ -811,22 +866,31 @@ class _Buffs:
         if hi > lo:
             aura.up += hi - lo
 
-    def feed(self, spell: int, name: str, off: bool, t: float) -> None:
+    def feed(self, spell: int, name: str, line: _AuraLine, t: float) -> None:
         aura = self.auras.get(spell)
         if aura is None:
             if len(self.auras) >= MAX_SPELLS:
                 self.left_out += 1
                 return
             aura = self.auras[spell] = _Aura(name)
-        if not off:
+        carried = not aura.known and line != "applied"
+        aura.known = True
+        if carried:
+            # Refreshed, dosed or removed with no applied line since the log
+            # header: it was on you when logging began.
+            aura.before = True
+            since = self.log_start if self.log_start is not None else t
+            if line == "removed":
+                self.add(aura, since, t)
+            else:
+                aura.since = since
+            return
+        if line != "removed":
             if aura.since is None:
                 aura.since = t
             return
         if aura.since is not None:
             self.add(aura, aura.since, t)
-        elif self.log_start is not None:
-            aura.before = True
-            self.add(aura, self.log_start, t)
         aura.since = None
 
     def done(self) -> tuple[BuffUptime, ...]:
@@ -946,6 +1010,7 @@ def summarize(
     casts = _Casts(timings)
     buffs = _Buffs(t0, t1)
     no_time = 0
+    buffs_open = True  # past the segment, buffs are read up to the next header
     for line, entry in enumerate(entries, 1):
         if not isinstance(entry, Record):
             continue
@@ -953,21 +1018,25 @@ def summarize(
         inside = segment.first_line <= line <= segment.last_line
         after = line > segment.last_line
         if rec.event == _HEADER:
-            if not after:
+            if after:
+                buffs_open = False
+            else:
                 buffs.restart()
-                casts.started.clear()
+                casts.pending = None
             continue
         f = rec.fields
         if len(f) <= _TARGET_NAME:
             continue
         source, target = f[_SOURCE], f[_TARGET]
         mine = isinstance(source, str) and source.upper() == guid
-        if after:
+        aura_line = rec.event in _AURA_ON or rec.event == _AURA_OFF
+        if after and not (aura_line and buffs_open):
             spell = _spell(rec) if mine and rec.event == _CAST_SUCCESS else None
             if spell is not None:
                 casts.seen_elsewhere(spell)
             continue
-        companions.see(rec)
+        if not after:
+            companions.see(rec)
         t = moment(rec.timestamp)
         if t is None:
             no_time += 1 if inside else 0
@@ -981,21 +1050,25 @@ def summarize(
         spell = _spell(rec)
         if spell is None:
             continue
-        if rec.event in _AURA_ON or rec.event == _AURA_OFF:
+        if aura_line:
             kind = f[_AURA_TYPE] if len(f) > _AURA_TYPE else None
             if isinstance(target, str) and target.upper() == guid and kind == "BUFF":
-                buffs.feed(spell[0], spell[1], rec.event == _AURA_OFF, t)
+                state: _AuraLine = (
+                    "removed"
+                    if rec.event == _AURA_OFF
+                    else ("applied" if rec.event == _AURA_APPLIED else "still_on")
+                )
+                buffs.feed(spell[0], spell[1], state, t)
         elif not mine:
             continue
         elif rec.event == _CAST_START:
-            casts.started[spell[0]] = t
+            casts.start(spell[0], t)
         elif rec.event == _CAST_FAILED:
-            casts.started.pop(spell[0], None)
+            casts.failed(spell[0])
         elif rec.event == _CAST_SUCCESS:
             if inside:
                 casts.success(spell, t)
             else:
-                casts.started.pop(spell[0], None)
                 casts.seen_elsewhere(spell)
     length = t1 - t0
     rate = max(length, 1.0)
@@ -1013,5 +1086,6 @@ def summarize(
         dps=round(damage.total / rate, 1),
         timings="assumed" if timings is None else "table",
         spells_left_out=casts.left_out + buffs.left_out,
+        casts_left_out=casts.casts_left_out,
         no_time=no_time,
     )

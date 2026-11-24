@@ -232,17 +232,37 @@ def log_tail(
 MAX_GAP_SECONDS = 600.0
 _PRACTICE_NOTES = [
     "Only what the client wrote while combat logging was on, and only what it showed you. "
-    "Damage counts your own hits and your pets' and summons'; other players' damage on the "
-    "same targets is left out.",
-    "A segment is a run of your casts and damage with no pause longer than the gap; "
-    "logging switched off and on, or another of your characters, starts a new one.",
+    "Damage counts your own hits and your pets' and summons' as the log recorded them; what "
+    "other players' hits the log recorded on the same targets is left out.",
     "Global cooldowns and cooldowns come from the game's spell table for the installed "
     "version; haste and talents that shorten them are not read, and a log recorded before "
     "a patch may not match that table.",
-    "A channelled spell counts only its global cooldown: the log does not say when a channel ends.",
-    "Buffs are the ones on you, from their applied and removed lines; one removed with no "
-    "applied line before it was on you when logging began.",
+    "Cooldown use counts at most the cooldown's length into the segment, plus one: a cooldown "
+    "several spells share, one already running when the segment starts, and one that starts "
+    "only when the effect ends each allow fewer.",
+    "wowlab counts only the global cooldown of a channelled spell; it reads no channel's end.",
+    "Buffs are the ones on you, from their applied, refreshed and removed lines; one "
+    "refreshed or removed with no applied line before it was on you when logging began.",
 ]
+_PRACTICE_FALLBACK = (
+    "Without the game's spell table every cast, auto-repeat shots included, is taken as a "
+    "1.5 s global cooldown, and cooldown use is not shown."
+)
+
+
+def _practice_notes(gap: float, table: bool) -> list[str]:
+    """The standing notes of one run: the gap it used, and the timing note
+    that is true of it."""
+    segment = (
+        f"A segment is a run of your casts and of your and your pets' hits with no pause "
+        f"longer than {gap:g} s; a new log header, or another of your characters, starts a "
+        "new one."
+    )
+    notes = [_PRACTICE_NOTES[0], segment, *_PRACTICE_NOTES[1:]]
+    if not table:
+        notes[2] = _PRACTICE_FALLBACK
+        notes.remove(_PRACTICE_NOTES[2])
+    return notes
 
 
 class PracticeReport(_Out):
@@ -312,22 +332,31 @@ def _say_practice(report: PracticeReport, s: practice.PracticeSummary) -> None:
         label = "you" if src.you else (src.name or src.guid)
         _say(f"  {label}: {src.amount:,} ({_practice_pct(src.share)})")
     if d.others_on_targets:
-        _say(f"  left out: {d.others_on_targets:,} by others on the same targets")
+        _say(
+            f"  left out: {d.others_on_targets:,} in other players' hits the log recorded "
+            "on the same targets"
+        )
     _say(f"Casts: {s.casts:,}")
     for sp in s.spells:
         every = f", every {sp.median_gap:.1f} s" if sp.median_gap is not None else ""
         _say(f"  {sp.spell_name}: {sp.casts:,} ({sp.per_minute:.1f} a minute{every})")
     g = s.gcd
     _say(
-        f"Global cooldown: busy {g.busy_seconds:.1f} s of {s.seconds:.1f} s ({_practice_pct(g.share)}), "
+        f"Casting or on the global cooldown: {g.busy_seconds:.1f} s of {s.seconds:.1f} s "
+        f"({_practice_pct(g.share)}), "
         f"{_practice_counted(g.pauses, 'pause')} over {practice.PAUSE_SECONDS:.0f} s, "
         f"longest idle {g.longest_pause:.1f} s"
     )
+    if g.no_gcd_data:
+        _say(
+            f"  {_practice_counted(g.no_gcd_data, 'cast')} of spells with no global "
+            "cooldown in the spell table, counted as none"
+        )
     if s.cooldowns:
         _say("Cooldowns:")
         for cd in s.cooldowns:
             _say(
-                f"  {cd.spell_name} ({cd.cooldown_ms / 1000:g} s): {cd.casts:,} of "
+                f"  {cd.spell_name} ({cd.cooldown_ms / 1000:g} s): {cd.casts:,} of at most "
                 f"{cd.possible:,} ({_practice_pct(cd.share)})"
             )
     if s.buffs:
@@ -435,7 +464,7 @@ def log_practice(
         timings=have,
         timing_build=version,
         fetch=fetch,
-        notes=[_BATCHES, *_PRACTICE_NOTES],
+        notes=[_BATCHES, *_practice_notes(gap, timings is not None)],
     )
     if json_out:
         _emit(report)
@@ -449,7 +478,8 @@ def log_practice(
         _say_practice(report, summary)
         if fetch is not None:
             caveat = (
-                "Every global cooldown was taken as 1.5 s and cooldown use is not shown: "
+                "Every cast, auto-repeat shots included, was taken as a 1.5 s global "
+                "cooldown and cooldown use is not shown: "
                 f"wowlab {' '.join(fetch)} downloads the game's spell timings once."
             )
     _say_notes(report.notes, notes_out, caveat=caveat)

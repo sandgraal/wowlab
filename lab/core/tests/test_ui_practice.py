@@ -69,6 +69,22 @@ def test_it_runs_only_log_practice_and_the_timing_download() -> None:
     )
 
 
+def test_a_new_flavor_resets_the_view() -> None:
+    start = _JS.index("  function switchRunFlavor(folder) {")
+    body = _JS[start : _JS.index("\n  }\n", start)]
+    assert "resetPractice();" in body
+    reset = _section()[_section().index("function resetPractice()") :]
+    reset = reset[: reset.index("\n  }\n")]
+    for line in (
+        "practiceView.report = null;",
+        "forgetPracticeLog();",
+        'byId("practice-segments").replaceChildren();',
+        'byId("practice-summary").hidden = true;',
+        'if (tabShown === "practice") loadPractice(null);',
+    ):
+        assert line in reset, line
+
+
 def test_log_text_reaches_the_page_only_as_text() -> None:
     section = _section()
     for unsafe in (

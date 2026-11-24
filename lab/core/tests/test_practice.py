@@ -263,7 +263,8 @@ def test_real_launch_slice_warriors_fight() -> None:
     timings = practice.timings_from_rows(gamedata._iter_rows(TIMING_CSV))
     s = practice.summarize(lines, seg, timings)
     assert s.casts == 17 and s.damage.total == 681
-    assert s.damage.others_on_targets == 335  # the hunter's pet on the same targets
+    # Swings only, as logged: the hunter's pet's swings on the same targets.
+    assert s.damage.others_on_targets == 335
     by_name = {c.spell_name: (c.casts, c.possible) for c in s.cooldowns}
     assert by_name["Bloodrage"] == (1, 1)
     assert by_name["Overpower"][0] == 1
@@ -274,6 +275,124 @@ def test_real_launch_slice_warriors_fight() -> None:
 def test_the_owner_has_no_segment_in_the_launch_slice() -> None:
     """The owner (flags 0x511) only gains buffs there."""
     assert practice.find_segments(combatlog.read_log(LAUNCH)).segments == ()
+
+
+# ─── fix round 1: carried-in buffs, bounds ───────────────────────────────────
+
+
+def _one_segment(text: str) -> practice.PracticeSummary:
+    entries = _entries(text)
+    (segment,) = practice.find_segments(entries).segments
+    return practice.summarize(entries, segment, TIMINGS)
+
+
+def _dummy_session(*extra: str) -> str:
+    """Casts at 10, 15 and 20 s, then `extra` lines (constructed)."""
+    return "".join(
+        [
+            _rec(0.0, _HEADER),
+            _cast(10.0, 686, "Shadow Bolt"),
+            _cast(15.0, 172, "Corruption"),
+            _cast(20.0, 686, "Shadow Bolt"),
+            *extra,
+        ]
+    )
+
+
+def test_a_carried_in_buff_removed_after_the_segment_counts_whole_constructed() -> None:
+    s = _one_segment(_dummy_session(_aura(50.0, "SPELL_AURA_REMOVED", 1459, "Arcane Intellect")))
+    assert [(b.spell_name, b.seconds, b.share, b.on_before_log) for b in s.buffs] == [
+        ("Arcane Intellect", 10.0, 1.0, True)
+    ]
+
+
+def test_a_carried_in_buff_refreshed_inside_counts_from_the_start_constructed() -> None:
+    text = "".join(
+        [
+            _rec(0.0, _HEADER),
+            _cast(10.0, 686, "Shadow Bolt"),
+            _aura(12.0, "SPELL_AURA_REFRESH", 1459, "Arcane Intellect"),
+            _cast(15.0, 172, "Corruption"),
+            _cast(20.0, 686, "Shadow Bolt"),
+        ]
+    )
+    s = _one_segment(text)
+    assert [(b.spell_name, b.seconds, b.on_before_log) for b in s.buffs] == [
+        ("Arcane Intellect", 10.0, True)
+    ]
+
+
+def test_a_buff_applied_after_the_segment_counts_nothing_constructed() -> None:
+    s = _one_segment(_dummy_session(_aura(30.0, "SPELL_AURA_APPLIED", 1459, "Arcane Intellect")))
+    assert s.buffs == ()
+
+
+def test_a_new_header_after_the_segment_ends_the_buff_read_constructed() -> None:
+    """After a new log header, a removal says nothing about the segment."""
+    s = _one_segment(
+        _dummy_session(
+            _rec(40.0, _HEADER), _aura(50.0, "SPELL_AURA_REMOVED", 1459, "Arcane Intellect")
+        )
+    )
+    assert s.buffs == ()
+
+
+def test_only_the_latest_cast_start_is_pending_constructed() -> None:
+    """A start never finished is dropped by the next one, so a cast time is
+    read only from the start just before the success."""
+    text = "".join(
+        [
+            _rec(0.0, _HEADER),
+            _cast(10.0, 686, "Shadow Bolt", "SPELL_CAST_START"),
+            _cast(11.0, 348, "Immolate", "SPELL_CAST_START"),
+            _cast(12.0, 348, "Immolate"),
+            _cast(13.0, 686, "Shadow Bolt"),
+        ]
+    )
+    s = _one_segment(text)
+    # Immolate (no row in this test's table): busy 11 to 12, its cast time.
+    # Shadow Bolt has no pending start, so no cast time: 13 to 14.5, cut at
+    # the segment's end (13). Had its dropped start at 10 been kept, 10 to 13.
+    assert s.gcd.busy_seconds == 1.0
+
+
+def test_the_players_of_a_crafted_log_are_bounded_constructed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(practice, "MAX_COMPANIONS", 2)
+    lines = [_rec(0.0, _HEADER)]
+    for i in range(5):
+        guid = f"Player-1-000000{i:02X}"
+        lines.append(
+            _rec(
+                10.0 + i,
+                f'SPELL_CAST_SUCCESS,{guid},"P{i}",0x511,0x80000000,{_unit(DUMMY)},'
+                f'686,"Shadow Bolt",0x20,{_adv(guid)}',
+            )
+        )
+    scan = practice.find_segments(_entries("".join(lines)))
+    assert len(scan.segments) == 2
+    assert scan.players_left_out == 3
+
+
+def test_the_casts_kept_for_a_summary_are_bounded_constructed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(practice, "MAX_SEGMENT_CASTS", 2)
+    s = _one_segment(_dummy_session())
+    assert (s.casts, s.casts_left_out) == (2, 1)
+
+
+def test_the_notes_say_the_gap_and_the_fallback() -> None:
+    with_table = cli._practice_notes(10.0, True)
+    assert any("longer than 10 s" in n for n in with_table)
+    assert any(n.startswith("Global cooldowns and cooldowns come from") for n in with_table)
+    without = cli._practice_notes(25.0, False)
+    assert any("longer than 25 s" in n for n in without)
+    assert cli._PRACTICE_FALLBACK in without
+    assert "auto-repeat shots included" in cli._PRACTICE_FALLBACK
+    assert not any(n.startswith("Global cooldowns and cooldowns come from") for n in without)
+    assert not any(n.startswith("Cooldown use counts at most") for n in without)
 
 
 # ─── wowlab log practice ─────────────────────────────────────────────────────

@@ -1513,6 +1513,8 @@
     byId("crew-matches-lines").replaceChildren();
     closeCrewPlayer();
     if (tabShown === "crew") loadCrew();
+    // The Practice tab reads the new flavor's logs (M22-20).
+    resetPractice();
     drawHomeStatus();
   }
 
@@ -7287,7 +7289,7 @@
       const tr = make("tr");
       for (const cell of cells) {
         const td = make("td");
-        if (cell instanceof Node) td.appendChild(cell);
+        if (cell !== null && typeof cell === "object") td.appendChild(cell);
         else td.textContent = visible(String(cell));
         tr.appendChild(td);
       }
@@ -7334,6 +7336,10 @@
       ];
     });
     box.appendChild(practiceTable("Segments", ["#", "When", "Length", "Casts", "Damage", "Hit", ""], rows));
+    if (typeof report.gap === "number") {
+      box.appendChild(make("p", "A segment ends after " + report.gap + " s with no cast of yours and no hit by " +
+        "you or your pets; your pets' hits keep it open."));
+    }
   }
 
   function drawPracticeSummary(report) {
@@ -7353,21 +7359,24 @@
     const sources = listOf(d.by_source).map((src) => [
       src.you ? "You" : src.name || src.guid, grouped(src.amount), practicePct(src.share)]);
     body.appendChild(make("p", "Damage " + grouped(d.total || 0) + ", " + s.dps + " per second" +
-      (d.others_on_targets ? "; " + grouped(d.others_on_targets) + " by others on the same targets left out." : ".")));
+      (d.others_on_targets ? "; left out: " + grouped(d.others_on_targets) +
+        " in other players' hits the log recorded on the same targets." : ".")));
     if (sources.length) body.appendChild(practiceTable("Damage by source", ["Source", "Damage", "Share"], sources));
     const g = s.gcd || {};
-    body.appendChild(make("p", "Global cooldown busy " + practiceSeconds(g.busy_seconds) + " of " +
-      practiceSeconds(s.seconds) + " (" + practicePct(g.share) + "), " + grouped(g.pauses || 0) +
+    body.appendChild(make("p", "Busy casting or on the global cooldown " + practiceSeconds(g.busy_seconds) +
+      " of " + practiceSeconds(s.seconds) + " (" + practicePct(g.share) + "), " + grouped(g.pauses || 0) +
       " pauses over 3 s, longest idle " + practiceSeconds(g.longest_pause) +
-      (g.assumed ? ". Every global cooldown taken as 1.5 s." : ".")));
+      (g.no_gcd_data ? "; " + pluralWord(g.no_gcd_data, " cast") + " with no global cooldown in the spell table, " +
+        "counted as none" : "") +
+      (g.assumed ? ". Every cast, auto-repeat shots included, was taken as a 1.5 s global cooldown." : ".")));
     body.appendChild(practiceTable("Casts per spell", ["Spell", "Casts", "A minute", "Every", "Global cooldown"],
       listOf(s.spells).map((sp) => [
         sp.spell_name, grouped(sp.casts), sp.per_minute,
         sp.median_gap === null || sp.median_gap === undefined ? "" : practiceSeconds(sp.median_gap),
-        sp.gcd_ms === null || sp.gcd_ms === undefined ? "not known" : sp.gcd_ms / 1000 + " s",
+        sp.gcd_ms === null || sp.gcd_ms === undefined ? "none in the table" : sp.gcd_ms / 1000 + " s",
       ])));
     if (listOf(s.cooldowns).length) {
-      body.appendChild(practiceTable("Cooldown use", ["Spell", "Cooldown", "Used", "Could have", "Share"],
+      body.appendChild(practiceTable("Cooldown use", ["Spell", "Cooldown", "Used", "At most", "Share"],
         listOf(s.cooldowns).map((cd) => [
           cd.spell_name, cd.cooldown_ms / 1000 + " s", grouped(cd.casts), grouped(cd.possible), practicePct(cd.share)])));
     }
@@ -7387,7 +7396,28 @@
     byId("practice-offer").hidden = !missing;
   }
 
-  async function loadPractice(segment) {
+  // The picker forgets its log and the view what it showed: the next read
+  // takes the newest log again.
+  function forgetPracticeLog() {
+    practiceView.filled = false;
+    byId("practice-log").replaceChildren();
+  }
+
+  // A new flavor (`switchRunFlavor`): nothing of the old flavor's logs stays.
+  function resetPractice() {
+    practiceView.seq += 1;
+    practiceView.report = null;
+    forgetPracticeLog();
+    byId("practice-segments").replaceChildren();
+    byId("practice-summary").hidden = true;
+    byId("practice-summary-body").replaceChildren();
+    byId("practice-notes").replaceChildren();
+    byId("practice-offer").hidden = true;
+    practiceSay("", false);
+    if (tabShown === "practice") loadPractice(null);
+  }
+
+  async function loadPractice(segment, retried) {
     const seq = ++practiceView.seq;
     const params = {};
     const picked = practiceView.filled ? byId("practice-log").value : "";
@@ -7398,6 +7428,13 @@
     if (seq !== practiceView.seq) return;
     const report = reply.data;
     if (reply.error || !report || !Array.isArray(report.segments)) {
+      if (picked && !retried) {
+        // The log picked may be gone (the client removed or renamed it):
+        // drop the pick and read the newest, which fills the picker again.
+        forgetPracticeLog();
+        await loadPractice(null, true);
+        return;
+      }
       practiceSay(reply.error ? shown(reply.error) : "wowlab log practice printed something this page does not know.", true);
       return;
     }

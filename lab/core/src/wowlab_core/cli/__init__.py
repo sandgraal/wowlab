@@ -1907,6 +1907,9 @@ if TYPE_CHECKING:
         _NO_LOG as _NO_LOG,
     )
     from wowlab_core.cli._cmd_log import (
+        _PRACTICE_FALLBACK as _PRACTICE_FALLBACK,
+    )
+    from wowlab_core.cli._cmd_log import (
         _PRACTICE_NOTES as _PRACTICE_NOTES,
     )
     from wowlab_core.cli._cmd_log import (
@@ -1947,6 +1950,9 @@ if TYPE_CHECKING:
     )
     from wowlab_core.cli._cmd_log import (
         _practice_counted as _practice_counted,
+    )
+    from wowlab_core.cli._cmd_log import (
+        _practice_notes as _practice_notes,
     )
     from wowlab_core.cli._cmd_log import (
         _practice_pct as _practice_pct,

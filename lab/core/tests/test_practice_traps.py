@@ -120,7 +120,9 @@ def test_trap2_pet_out_before_the_log_is_found_only_by_the_owner_slot() -> None:
         companions.see(r)
     assert companions.by_owner_slot.get(IMARU.upper()) == HUNTER.upper()
     assert IMARU.upper() not in companions.by_summon
-    # A summon-only reader would give the hunter none of the pet's damage.
+    # A summon-only reader would give the hunter none of the pet's damage
+    # (its swings only, as logged: the launch slice writes no spell or ranged
+    # damage of a player on a creature).
     assert practice.damage_done(lines, HUNTER).total == 335
 
 
@@ -188,7 +190,8 @@ def test_trap3_a_creature_hitting_your_pet_does_not_become_yours_constructed() -
     """The source's case: a spell on your pet writes your GUID in the owner
     slot, the block describing the pet. Seen on the owner's 2026-11-23 13:30
     log (a Dalaran Apprentice's Frostbolt on the voidwalker), which cannot
-    be captured; constructed on that line's shape."""
+    be captured; constructed on that line's shape. **[verify]** on a
+    committed slice: that the client writes it so is seen on one line."""
     adv = ",".join(["Pet-0-1-1-1-1860-0000000001", "Player-1-0000000A"] + ["0"] * 17)
     text = (
         "5/31/2026 10:00:00.000-6  SPELL_DAMAGE,Creature-0-1-1-1-1867-0000000002,"
@@ -212,6 +215,8 @@ def test_trap4_two_players_on_one_watcher_each_keep_only_their_own() -> None:
     hits = [r for r in lines if r.event in practice.DAMAGE_EVENTS and r.fields[4] == WATCHER]
     sources = {r.fields[0] for r in hits}
     assert {WARRIOR, IMARU} <= sources
+    # Swings only, as logged: the slice holds no spell or ranged damage of a
+    # player on a creature, so these are the logged hits, not all the damage.
     warrior = practice.damage_done(lines, WARRIOR)
     hunter = practice.damage_done(lines, HUNTER)
     assert warrior.total == 681 and [s.guid for s in warrior.by_source] == [WARRIOR]
