@@ -275,15 +275,6 @@ class _UnreadableError(Exception):
     pass
 
 
-_OPEN_FLAGS = (
-    os.O_RDONLY
-    | getattr(os, "O_BINARY", 0)
-    | getattr(os, "O_NOFOLLOW", 0)
-    | getattr(os, "O_NONBLOCK", 0)
-    | getattr(os, "O_CLOEXEC", 0)
-)
-
-
 def _read_bounded(path: Path, limit: int) -> tuple[bytes, int]:
     """The bytes of the regular file `path` and its modification time.
     Raises FileNotFoundError when there is nothing there, and `_UnreadableError`
@@ -302,7 +293,14 @@ def _read_bounded(path: Path, limit: int) -> tuple[bytes, int]:
     if seen.st_size > limit:
         raise _UnreadableError(f"larger than {limit} bytes")
     try:
-        fd = os.open(path, _OPEN_FLAGS)
+        fd = os.open(
+            path,
+            os.O_RDONLY
+            | getattr(os, "O_BINARY", 0)
+            | getattr(os, "O_NOFOLLOW", 0)
+            | getattr(os, "O_NONBLOCK", 0)
+            | getattr(os, "O_CLOEXEC", 0),
+        )
     except FileNotFoundError:
         raise
     except OSError as exc:
