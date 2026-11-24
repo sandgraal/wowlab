@@ -7510,6 +7510,9 @@
     byId("practice-offer").hidden = !missing;
   }
 
+  // `log practice`'s refusal of a `--file` that is not a log under Logs/.
+  const PRACTICE_LOG_GONE = /no combat log ['"][^\n]*['"] under Logs\//;
+
   // The picker forgets its log and the view what it showed: the next read
   // takes the newest log again.
   function forgetPracticeLog() {
@@ -7542,9 +7545,10 @@
     if (seq !== practiceView.seq) return;
     const report = reply.data;
     if (reply.error || !report || !Array.isArray(report.segments)) {
-      if (picked && !retried) {
-        // The log picked may be gone (the client removed or renamed it):
-        // drop the pick and read the newest, which fills the picker again.
+      if (picked && !retried && PRACTICE_LOG_GONE.test(String(reply.error || ""))) {
+        // The command says the log picked is gone (the client removed or
+        // renamed it): drop the pick and read the newest, which fills the
+        // picker again. Any other failure keeps the pick and is said.
         forgetPracticeLog();
         await loadPractice(null, true);
         return;

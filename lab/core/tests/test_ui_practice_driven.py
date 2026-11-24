@@ -32,6 +32,7 @@ function practiceView() {
     status: ids["practice-status"].textContent,
     statusRole: ids["practice-status"].getAttribute("role"),
     logs: Array.from(ids["practice-log"].options, (o) => o.value),
+    picked: ids["practice-log"].value,
     segments: ids["practice-segments"].all().filter((e) => e.tagName === "td").map((e) => e.textContent),
     said: ids["practice-segments"].all().filter((e) => e.tagName === "p").map((e) => e.textContent),
     summaryHidden: ids["practice-summary"].hidden,
@@ -104,6 +105,8 @@ def _report(logs: list[str], segments: int) -> str:
 _OLD = "WoWCombatLog-010226_100000.txt"
 _NEW = "WoWCombatLog-010226_110000.txt"
 _GONE = "WoWCombatLog-010126_090000.txt"
+_ODD = "WoWCombatLog-010126_080000.txt"
+_ODD_ERROR = f"wowlab: Logs/{_ODD} is not a regular file"
 
 
 def _drive(server: Any, folder: Path, steps: list[dict[str, Any]]) -> dict[str, Any]:
@@ -121,6 +124,13 @@ def _drive(server: Any, folder: Path, steps: list[dict[str, Any]]) -> dict[str, 
             "stdout": "",
             "stderr": f"wowlab: no combat log '{_GONE}' under Logs/",
             "exit_code": 2,
+        },
+        {
+            "command": ["log", "practice"],
+            "params": {"flavor": FLAVOR, "file": _ODD},
+            "stdout": "",
+            "stderr": _ODD_ERROR,
+            "exit_code": 1,
         },
         {
             "command": ["log", "practice"],
@@ -156,6 +166,23 @@ def test_a_log_that_is_gone_is_dropped_and_the_newest_read_constructed(
     ]
     assert picked["logs"] == [_NEW, _OLD]
     assert picked["status"] == "" and picked["statusRole"] == "status"
+    assert "Training Dummy" in picked["segments"]
+
+
+def test_another_failure_keeps_the_pick_and_says_why_constructed(
+    server: Any, two: Path, tmp_path: Path
+) -> None:
+    """Only the command's "no combat log" refusal drops a pick: a log that
+    fails for any other reason (here one that is not a regular file) stays
+    picked, nothing else is read, and the error is said."""
+    out = _drive(server, tmp_path / "node", [{"practice_tab": True}, {"practice_pick": _ODD}])
+    _, picked = out["steps"]
+    assert _bodies(picked) == [
+        {"command": ["log", "practice"], "params": {"flavor": FLAVOR, "file": _ODD}}
+    ]
+    assert picked["picked"] == _ODD
+    assert picked["status"] == _ODD_ERROR and picked["statusRole"] == "alert"
+    # What the last good read drew stays.
     assert "Training Dummy" in picked["segments"]
 
 
