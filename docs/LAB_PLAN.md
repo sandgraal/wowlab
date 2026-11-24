@@ -7619,7 +7619,11 @@ the first 20 ids in `unknown_maps`), their encounters are kept but set
 aside, never joined with an open-world one and counted nowhere (conductor
 decision of 2026-11-24: such a map is likely one a hotfix added, which the
 published table lacks, and once its log is gone nothing could rebuild the
-fights), and one text line names the ids. Map
+fights), and one text line names the ids. A player only set-aside
+encounters hold keeps a players row, for a later table, but is neither
+counted (`players_added`, doctor) nor listed (`crew list`) until one is
+brought back. A zone line with no instance id has no map to look up and
+stays on the difficulty rule (`by_map` 0), with or without the table. Map
 2996 "Warsong Gulch (Winter)" is type 0 and is not special-cased. The rule
 lives in one function, `worldpvp.in_open_world(state, pvp_maps=(), *,
 maps=None)`; `worldpvp.map_types` reads `ID` and `InstanceType` from the
@@ -7674,7 +7678,11 @@ downloads from wago.tools, sending the game version; the button runs `db2
 fetch` for the read's flavor and then reads again. **Live:** the watcher,
 `live.match_recap` and `live.world_since` take `maps=`; `live recap` and
 the UI's watch load the table as `crew scan-log` does, so the two keep the
-same encounters (a test reads one log both ways). Not yet confirmed: a
+same encounters (a test reads one log both ways). `live recap` says how
+many encounters it set aside and on which maps (`world_set_aside`,
+`world_set_aside_maps`), and calls the latest place, when its map is not
+in the table, "a place the game's map table does not hold", never a match
+(`MatchRecap.unknown_map`). Not yet confirmed: a
 battleground's and a raid's zone line (no log enters one); `InstanceType`
 4; whether map 2996 can be entered.
 
