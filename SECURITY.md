@@ -58,12 +58,12 @@ not a pseudonym. If you find one of these in a fixture, do this:
   input automation (ADR-0023). `psutil` lists processes and nothing else.
   Code that crosses that line is a vulnerability, whatever its intent.
 - **Nothing leaves the machine.** The network traffic is downloading
-  public game tables, a link you click, which opens in your own browser,
-  carrying a character's name, realm, region and guild, and game ids to that
-  site, and a Blizzard profile fetch (`wowlab blizzard fetch` or the UI's
-  Fetch button; ADR-0040 (2)). Anything that transmits data read from an
-  install is a vulnerability, with two exceptions: that link, and that
-  fetch. A link's address (ADR-0019 and ADR-0031, amendments of 2026-10-19
+  public game tables, the Blizzard profile fetch (`wowlab blizzard fetch` or
+  the UI's Fetch button; ADR-0040 (2)), and a link you click opens in your
+  own browser, carrying a character's name, realm, region and guild, and
+  game ids to that site. Anything that transmits data read from an install
+  is a vulnerability, with two exceptions: that link and the Blizzard
+  profile fetch. A link's address (ADR-0019 and ADR-0031, amendments of 2026-10-19
   and 2026-11-23) never holds a path, the token, a Battle.net account folder
   name, an email or a BattleTag; wowlab never requests it, and only the
   player's click sends it, from the player's own browser. The fetch runs
