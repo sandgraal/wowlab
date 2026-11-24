@@ -563,6 +563,9 @@ def test_the_explorer_runs_only_listed_read_commands(server: Any) -> None:
         # writes only into wowlab's own game-table cache, on a click
         # (graded in test_ui_crew_map_table.py).
         ("db2", "fetch"),
+        # M22-16: the Addons view's "Where they came from" reads `addons list`
+        # (graded in test_ui_addon_sources.py).
+        ("addons", "list"),
         # M22-08: the Look up tab's search runs the read `lookup`; its
         # download offer adds `fetch`, which writes only into wowlab's own
         # game-table cache (graded in test_ui_lookup.py).

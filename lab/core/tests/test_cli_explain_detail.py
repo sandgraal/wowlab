@@ -31,6 +31,7 @@ import psutil
 import pytest
 import typer.main
 from _explain_exit import expected_exit
+from _user_dirs import no_wowup_list
 from typer.testing import CliRunner
 
 from wowlab_core import cli, filemap, install, pathfacts, snapshot
@@ -49,6 +50,7 @@ runner = CliRunner()
 @pytest.fixture(autouse=True)
 def user_data(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     redirected = tmp_path / "userdata"
+    no_wowup_list(monkeypatch, tmp_path / "wowup")
     monkeypatch.setattr(platformdirs, "user_data_path", lambda *a, **k: redirected / "wowlab")
     return redirected / "wowlab"
 
