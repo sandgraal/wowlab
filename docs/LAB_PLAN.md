@@ -7022,6 +7022,24 @@ combat is still read once combat ends. The first snapshot (`probe.pvp[1]`) is ta
 before the data is requested (the request follows its reads), so 0 rows and no fields there
 mean the data had not arrived yet, not that a call is missing.
 
+*Note (2026-11-24, M21-12, schema 3, as built).* The book's `schema` becomes 3. At the end
+of each roster pass (so only while the book is on and out of combat) the addon records the
+game's region once per book (`region`, the text of `GetCurrentRegionName()`, `"US"` on the
+owner's launch client), and asks `GetPlayerInfoByGUID` for each kept player with a `guid` and
+no `resolved_name`: the sixth value is `resolved_name` (`"<First> <Second>"` on Forever), the
+seventh `resolved_realm` (empty on Forever), the eighth `resolved_eighth` (probably the level,
+**[verify]**), with `resolved_at`. At most `MAX_RESOLVES` (100) GUIDs are asked per login or
+`/reload`, each once per session; a GUID the client does not know then gives nothing and is
+asked again at a later login. The pinned migration takes a schema 1 or 2 book that is on to 3
+(a schema 1 book also gains its empty `matches`); nothing else is stored. The desk reads
+schema 1 to 3. The database (§21.3) keeps the four values per player (its schema 6) and the
+book's region as the `meta` row `book_region`, and fills each row's first and second name and
+region with their source: `names_from` (`game`, `log`, `borrowed` or `key`) and `region_from`
+(`log`, `book`, `borrowed` or `settings`). A player only a combat log named borrows both from
+the row the game's list gave with the same GUID (`borrowed_from`, through the aliases of
+§21.3). Whether the client answers for a GUID it met in an earlier session is **[verify]**
+(M21-O2).
+
 ### 21.3 The database (ADR-0039)
 
 One file per book: `<user data>/wowlab/crew/<flavor folder>/<account

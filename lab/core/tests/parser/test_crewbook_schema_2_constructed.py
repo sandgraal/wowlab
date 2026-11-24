@@ -197,10 +197,11 @@ def test_constructed_a_schema_2_top_level_that_does_not_fit_is_refused(
     assert "invented" not in str(caught.value) and "invented" not in caught.value.detail
 
 
-def test_constructed_a_schema_3_book_is_still_refused_with_its_number() -> None:
+def test_constructed_a_schema_4_book_is_still_refused_with_its_number() -> None:
+    # M21-12 reads schema 3; the next number is still refused.
     with pytest.raises(crewbook.CrewBookError) as caught:
-        crewbook.parse_book(account_file(book({KEY_A: player()}, schema=3)))
-    assert "book version 3; this wowlab reads versions 1 and 2" in str(caught.value)
+        crewbook.parse_book(account_file(book({KEY_A: player()}, schema=4)))
+    assert "book version 4; this wowlab reads versions 1, 2 and 3" in str(caught.value)
 
 
 # ─── the probe block: fixed names and values only ────────────────────────────

@@ -30,6 +30,8 @@ from typing import Any
 
 import pytest
 
+from wowlab_core import crewdb
+
 TESTS = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(TESTS / "parser"))
 sys.path.insert(0, str(TESTS))
@@ -37,7 +39,7 @@ sys.path.insert(0, str(TESTS))
 from _world_lines import FOE_A, log, you_hit
 from test_crew_log_names import _as_schema_4_with_old_keys, _count, _fights
 from test_crew_world import _book, _scan, _write_log, owner  # noqa: F401 - the fixture
-from test_crewdb import Env, make  # noqa: F401 - the fixture
+from test_crewdb import Env, before_schema_6, make  # noqa: F401 - the fixture
 
 FORMER = "Formerbook-Someone"  # constructed key
 
@@ -58,6 +60,7 @@ def _as_schema_4(env: Env) -> None:
     conn = sqlite3.connect(env.db(), isolation_level=None)
     try:
         conn.execute("DROP TABLE log_names")
+        before_schema_6(conn)  # M21-12's columns, which schema 4 did not have
         conn.execute("PRAGMA user_version = 4")
     finally:
         conn.close()
@@ -81,6 +84,7 @@ def test_constructed_schema_5_step_keeps_a_former_book_player(
 
     result = _scan(env, "--json")  # opens the database: the 4 -> 5 step runs
     assert result.exit_code == 0, result.output
-    assert _count(env, "PRAGMA user_version") == 5
+    # M21-12: and then 5 -> 6, so the database ends at this wowlab's schema.
+    assert _count(env, "PRAGMA user_version") == crewdb.SCHEMA
     held = _count(env, f"SELECT count(*) FROM players WHERE player_key = '{FORMER}'")
     assert held == 1, "the schema-5 step deleted a player no requeued log held"

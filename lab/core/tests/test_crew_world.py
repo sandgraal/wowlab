@@ -48,7 +48,7 @@ from _world_lines import (
     you_kill,
     zone,
 )
-from test_crewdb import Env, make  # noqa: F401 - the fixture
+from test_crewdb import Env, before_schema_6, make  # noqa: F401 - the fixture
 
 LOG_NAME = "WoWCombatLog-040126_021630.txt"
 
@@ -141,6 +141,7 @@ def _as_schema_3(env: Env) -> None:
         # M21-02 added log_names at schema 5; schema 3 had none.
         for table in ("world_encounter_players", "world_encounters", "world_logs", "log_names"):
             conn.execute(f"DROP TABLE {table}")
+        before_schema_6(conn)  # M21-12's columns, which schema 3 did not have
         conn.execute("PRAGMA user_version = 3")
         conn.execute("COMMIT")
     finally:
@@ -167,7 +168,7 @@ def test_a_schema_3_database_is_copied_then_migrated_and_scanned_constructed(
         conn.close()
     conn = sqlite3.connect(env.db())
     try:
-        assert conn.execute("PRAGMA user_version").fetchone()[0] == crewdb.SCHEMA == 5
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == crewdb.SCHEMA == 6
         assert conn.execute("SELECT count(*) FROM world_encounters").fetchone()[0] == 1
     finally:
         conn.close()

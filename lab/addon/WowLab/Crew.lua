@@ -2,7 +2,7 @@
 --
 -- Runs in the game client only; the Lab never loads or runs this file (L3).
 -- It remembers the players the owner groups with, in the account-wide saved
--- variable WowLabCrewDB (its own schema, 2; the per-character schema does not
+-- variable WowLabCrewDB (its own schema, 3; the per-character schema does not
 -- change), and says so in the owner's own chat frame when a rated or noted
 -- player joins the group again. Nothing is sent anywhere: no chat message,
 -- whisper or addon message (tests/addon/test_lab_addon.py refuses the calls).
@@ -37,17 +37,28 @@
 -- after the `matched` marker, so a repeated event or a /reload counts it once.
 -- Every scoreboard call is made through pcall, after a test that it exists.
 --
+-- Schema 3 (M21-12): the book's region, once (`region`, the text
+-- GetCurrentRegionName() gives), and each kept player's name as the game
+-- gives it for their GUID (`resolved_name`, `resolved_realm`,
+-- `resolved_eighth`, `resolved_at`, from GetPlayerInfoByGUID). On Forever the
+-- name is "<First> <Second>" and the realm is empty (the owner's check of
+-- 2026-11-23); the eighth value was 22 for a level-22 character, so it is
+-- probably the level ([verify]). Both are read at the end of a roster pass,
+-- out of combat only, and at most MAX_RESOLVES GUIDs are asked per login or
+-- /reload. A GUID the client does not know now gives nothing: nothing is
+-- stored, and it is asked again at a later login.
+--
 -- API status: every client API used is listed in lab/addon/README.md; all of
 -- them are [verify] for this file until the owner's in-game checks (M19-07,
 -- and M20-06 for the scoreboard).
 
 local _, ns = ...
 
--- The book's own version number (§20.1, §21.2). A book of schema 1 that is
--- on is migrated (crewMigrate); a book of any other schema (a newer WowLab,
+-- The book's own version number (§20.1, §21.2; 3 since M21-12). A book of
+-- schema 1 or 2 that is on is migrated (crewMigrate); a book of any other schema (a newer WowLab,
 -- a restored snapshot) is left wholly alone: crewOn, crewLoaded and the
 -- slash handler's first lines test it.
-local CREW_SCHEMA = 2
+local CREW_SCHEMA = 3
 -- The drop order (§20.1 "Limits", §21.2): at most MAX_PLAYERS players. When
 -- the book is full, the unrated, un-noted player with the oldest `last` is
 -- dropped first (makeRoom); a rated or noted player is never dropped, and
@@ -79,6 +90,9 @@ local FIRST_PASS_DELAY = 15
 -- The unit tokens walked: raid1 to raid40 in a raid, party1 to party4 in a party.
 local MAX_RAID = 40
 local MAX_PARTY = 4
+-- M21-12: at most MAX_RESOLVES GUIDs are asked for a name in one login or
+-- /reload (resolveNames), so a full book is asked a little at a time.
+local MAX_RESOLVES = 100
 
 -- The sentence of ADR-0036 term 2 (§20.5), printed when the book is turned on.
 -- Changed for M19-10's domain review: battleground and arena teams count
@@ -122,6 +136,9 @@ local pvpRequested = false
 local pvpReasked = false -- the data asked for once more after the winner (recordMatch)
 local pvpScoreEvents = 0
 local pvpCompleteEvents = 0
+-- M21-12: the GUIDs asked for a name in this session, and how many.
+local resolveTried = {}
+local resolveAsked = 0
 
 local function crewOn()
     return type(WowLabCrewDB) == "table" and WowLabCrewDB.schema == CREW_SCHEMA
@@ -151,16 +168,23 @@ local function say(text)
     print("|cff33ff99WowLab|r: " .. text)
 end
 
--- The migration (§21.2), pinned whole: a schema 1 book becomes schema 2 by
--- the new number and an empty `matches`, and nothing else. Called only for a
--- book that is on (crewLoaded) or is being turned on (the slash handler's
--- head). A book that is off stays at schema 1; any other schema is left alone.
+-- The migration (§21.2), pinned whole: a schema 1 book gains an empty
+-- `matches` (schema 2's one change), and a schema 1 or 2 book the new number
+-- (M21-12: schema 3 adds only fields that are left out until read), and
+-- nothing else. Called only for a book that is on (crewLoaded) or is being
+-- turned on (the slash handler's head). A book that is off keeps its schema;
+-- any other schema is left alone.
 local function crewMigrate()
-    if type(WowLabCrewDB) ~= "table" or WowLabCrewDB.schema ~= 1 then
+    if type(WowLabCrewDB) ~= "table" then
         return
     end
+    if WowLabCrewDB.schema ~= 1 and WowLabCrewDB.schema ~= 2 then
+        return
+    end
+    if WowLabCrewDB.schema == 1 then
+        WowLabCrewDB.matches = {}
+    end
     WowLabCrewDB.schema = CREW_SCHEMA
-    WowLabCrewDB.matches = {}
 end
 
 -- The probe's helpers (§21.2), pinned whole. True only in an instance whose
@@ -488,6 +512,12 @@ local function fieldsMissing()
     end
     if type(UnitIsPlayer) ~= "function" then
         missing = missing .. " Your target cannot be rated: the client has no UnitIsPlayer function."
+    end
+    if type(GetPlayerInfoByGUID) ~= "function" then
+        missing = missing .. " No full names: the client has no GetPlayerInfoByGUID function."
+    end
+    if type(GetCurrentRegionName) ~= "function" then
+        missing = missing .. " No region: the client has no GetCurrentRegionName function."
     end
     if type(issecretvalue) ~= "function" then
         missing = missing .. " Values are not tested for secrets: the client has no issecretvalue function."
@@ -973,6 +1003,83 @@ local function readMember(unit)
     end
 end
 
+-- M21-12: the book's region, once per book: the text GetCurrentRegionName()
+-- gives ("US" on the owner's launch client, 2026-11-23), kept as given. A
+-- secret or empty answer stores nothing and is asked again at the next pass.
+local function readRegion()
+    if not crewOn() then
+        return
+    end
+    if crewBlocked() then
+        return
+    end
+    if WowLabCrewDB.region ~= nil then
+        return
+    end
+    if type(GetCurrentRegionName) ~= "function" then
+        return
+    end
+    local region = GetCurrentRegionName()
+    if secret(region) then
+        addSkipped()
+    end
+    if not secret(region) and type(region) == "string" and region ~= "" then
+        WowLabCrewDB.region = ns.String(region)
+    end
+end
+
+-- M21-12: the names the game gives for the GUIDs of kept players that have
+-- none yet, out of combat (the gate), at most MAX_RESOLVES GUIDs per login or
+-- /reload, each GUID once per session. GetPlayerInfoByGUID's sixth value is
+-- the name ("<First> <Second>" on Forever), the seventh the realm (empty on
+-- Forever), the eighth probably the level ([verify]; 22 for a level-22
+-- character). A GUID the client does not know now gives no name: nothing is
+-- stored, and it is asked again at a later login. The GUID is marked asked
+-- before the call, so one that makes the call fail is not asked again this
+-- session.
+local function resolveNames()
+    if not crewOn() then
+        return
+    end
+    if crewBlocked() then
+        return
+    end
+    if type(GetPlayerInfoByGUID) ~= "function" then
+        return
+    end
+    local now = nil
+    if type(time) == "function" then
+        now = ns.Number(time())
+    end
+    for _, entry in pairs(WowLabCrewDB.players) do
+        if resolveAsked >= MAX_RESOLVES then
+            return
+        end
+        local guid = nil
+        if type(entry) == "table" and entry.resolved_name == nil then
+            guid = ns.String(entry.guid)
+        end
+        if guid ~= nil and resolveTried[guid] == nil and string.find(guid, "^Player%-") ~= nil then
+            resolveTried[guid] = true
+            resolveAsked = resolveAsked + 1
+            local _, _, _, _, _, name, realm, eighth = GetPlayerInfoByGUID(guid)
+            if secret(name) or secret(realm) or secret(eighth) then
+                addSkipped()
+            end
+            if not secret(name) and type(name) == "string" and name ~= "" and name ~= UNKNOWNOBJECT then
+                entry.resolved_name = ns.String(name)
+                entry.resolved_at = now
+                if not secret(realm) and type(realm) == "string" then
+                    entry.resolved_realm = ns.String(realm)
+                end
+                if not secret(eighth) and type(eighth) == "number" then
+                    entry.resolved_eighth = ns.Number(eighth)
+                end
+            end
+        end
+    end
+end
+
 -- One pass over the group.
 local function pass()
     if not crewOn() then
@@ -1037,6 +1144,9 @@ local function pass()
         greeted = true
         say("Crew book on: " .. plural(ns.Number(countPlayers()) or 0, "player", "players") .. ". /wowlab crew off to stop.")
     end
+    -- M21-12: the region once, then the names the game gives by GUID.
+    pcall(readRegion)
+    pcall(resolveNames)
 end
 
 -- A pass after `delay` seconds, once however many events ask for it.

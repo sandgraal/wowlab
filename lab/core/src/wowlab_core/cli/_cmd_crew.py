@@ -392,6 +392,46 @@ def _crew_region_line(reading: region.RegionReading | None, *, unconfirmed: bool
     return _region_text(reading.region, reading.absent, source)
 
 
+def _names_words(p: crewdb.CrewRow) -> str:
+    """Where a crew row's names, or its region, came from (M21-12), in the
+    player's words."""
+    if p.names_from == "game":
+        return "as the game gave it for the character's id"
+    if p.names_from == "log":
+        return "from a combat log's name for them"
+    if p.names_from == "borrowed":
+        return f"from {p.borrowed_from}, the same character by the game's id"
+    return "from the name the crew book keeps"
+
+
+def _crew_names_line(p: crewdb.CrewRow) -> str:
+    """`crew show`'s line naming the player's first and second name and
+    where they came from (M21-12)."""
+    parts = [f"first name {p.first_name}"]
+    if p.second_name is not None:
+        parts.append(f"second name {p.second_name}")
+    if p.realm is not None:
+        parts.append(f"realm {p.realm}")
+    return f"  Name in game: {p.game_name} ({', '.join(parts)}; {_names_words(p)})"
+
+
+def _crew_player_region_line(
+    p: crewdb.CrewRow, reading: region.RegionReading | None, *, unconfirmed: bool
+) -> str | None:
+    """`crew show`'s region line (M21-12): the player's own region and where
+    it came from; the book's line (`_crew_region_line`) when it is the
+    flavor's settings or there is none."""
+    if p.region is None or p.region_from in (None, "settings"):
+        return _crew_region_line(reading, unconfirmed=unconfirmed)
+    if p.region_from == "log":
+        source = "from a combat log's name for them"
+    elif p.region_from == "book":
+        source = "from the game, as the crew book recorded it"
+    else:
+        source = f"from {p.borrowed_from}, the same character by the game's id"
+    return _region_text(p.region, None, source)
+
+
 def _crew_second_names(opened: _Opened) -> bool:
     """Whether the chosen book's flavor names characters by first and
     second name (M21-02): a digits-only folder of one of its accounts holds
@@ -938,7 +978,8 @@ def crew_show(
         assert place is not None
         lines = [f"{player.key}, from the crew book of {_place_words(place)}, {_AS_OF}:"]
         lines += _field_lines(player)
-        region_line = _crew_region_line(reading, unconfirmed=not notes)
+        lines.append(_crew_names_line(player))
+        region_line = _crew_player_region_line(player, reading, unconfirmed=not notes)
         if region_line is not None:
             lines.append(f"  {region_line}")
         if player.also_known_as:

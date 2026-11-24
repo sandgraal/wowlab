@@ -851,7 +851,7 @@ records nothing.
 
 What it keeps: the account-wide `WowLabCrewDB` in the account's
 `WowLab.lua` (`## SavedVariables: WowLabDB, WowLabCrewDB`), with its own
-`schema = 2` (1 before this version); the per-character schema does not change. "Account-wide" is
+`schema = 3` (2 from M20, 1 before); the per-character schema does not change. "Account-wide" is
 narrower than it sounds: one book per game account folder in one flavor
 folder, and a renamed flavor folder leaves the book where it was. The
 record's layout is in `docs/LAB_PLAN.md` §20.1 and `docs/LAB_FORMATS.md`
@@ -887,6 +887,28 @@ before the scoreboard data is asked for (the request is made after its
 reads), so 0 rows and no fields in it mean the data had not arrived yet, not
 that a call is missing; the second is the one to read. Every call, event
 and answer here is **[verify]** until the owner's battleground check (M20-06).
+
+Full names and the region (schema 3, M21-12). The book records the
+game's region once (`region`, the text `GetCurrentRegionName()` gives:
+`"US"` on the owner's launch client, 2026-11-23), and, for each kept player
+with a `guid` and no name from the game yet, asks `GetPlayerInfoByGUID`:
+its sixth value is kept as `resolved_name` (`"Tay Soulrend"`, the in-game
+`<First> <Second>`, on Forever), the seventh as `resolved_realm` (empty on
+Forever), the eighth as `resolved_eighth` (22 for a level-22 character, so
+probably the level, not yet confirmed) and the time as `resolved_at`. Both
+run at the end of a roster pass, so only while the book is on and out of
+combat, and at most 100 GUIDs (`MAX_RESOLVES`) are asked per login or
+`/reload`, each GUID once per session; a full book is named a little at a
+time. A GUID the client does not know at that moment gives no name:
+nothing is stored and it is asked again at a later login. The migration
+gives a schema 2 book only the new number (a schema 1 book also its empty
+`matches`), for a book that is on, as before; an older WowLab leaves a
+schema 3 book alone. **[verify]** in game: that the client answers for a
+player met in an earlier session or far away (believed only for one it
+still has cached), and the eighth value. The desk fills each crew row's
+first and second name and region from these, and a player only a combat
+log named borrows them from the book's row with the same GUID (`crew list
+--json`: `names_from`, `region_from`, `borrowed_from`).
 
 How it records: on `GROUP_ROSTER_UPDATE` and `UNIT_NAME_UPDATE`, debounced
 by 2 s, and once 15 s after entering the world (so `/wowlab crew off` can be
@@ -1210,6 +1232,8 @@ on from one, fails the test until someone lists it on purpose.
 | `GetGuildInfo` | crew book: `guild` (first return only), never cleared by a nil; identity (schema 5): the character's `guild` | [verify] | yes |
 | `GetInstanceInfo` | crew book: `where` (the name, with `\|` removed) and `where_id` (eighth return), left out when the type is `none` (the open world) | [verify] | yes |
 | `UnitGUID` | crew book: a member's `guid`, and the player's own, to find the own scoreboard row and leave it out (also left out by its name-realm, from `UnitName("player")`); identity (schema 5): the character's `guid` | [verify] | yes |
+| `GetPlayerInfoByGUID` | crew book (schema 3, M21-12): for a kept player with a `guid` and no `resolved_name`, its sixth return as `resolved_name`, seventh as `resolved_realm` and eighth as `resolved_eighth`; out of combat, at most 100 GUIDs per login or `/reload`, each once per session; no name: nothing stored, asked again at a later login. *2026-11-23 (owner's check, Forever launch client):* it returned `"Warlock","WARLOCK","Undead","Scourge",3,"Tay Soulrend","",22`, so the name is `<First> <Second>`, the realm is empty, and the eighth value is probably the level (22 for a level-22 character, [verify]); whether it answers for a player met long ago, or only for one the client still has cached, is [verify] | [verify] | yes |
+| `GetCurrentRegionName` | crew book (schema 3, M21-12): the book's `region`, once per book, as given; the owner's check of 2026-11-23 returned `"US"` on the Forever launch client | [verify] | yes |
 | `UnitFactionGroup` | crew book: a member's `faction` (first return, the English name) | [verify] | yes |
 | `UnitHonorLevel` | crew book: a member's `honor_level` | [verify] | yes |
 | `TooltipDataProcessor.AddTooltipPostCall` | crew book: the tooltip line's hook, installed once per session while the book is on and out of combat, for tooltips that show a unit | [verify] | no: a FrameXML table these six files do not list (forever-addon-kit's 69893 list had it); defined in `Blizzard_SharedXMLGame`'s `TooltipDataHandler.lua` at 71037 |

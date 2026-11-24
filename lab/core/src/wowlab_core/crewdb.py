@@ -77,7 +77,7 @@ from wowlab_core.region import Region, region_of
 
 # ─── constants ───────────────────────────────────────────────────────────────
 
-SCHEMA = 5
+SCHEMA = 6
 """The database's own schema (`PRAGMA user_version`)."""
 APPLICATION_ID = 0x574C4342  # "WLCB": wowlab crew book
 """`PRAGMA application_id` of every crew database; `_SQL_SET_APP_ID` holds
@@ -151,6 +151,7 @@ _SQL_SET_VERSION: dict[int, str] = {
     3: "PRAGMA user_version = 3",
     4: "PRAGMA user_version = 4",
     5: "PRAGMA user_version = 5",
+    6: "PRAGMA user_version = 6",
 }
 _SQL_BEGIN = "BEGIN IMMEDIATE"
 _SQL_COMMIT = "COMMIT"
@@ -195,7 +196,11 @@ _SQL_CREATE: tuple[str, ...] = (
     " spec TEXT,"
     " honor_level INTEGER,"
     " score TEXT,"
-    " score_at INTEGER"
+    " score_at INTEGER,"
+    " resolved_name TEXT,"
+    " resolved_realm TEXT,"
+    " resolved_eighth INTEGER,"
+    " resolved_at INTEGER"
     ") STRICT",
     "CREATE INDEX players_last ON players (last_at)",
     "CREATE INDEX players_rating ON players (rating)",
@@ -294,6 +299,11 @@ _SQL_CREATE: tuple[str, ...] = (
 # log named so, in a table of its own (`log_names`). A row of the beta's
 # three-part names has none, so its key's second part stays a realm.
 #
+# 5 -> 6 (M21-12): what the lab-addon's book (schema 3) asked the game for a
+# player's GUID: the name in the in-game form, the realm with it, the eighth
+# value (probably the level, not yet confirmed) and when it was asked. Every
+# new column starts empty. The book's region is a `meta` row, not a column.
+#
 # Keyed by (schema it starts from, order within the step); each value one
 # constant statement, so the static check reads every one.
 _MIGRATIONS: dict[tuple[int, int], str] = {
@@ -353,6 +363,10 @@ _MIGRATIONS: dict[tuple[int, int], str] = {
     " realm TEXT,"
     " region TEXT"
     ") STRICT",
+    (5, 1): "ALTER TABLE players ADD COLUMN resolved_name TEXT",
+    (5, 2): "ALTER TABLE players ADD COLUMN resolved_realm TEXT",
+    (5, 3): "ALTER TABLE players ADD COLUMN resolved_eighth INTEGER",
+    (5, 4): "ALTER TABLE players ADD COLUMN resolved_at INTEGER",
 }
 
 _SQL_META_ALL = "SELECT name, value FROM meta"
@@ -365,7 +379,8 @@ _SQL_PLAYERS_ALL = (
     " where_name, where_id, rating, note, met_seen, in_book, marks_changed, marks_agreed,"
     " rating_own, note_own, allied, faced, allied_won, faced_won, pvp_last, pvp_map,"
     " pvp_side, allied_seen, faced_seen, allied_won_seen, faced_won_seen, guid, race,"
-    " faction, spec, honor_level, score, score_at"
+    " faction, spec, honor_level, score, score_at, resolved_name, resolved_realm,"
+    " resolved_eighth, resolved_at"
     " FROM players"
 )
 _SQL_PLAYER_INSERT = (
@@ -373,9 +388,10 @@ _SQL_PLAYER_INSERT = (
     " last_at, where_name, where_id, rating, note, met_seen, in_book, marks_changed,"
     " marks_agreed, rating_own, note_own, allied, faced, allied_won, faced_won, pvp_last,"
     " pvp_map, pvp_side, allied_seen, faced_seen, allied_won_seen, faced_won_seen, guid,"
-    " race, faction, spec, honor_level, score, score_at)"
+    " race, faction, spec, honor_level, score, score_at, resolved_name, resolved_realm,"
+    " resolved_eighth, resolved_at)"
     " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,"
-    " ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+    " ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
 )
 _SQL_PLAYER_UPDATE = (
     "UPDATE players SET name = ?, realm = ?, class = ?, level = ?, role = ?, guild = ?,"
@@ -384,7 +400,8 @@ _SQL_PLAYER_UPDATE = (
     " rating_own = ?, note_own = ?, allied = ?, faced = ?, allied_won = ?, faced_won = ?,"
     " pvp_last = ?, pvp_map = ?, pvp_side = ?, allied_seen = ?, faced_seen = ?,"
     " allied_won_seen = ?, faced_won_seen = ?, guid = ?, race = ?, faction = ?, spec = ?,"
-    " honor_level = ?, score = ?, score_at = ?"
+    " honor_level = ?, score = ?, score_at = ?, resolved_name = ?, resolved_realm = ?,"
+    " resolved_eighth = ?, resolved_at = ?"
     " WHERE player_key = ?"
 )
 # Matches (§21.3 rule 3, M20-09): one row per match, told apart by `at` and
@@ -420,6 +437,9 @@ _SQL_KEYS_ON_MAP = (
     " WHERE matches.map LIKE ? ESCAPE '\\'"
 )
 
+# The `meta` row that keeps the region the lab-addon's book recorded (M21-12).
+BOOK_REGION_META = "book_region"
+
 # ─── errors and models ───────────────────────────────────────────────────────
 
 
@@ -444,6 +464,10 @@ class Target(_Model):
     flavor_path: str
     account: str
     file: str
+
+
+NamesFrom = Literal["game", "log", "borrowed", "key"]
+RegionFrom = Literal["log", "book", "borrowed", "settings"]
 
 
 class CrewRow(crewbook.CrewPlayer):
@@ -510,10 +534,26 @@ class CrewRow(crewbook.CrewPlayer):
     first_name: str = ""
     second_name: str | None = None
     region: Region | None = None
-    # Where `region` came from (M21-02): `log`, a combat log's unit name for
-    # this player (the launch client's writes one); `settings`, the
-    # flavor's Config.wtf; None when there is no region.
-    region_from: Literal["log", "settings"] | None = None
+    # Where `region` came from (M21-02, M21-12), first that gives one:
+    # `log`, a combat log's unit name for this player (the launch client's
+    # writes one); `book`, the region the lab-addon's crew book recorded
+    # from the game (`GetCurrentRegionName()`), for a player the game's
+    # list gave; `borrowed`, a combat-log-only player's, from the row with
+    # the same GUID that the game's list gave (`borrowed_from`); `settings`,
+    # the flavor's Config.wtf; None when there is no region.
+    region_from: RegionFrom | None = None
+    # Where `first_name`, `second_name` and `game_name` came from (M21-12),
+    # first that gives them: `game`, the name the game gave for the
+    # player's GUID when the lab-addon asked (`resolved_name`, the in-game
+    # form; `realm` is then `resolved_realm` when not empty); `log`, a
+    # combat log's four-part unit name; `borrowed`, a combat-log-only
+    # player's, from the row with the same GUID that the game's list gave
+    # (`borrowed_from`; `realm` stays the one this row's own key gave);
+    # `key`, the stored key's two parts.
+    names_from: NamesFrom = "key"
+    # The stored key the names or the region were borrowed from (M21-12);
+    # None when nothing was borrowed.
+    borrowed_from: str | None = None
 
 
 class CrewMatchRow(_Model):
@@ -1014,6 +1054,12 @@ class _Row:
     honor_level: int | None = None
     score: str | None = None
     score_at: int | None = None
+    # What the lab-addon asked the game for the player's GUID (M21-12, book
+    # schema 3): the latest answer the saved file gave.
+    resolved_name: str | None = None
+    resolved_realm: str | None = None
+    resolved_eighth: int | None = None
+    resolved_at: int | None = None
 
     def values(self) -> tuple[object, ...]:
         return (
@@ -1054,6 +1100,10 @@ class _Row:
             self.honor_level,
             self.score,
             self.score_at,
+            self.resolved_name,
+            self.resolved_realm,
+            self.resolved_eighth,
+            self.resolved_at,
         )
 
 
@@ -1107,19 +1157,32 @@ def _aliases(rows: Sequence[_Row]) -> dict[str, list[str]]:
     return out
 
 
-def _public(
-    row: _Row,
-    book: crewbook.CrewBook | None,
-    aliases: dict[str, list[str]] | None = None,
-    world: dict[str, _WorldPart] | None = None,
-    region: Region | None = None,
-    second_names: bool = False,
-    logged: _LogName | None = None,
-    records: dict[str, nemesis.Record] | None = None,
-) -> CrewRow:
-    kept = {p.key: p for p in book.players} if book is not None else {}
-    held = kept.get(row.key)
-    part = (world or {}).get(row.key) or _WorldPart()
+@dataclasses.dataclass(frozen=True)
+class _Naming:
+    """A row's names and region, and where each came from (M21-12)."""
+
+    names: charname.KeyNames
+    names_from: NamesFrom = "key"
+    region: Region | None = None
+    region_from: RegionFrom | None = None
+    borrowed_from: str | None = None
+
+
+def _own_names(
+    row: _Row, second_names: bool, logged: _LogName | None
+) -> tuple[charname.KeyNames, NamesFrom]:
+    """A row's names from what it holds itself: the game's answer for its
+    GUID, else a four-part log name, else its key."""
+    if row.resolved_name:
+        # The in-game form the game gave (`<First> <Second>` on Forever).
+        first, second = charname.split_game_name(row.resolved_name)
+        realm = row.resolved_realm or None
+        if realm is None and logged is not None and logged.second_name:
+            realm = logged.realm
+        if realm is None and second is None:
+            # A name with no second part: the key's other part is a realm.
+            realm = row.realm or None
+        return charname.KeyNames(first, second, charname.game_name(first, second), realm), "game"
     if logged is not None and logged.second_name:
         # A four-part unit name gave the second name and the realm.
         names = charname.KeyNames(
@@ -1128,14 +1191,98 @@ def _public(
             charname.game_name(row.name, logged.second_name),
             logged.realm,
         )
-    else:
-        # A key's second part is a second name only where the lab-addon
-        # wrote the key on a second-name flavor; a key only a three-part
-        # (beta) unit name gave keeps it as a realm.
-        names = charname.key_names(
-            row.name, row.realm, second_names=second_names and _from_book(row)
-        )
-    from_log = region_of(logged.region) if logged is not None else None
+        return names, "log"
+    # A key's second part is a second name only where the lab-addon wrote
+    # the key on a second-name flavor; a key only a three-part (beta) unit
+    # name gave keeps it as a realm.
+    names = charname.key_names(row.name, row.realm, second_names=second_names and _from_book(row))
+    return names, "key"
+
+
+def _lender(row: _Row, by_key: dict[str, _Row], aliases: dict[str, list[str]]) -> _Row | None:
+    """For a player only a combat log named, the row with the same GUID
+    that the game's list gave (the GUID aliases of §21.3), to borrow names
+    and region from: one the game named by GUID first, then the latest
+    seen, then the first key. None for a row the game's list gave, or with
+    no such row."""
+    if _from_book(row):
+        return None
+    found = [by_key[k] for k in aliases.get(row.key, []) if k in by_key and _from_book(by_key[k])]
+    if not found:
+        return None
+
+    def rank(r: _Row) -> tuple[int, int, str]:
+        seen = _newest(r.last, r.pvp_last) or 0
+        return (0 if r.resolved_name else 1, -seen, r.key)
+
+    return min(found, key=rank)
+
+
+def _namings(
+    rows: Sequence[_Row],
+    aliases: dict[str, list[str]],
+    log_names: dict[str, _LogName],
+    region: Region | None,
+    book_region: Region | None,
+    second_names: bool,
+) -> dict[str, _Naming]:
+    """Each row's names and region with their sources (M21-12): its own
+    (`_own_names`; the region from a log name, else the book's for a player
+    the game's list gave), then, for a combat-log-only player whose own
+    names are only its key's, what the row with the same GUID has
+    (`_lender`), then the flavor's settings for the region."""
+    by_key = {r.key: r for r in rows}
+    own: dict[str, tuple[charname.KeyNames, NamesFrom, Region | None, RegionFrom | None]] = {}
+    for r in rows:
+        logged = log_names.get(r.key)
+        names, names_from = _own_names(r, second_names, logged)
+        from_log = region_of(logged.region) if logged is not None else None
+        got: Region | None = from_log
+        got_from: RegionFrom | None = "log" if from_log else None
+        if got is None and book_region is not None and _from_book(r):
+            got, got_from = book_region, "book"
+        own[r.key] = (names, names_from, got, got_from)
+    out: dict[str, _Naming] = {}
+    for r in rows:
+        names, names_from, got, got_from = own[r.key]
+        lender = _lender(r, by_key, aliases)
+        borrowed_from = None
+        if lender is not None:
+            lent_names, _, lent_region, _ = own[lender.key]
+            if names_from == "key" and lent_names.second_name is not None:
+                # The lender's first and second name; this row's own realm
+                # (the one its log name gave).
+                names = charname.KeyNames(
+                    lent_names.first_name,
+                    lent_names.second_name,
+                    lent_names.game_name,
+                    names.realm,
+                )
+                names_from = "borrowed"
+                borrowed_from = lender.key
+            if got is None and lent_region is not None:
+                got, got_from = lent_region, "borrowed"
+                borrowed_from = lender.key
+        if got is None and region is not None:
+            got, got_from = region, "settings"
+        out[r.key] = _Naming(names, names_from, got, got_from, borrowed_from)
+    return out
+
+
+def _public(
+    row: _Row,
+    book: crewbook.CrewBook | None,
+    aliases: dict[str, list[str]] | None = None,
+    world: dict[str, _WorldPart] | None = None,
+    naming: _Naming | None = None,
+    records: dict[str, nemesis.Record] | None = None,
+) -> CrewRow:
+    kept = {p.key: p for p in book.players} if book is not None else {}
+    held = kept.get(row.key)
+    part = (world or {}).get(row.key) or _WorldPart()
+    if naming is None:
+        naming = _Naming(charname.key_names(row.name, row.realm, second_names=False))
+    names = naming.names
     return CrewRow(
         key=row.key,
         class_token=row.class_token,
@@ -1178,12 +1325,18 @@ def _public(
         world_last=part.last,
         world_zone=part.zone,
         record=(records or {}).get(row.key),
+        resolved_name=row.resolved_name,
+        resolved_realm=row.resolved_realm,
+        resolved_eighth=row.resolved_eighth,
+        resolved_at=row.resolved_at,
         game_name=names.game_name,
         realm=names.realm,
         first_name=names.first_name,
         second_name=names.second_name,
-        region=from_log or region,
-        region_from="log" if from_log else "settings" if region else None,
+        region=naming.region,
+        region_from=naming.region_from,
+        names_from=naming.names_from,
+        borrowed_from=naming.borrowed_from,
     )
 
 
@@ -1214,9 +1367,11 @@ def read(
     there is no database yet. Writes nothing but what SQLite itself needs
     to finish a change an earlier run left half done. `book`, when given,
     lends each player still in it its saved-file-only facts (in the group
-    at the last save, unknown fields). `region` is the book's own region,
-    given to every row, and `second_names` says the flavor's characters
-    have second names, so a key's second part is one (M21-02)."""
+    at the last save, unknown fields). `region` is the flavor's region from
+    its settings, the last fallback for every row's, and `second_names` says
+    the flavor's characters have second names, so a key's second part is
+    one (M21-02). Each row's names and region say where they came from
+    (M21-12, `_namings`)."""
     path = database_path(flavor_folder, account)
     try:
         conn = _open(path, create=False)
@@ -1228,12 +1383,10 @@ def read(
         rows = list(_rows(conn).values())
         aliases = _aliases(rows)
         world = _world_parts(conn)
-        names = _log_names(conn)
+        book_region = region_of(_text(_meta(conn).get(BOOK_REGION_META)))
+        namings = _namings(rows, aliases, _log_names(conn), region, book_region, second_names)
         records = _records(conn, world)
-        return [
-            _public(r, book, aliases, world, region, second_names, names.get(r.key), records)
-            for r in rows
-        ]
+        return [_public(r, book, aliases, world, namings[r.key], records) for r in rows]
     except sqlite3.Error as exc:
         raise CrewDbError(f"The crew database {path} cannot be read ({exc}).") from exc
     finally:
@@ -1343,8 +1496,14 @@ _TEXTS = (
     ("race", "race", TEXT_MAX_BYTES),
     ("faction", "faction", TEXT_MAX_BYTES),
     ("spec", "specialization", TEXT_MAX_BYTES),
+    ("resolved_name", "name the game gave for the character's id", TEXT_MAX_BYTES),
+    ("resolved_realm", "realm the game gave for the character's id", TEXT_MAX_BYTES),
 )
-_TIMES = (("first", "first-grouped time"), ("last", "last-grouped time"))
+_TIMES = (
+    ("first", "first-grouped time"),
+    ("last", "last-grouped time"),
+    ("resolved_at", "time the game was asked for the name"),
+)
 
 
 def _refused(kind: str, rule: str) -> str:
@@ -1710,6 +1869,18 @@ def _with_seen(
     ):
         new.score = _score_text(score)
         new.score_at = score.at
+    # M21-12: the name the game gave by GUID, all four together, from the
+    # saved file when it holds one asked no earlier than the row's.
+    if p.resolved_name is not None and (
+        row is None
+        or row.resolved_name is None
+        or row.resolved_at is None
+        or (p.resolved_at is not None and p.resolved_at >= row.resolved_at)
+    ):
+        new.resolved_name = p.resolved_name
+        new.resolved_realm = p.resolved_realm
+        new.resolved_eighth = p.resolved_eighth
+        new.resolved_at = p.resolved_at
     return new
 
 
@@ -1998,7 +2169,7 @@ def _elsewhere(path: Path, root: object, flavor_folder: object, account: str) ->
 def _meta_rows(
     target: Target, book: crewbook.CrewBook, data: bytes, journal: str | None
 ) -> dict[str, object]:
-    return {
+    rows: dict[str, object] = {
         "schema": SCHEMA,
         "last_sync": int(time.time()),
         "book_sha256": hashlib.sha256(data).hexdigest(),
@@ -2008,6 +2179,12 @@ def _meta_rows(
         "install_root": target.install_root,
         "journal_record": journal,
     }
+    # M21-12: the region the book recorded (`GetCurrentRegionName()`), when
+    # it is a region wowlab knows; a book with none leaves the one kept.
+    book_region = region_of(book.region)
+    if book_region is not None:
+        rows[BOOK_REGION_META] = book_region
+    return rows
 
 
 def sync(
