@@ -156,12 +156,18 @@ copied). Field names are Spy's.
     `race`, `level`, `guild` (absent when none), `faction`, `isEnemy`,
     `isGuess` (the level is a guess), `zone`, `subZone`, `mapID`, `mapX`,
     `mapY` (0 to 1, floored to two decimals) and `time` (Unix seconds).
-    Spy keeps hostile players only: it drops a row not seen for 90 days
-    by default (Spy's purge option, `PurgeData`: 1, 5, 10, 30, 60 or 90
-    days), or once it sees the player as friendly, unless it counted a
-    killing blow or a death against them (and Spy is not set to purge those
-    too, `PurgeWinLossData`) or, unless `PurgeKoS` is on, they are on the
-    kill-on-sight list (`List.lua`, around line 777).
+    Spy keeps hostile players only, and deletes rows two ways
+    (`List.lua`, around lines 389 and 777 to 817):
+    - Not seen for 90 days by default (Spy's purge option, `PurgeData`: 1,
+      5, 10, 30, 60 or 90 days; a value it does not know counts as 90): the
+      row is deleted unless it holds `wins` or `loses`, or, while
+      `PurgeKoS` is off, its `kos` mark. `PurgeWinLossData` drops those
+      and kill-on-sight players alike: with it on, every row past the
+      timeout is deleted and taken off the kill-on-sight list, whatever
+      `PurgeKoS` says.
+    - Seen as friendly (`RemovePlayerData`): the row is deleted unless it
+      holds `wins` or `loses`, when only `isEnemy` is set false; there is
+      no kill-on-sight exception.
     - `isEnemy` is the game's answer (`UnitIsEnemy`) when Spy last looked:
       hostile to the recording character, not a faction. A duel, mind
       control or a free-for-all area can make the same faction hostile;

@@ -86,10 +86,12 @@ class SpySource(_Model):
 
 class SpyPlayer(_Model):
     """One `PlayerData` row: a player Spy still keeps. Spy keeps hostile
-    players only, and drops a row not seen for 90 days by default (Spy's
-    purge option, `SpySettings.purge_days`) or once the player is seen as
-    friendly, unless it counted a killing blow or a death against them (and
-    Spy is not set to purge those too). `key` is the table key, as
+    players only. It drops a row not seen for 90 days by default (Spy's
+    purge option, `SpySettings.purge_days`) unless it counted a killing blow
+    or a death against them or they are on the kill-on-sight list
+    (`PurgeWinLossData` drops those and kill-on-sight players alike). It
+    also drops a row once the player is seen as friendly, unless it counted
+    a killing blow or a death against them. `key` is the table key, as
     stored (`<First>-<Second>` on Forever); `name` is the row's own `name`
     field.
 

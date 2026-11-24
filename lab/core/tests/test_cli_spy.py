@@ -404,3 +404,49 @@ def test_constructed_a_character_that_takes_shared_rows_gets_the_caveat(env: Env
     assert env.json("spy", "show", "Goruthuz-Mugstout")["caveat"] == caveat
     out = env.run("spy", "list").stdout
     assert " ".join(out.split()).count(caveat) == 1
+
+
+@pytest.mark.parametrize(
+    ("options", "said"),
+    [
+        (
+            ['["PurgeWinLossData"] = true,', '["PurgeKoS"] = false,'],
+            "drops players when not seen for 90 days, those it counted a killing blow or death "
+            "against too, and kill-on-sight players too",
+        ),
+        (
+            ['["PurgeKoS"] = true,', '["PurgeData"] = "ThirtyDays",'],
+            "drops players when not seen for 30 days, kill-on-sight players too",
+        ),
+        (
+            ['["PurgeData"] = "Weekly",'],
+            "drops players by a purge setting wowlab does not know (Weekly; Spy treats it as 90 "
+            "days)",
+        ),
+    ],
+)
+def test_constructed_the_purge_note_says_what_spy_drops(
+    env: Env, options: list[str], said: str
+) -> None:
+    account = (
+        NL.join(
+            [
+                "",
+                "SpyDB = {",
+                '["profileKeys"] = {',
+                '["Sandgraal Rizzen"] = "Sandgraal Rizzen",',
+                "},",
+                '["profiles"] = {',
+                '["Sandgraal Rizzen"] = {',
+                *options,
+                "},",
+                "},",
+                "}",
+            ]
+        )
+        + NL
+    ).encode()
+    env.put(ACCOUNT_FILE, account)
+    assert env.json("spy", "list")["notes"][-1] == (
+        f"Spy's purge setting for each character: Sandgraal-Rizzen {said}."
+    )

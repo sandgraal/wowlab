@@ -47,10 +47,11 @@ _SPY_AS_OF = "as of your last logout or /reload"
 _SPY_NOTES = [
     "Spy saves its lists when you log out or type /reload, and the game overwrites a change "
     "made to them while it runs.",
-    "Spy keeps hostile players only, and drops a player not seen for 90 days by default "
-    "(Spy's purge option), or once it sees them as friendly, unless it counted a killing "
-    "blow or a death against them (and Spy is not set to purge those too) or they are on "
-    "the kill-on-sight list.",
+    "Spy keeps hostile players only. It drops a player not seen for 90 days by default "
+    "(Spy's purge option), unless it counted a killing blow or a death against them or they "
+    "are on the kill-on-sight list (Spy's option to purge counted players drops those and "
+    "kill-on-sight players alike). It also drops a player once it sees them as friendly, "
+    "unless it counted a killing blow or a death against them.",
     "Spy records your own character's position, not theirs. The time and the place can be "
     "from different moments: Spy records the place when it first notices a player, and not "
     "when the game gives no position; and inside an instance it writes the instance's name "
@@ -357,15 +358,23 @@ def _spy_words(read: _SpyRead, characters: Sequence[spy.SpyCharacterData]) -> st
 def _spy_purge_words(found: spy.SpySettings) -> str:
     """What a character's Spy profile drops, from its purge options."""
     if found.purge_days is None:
-        when = f"by a purge setting wowlab does not know ({found.purge_setting})"
+        when = (
+            f"by a purge setting wowlab does not know ({found.purge_setting}; Spy treats it "
+            "as 90 days)"
+        )
     else:
         when = f"when not seen for {_plural(found.purge_days, 'day')}"
-    also = [
-        "those it counted a killing blow or death against" if found.purge_counted else None,
-        "kill-on-sight players" if found.purge_kos else None,
-    ]
-    extra = " and ".join(a for a in also if a)
-    return f"drops players {when}" + (f", {extra} too" if extra else "")
+    # `PurgeWinLossData` deletes every row past the timeout, kill on sight
+    # or not, whatever `PurgeKoS` says (List.lua, around line 798).
+    if found.purge_counted:
+        extra = (
+            ", those it counted a killing blow or death against too, and kill-on-sight players too"
+        )
+    elif found.purge_kos:
+        extra = ", kill-on-sight players too"
+    else:
+        extra = ""
+    return f"drops players {when}{extra}"
 
 
 def _spy_notes(read: _SpyRead, sources: Sequence[spy.SpySource]) -> list[str]:
