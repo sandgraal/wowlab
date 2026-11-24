@@ -122,7 +122,6 @@ import argparse
 import bisect
 import hashlib
 import importlib.util
-import os
 import re
 import secrets
 import stat
@@ -2279,9 +2278,12 @@ def country_scan(data: bytes) -> CountryScan:
 # ─── reading the install (read-only) ─────────────────────────────────────────
 
 
-def read_bytes(path: Path, max_lines: int | None = None) -> bytes:
-    """Read a file, or its first `max_lines` lines, opened read-only."""
+def read_bytes(path: Path, max_lines: int | None = None, limit: int | None = None) -> bytes:
+    """Read a file, or its first `max_lines` lines, or its first `limit`
+    bytes, opened read-only."""
     with path.open("rb") as handle:
+        if limit is not None:
+            return handle.read(limit)
         if max_lines is None:
             return handle.read()
         return b"".join(line for _, line in zip(range(max_lines), handle, strict=False))
@@ -3887,45 +3889,51 @@ def _in_an_install(path: Path) -> bool:
     return any(child(folder, ".build.info") is not None for folder in path.parents)
 
 
-def read_outside(path: Path, limit: int) -> tuple[bytes, os.stat_result]:
-    """The bytes of the regular file `path`, opened read-only, never through a
-    link and never waited on (a FIFO is refused before it is opened, and the
-    open does not block), and its stat. Raises CaptureError for a link, a
-    file that is not regular, one past `limit` or one that changed while it
-    was opened; the message never quotes the path."""
+def read_outside(path: Path, limit: int) -> tuple[bytes, float]:
+    """The bytes of the regular file `path`, read-only, and its modification
+    time. Raises CaptureError, never quoting the path, for a link (never
+    followed), anything that is not a regular file (a FIFO is refused before
+    any open, so nothing waits on it), a file past `limit`, and a file that
+    is not the same one after it was read (the link, FIFO and size checks
+    are made again, against the same device and inode).
+
+    The tool stays on its one read-only `open` (`read_bytes`) and does not
+    import `os`, so the open itself cannot refuse a link or a FIFO: a file
+    swapped for one in the moment between the check and the open would be
+    followed, or waited on, and the check after the read refuses the first.
+    The file is in the owner's own app folder, read on the owner's own
+    machine."""
+
+    def checked() -> tuple[int, int, int, float]:
+        try:
+            seen = path.lstat()
+        except OSError as error:
+            raise CaptureError(f"--file is {_os_reason(error)}") from None
+        if stat.S_ISLNK(seen.st_mode):
+            raise CaptureError(
+                "--file is a symbolic link, which is never followed; nothing is captured"
+            )
+        if not stat.S_ISREG(seen.st_mode):
+            raise CaptureError("--file is not a regular file; nothing is captured")
+        if seen.st_size > limit:
+            raise CaptureError(
+                f"--file is larger than {limit} bytes (--max-bytes); nothing is captured"
+            )
+        return seen.st_dev, seen.st_ino, seen.st_size, seen.st_mtime
+
+    before = checked()
     try:
-        seen = path.lstat()
+        data = read_bytes(path, limit=limit + 1)
     except OSError as error:
         raise CaptureError(f"--file is {_os_reason(error)}") from None
-    if stat.S_ISLNK(seen.st_mode):
-        raise CaptureError(
-            "--file is a symbolic link, which is never followed; nothing is captured"
-        )
-    if not stat.S_ISREG(seen.st_mode):
-        raise CaptureError("--file is not a regular file; nothing is captured")
-    if seen.st_size > limit:
-        raise CaptureError(
-            f"--file is larger than {limit} bytes (--max-bytes); nothing is captured"
-        )
-    flags = os.O_RDONLY | getattr(os, "O_BINARY", 0) | getattr(os, "O_NOFOLLOW", 0)
-    flags |= getattr(os, "O_NONBLOCK", 0) | getattr(os, "O_CLOEXEC", 0)
-    try:
-        fd = os.open(path, flags)
-    except OSError as error:
-        raise CaptureError(f"--file is {_os_reason(error)}") from None
-    with os.fdopen(fd, "rb") as handle:
-        facts = os.fstat(handle.fileno())
-        if not stat.S_ISREG(facts.st_mode) or (facts.st_dev, facts.st_ino) != (
-            seen.st_dev,
-            seen.st_ino,
-        ):
-            raise CaptureError("--file changed while it was opened; nothing is captured")
-        data = handle.read(limit + 1)
     if len(data) > limit:
         raise CaptureError(
             f"--file is larger than {limit} bytes (--max-bytes); nothing is captured"
         )
-    return data, facts
+    after = checked()
+    if after[:2] != before[:2] or after[2] != len(data):
+        raise CaptureError("--file changed while it was read; nothing is captured")
+    return data, after[3]
 
 
 def _outside_content_refusals(data: bytes) -> list[str]:
@@ -3953,7 +3961,7 @@ class OutsideOutcome:
 
 def process_outside(
     data: bytes,
-    facts: os.stat_result,
+    mtime: float,
     name: str,
     source: str,
     platform: str,
@@ -3964,7 +3972,7 @@ def process_outside(
     identity map's, in one byte-level pass, then every detector over the
     result."""
     dest = PurePosixPath(source, platform, name)
-    when = datetime.fromtimestamp(facts.st_mtime).astimezone().isoformat(timespec="seconds")
+    when = datetime.fromtimestamp(mtime).astimezone().isoformat(timespec="seconds")
     digest = hashlib.sha256(data).hexdigest()
     refused = [*sqlite_problems(data), *_outside_content_refusals(data)]
     scrubbed_name, name_problems = identity.scrub_path(PurePosixPath(name))
@@ -3988,11 +3996,8 @@ def _shown_source(path: Path) -> str:
     """Where the file was, as a provenance row may say it: under `~` when it
     is in this machine's home, withheld when a login would show."""
     text = str(path)
-    for real, _ in _home_pairs(str(Path.home())):
-        spelled = real.decode("utf-8", "surrogatepass")
-        if text.casefold().startswith(spelled.casefold() + os.sep.casefold()):
-            text = "~" + text[len(spelled) :].replace(os.sep, "/")  # one spelling in a row
-            break
+    if path.is_relative_to(Path.home()):
+        text = "~/" + path.relative_to(Path.home()).as_posix()  # one spelling in a row
     return "<path withheld>" if HOME_RE.search(text.encode("utf-8", "surrogatepass")) else text
 
 
@@ -4095,8 +4100,8 @@ def run_outside(args: argparse.Namespace) -> int:
             cvars=(*IDENTITY_CVARS, *(args.blank_cvar or [])),
             show_names=args.show_map,
         )
-    data, facts = read_outside(src, args.max_bytes)
-    outcome = process_outside(data, facts, src.name, source, platform, identity)
+    data, mtime = read_outside(src, args.max_bytes)
+    outcome = process_outside(data, mtime, src.name, source, platform, identity)
     mode = "DRY RUN, nothing will be written" if args.dry_run else f"writing under {out}"
     print(f"lab_capture: one file from outside an install; {mode}")
     print(
@@ -4125,8 +4130,7 @@ def run_outside(args: argparse.Namespace) -> int:
         raise CaptureError(f"{target} is not a regular file; nothing is written")
     result = outcome.result
     if not args.dry_run:
-        target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_bytes(result.data)
+        _write_out(target, result.data)
     verb = "would write" if args.dry_run else "wrote"
     print(f"{verb:<8} {shown} ({len(result.data)} bytes, {len(result.edits)} edits)")
     for note in result.notes:
@@ -4305,6 +4309,13 @@ def _ordinal(n: int) -> str:
     return f"{n}{suffix}"
 
 
+def _write_out(target: Path, data: bytes) -> None:
+    """The tool's one write: a regular file under --out (both modes check
+    the target is inside it first)."""
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_bytes(data)
+
+
 def run(args: argparse.Namespace) -> int:
     if args.file is not None:
         return run_outside(args)
@@ -4399,8 +4410,7 @@ def run(args: argparse.Namespace) -> int:
             print(f"REFUSED  {shown}: a second source file maps to this destination")
             continue
         if not args.dry_run:
-            target.parent.mkdir(parents=True, exist_ok=True)
-            target.write_bytes(outcome.result.data)
+            _write_out(target, outcome.result.data)
         written.add(target)
         result = outcome.result
         hits.update(e.new for e in result.edits if e.reason == "identity")

@@ -71,9 +71,8 @@ def _nothing_written(out: Path) -> bool:
 
 
 def _process(data: bytes, home: str = "/Users/someone") -> Any:
-    facts = FIXTURE.stat()
     return lab_capture.process_outside(
-        data, facts, "records.json", "somemanager", "macos", lab_capture.Identity(), home
+        data, 0.0, "records.json", "somemanager", "macos", lab_capture.Identity(), home
     )
 
 
@@ -381,7 +380,7 @@ def test_the_curseforge_capture_is_a_fixed_point_and_passes_every_detector() -> 
     data = FIXTURE.read_bytes()
     outcome = lab_capture.process_outside(
         data,
-        FIXTURE.stat(),
+        FIXTURE.stat().st_mtime,
         FIXTURE.name,
         "curseforge",
         "macos",
