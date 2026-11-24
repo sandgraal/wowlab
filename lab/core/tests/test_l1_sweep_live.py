@@ -37,7 +37,7 @@ What it does, in order:
    every command of the CLI is run, skipped with a reason, or excluded.
 3. Starts the `wowlab ui` server in this process and makes its read
    requests with the session key: the page shell, `/api/commands`,
-   `/api/looks-page`, and `POST /api/run` for read commands only, never with
+   `/api/looks-page`, `/api/live` (M22-05), and `POST /api/run` for read commands only, never with
    a confirm token.
 4. Fingerprints again and fails on any difference in the install, then on
    any difference in the user data directory, printing the first ones. Then
@@ -809,6 +809,8 @@ def run_commands(inst: install.Install, sweep: Sweep) -> None:
         # M21-08: `char sim-export` reads only without --out, which the sweep never passes.
         for sub in ("show", "gear", "binds", "macros", "history", "sim-export"):
             sweep.cli("char", sub, *ch, "--json")
+        # M22-05: the Live view's recap reads the logs, the store and the book.
+        sweep.cli("live", "recap", *ch, "--json")
         # M22-06: `char twink` downloads its game tables on a first run, so it
         # runs only when every one is already cached for this version.
         if _cached(twink.TABLES, f.version):
@@ -912,6 +914,9 @@ def run_ui(inst: install.Install, sweep: Sweep) -> None:
             status,
             status == 200 or (status in (403, 404) and b"page" in body),
         )
+        # M22-05: the Live view's poll, answered in the server's own process.
+        status, body = client.request("GET", "/api/live")
+        _ui_get(sweep, "ui GET /api/live", status, status == 200 and b'"found"' in body)
         runs: list[tuple[list[str], dict[str, Any]]] = [
             (["doctor"], {}),
             (["install", "show"], {}),
@@ -931,6 +936,7 @@ def run_ui(inst: install.Install, sweep: Sweep) -> None:
                 (["sv", "list"], fl),
                 (["char", "list"], {**fl, "summary": True}),
                 (["lookup"], {**fl, "query": "claw", "limit": "3"}),
+                (["live", "recap"], fl),
             ]
             runs += [(["crew", "list"], {**fl, "account": a}) for a in _accounts(f.path)]
             runs.append((["spy", "list"], fl))
@@ -1428,6 +1434,9 @@ def test_sweep_on_a_captured_install_changes_nothing_constructed(
         "wowlab crew list ",
         "wowlab crew show ",
         "wowlab crew matches ",
+        "wowlab live recap ",
+        "ui GET /api/live",
+        "ui POST /api/run live recap",
         "ui POST /api/run char list",
         "ui POST /api/run crew list",
         "wowlab lookup ",

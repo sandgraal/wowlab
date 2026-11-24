@@ -473,6 +473,10 @@ def read_commands(root: Path, tmp_path: Path) -> list[list[str]]:
         # constructed QuestieDB slice and lints that text too.
         ["lookup", "claw"],
         ["lookup", "claw", "--notes"],
+        # M22-05: the captures hold no game id and no earlier save, so both
+        # say so; test_cli_live.py runs it on a constructed match and store.
+        ["live", "recap"],
+        ["live", "recap", "--notes"],
         # M22-01: the sandbox (macos/ and its overlays) holds no Spy file,
         # so list says so and show ends in its one error line;
         # test_cli_spy.py runs both on the Spy files of macos-71037/.

@@ -740,6 +740,7 @@ def test_each_tab_panel_starts_at_h2_and_skips_no_level() -> None:
         "lookup-view",
         "backups-view",
         "addons-view",
+        "live-view",  # M22-05
         "explorer-view",
         "gaps-view",
         "commands-view",

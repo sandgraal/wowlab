@@ -485,6 +485,16 @@ crew_app = typer.Typer(
     no_args_is_help=True,
 )
 app.add_typer(crew_app, name="crew", short_help="The players you grouped with (the crew book).")
+live_app = typer.Typer(
+    help="What the Live view of wowlab ui shows: your latest match from the combat log, and your "
+    "last save, against an earlier one your backups hold.",
+    no_args_is_help=True,
+)
+app.add_typer(
+    live_app,
+    name="live",
+    short_help="Latest match; last save, against an earlier one your backups hold.",
+)
 spy_app = typer.Typer(
     help="What the Spy addon saved: the players it saw, your kill-on-sight and ignore lists, "
     "the fights it counted, and your notes and tags, as of your last logout or /reload. "
@@ -520,6 +530,7 @@ _PART_NAMES = (
     "_cmd_charmodel",
     "_cmd_crew",
     "_cmd_lookup",
+    "_cmd_live",
     "_cmd_spy",
     "_cmd_ui",
 )
@@ -550,6 +561,7 @@ _COMMAND_MODULES: dict[str, tuple[str, ...]] = {
     "casc": ("_cmd_casc",),
     "crew": ("_cmd_crew",),
     "lookup": ("_cmd_lookup",),
+    "live": ("_cmd_live",),
     "spy": ("_cmd_spy",),
 }
 

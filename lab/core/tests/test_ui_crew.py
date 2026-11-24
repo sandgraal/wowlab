@@ -322,12 +322,14 @@ def test_a_file_changed_between_plan_and_confirm_is_refused_by_the_pin_construct
 
 # ─── no new endpoint ─────────────────────────────────────────────────────────
 
-_ROUTES = {"/", "/favicon.svg", "/api/commands", "/api/run", "/api/looks-page"}
+# M22-05 adds the Live view's poll, `/api/live`.
+_ROUTES = {"/", "/favicon.svg", "/api/commands", "/api/run", "/api/looks-page", "/api/live"}
 
 
 def test_no_new_endpoint(crew_at: Any) -> None:
-    """The server answers the same five paths it did before the Crew tab,
-    and the page asks only for the three it reads."""
+    """The server answers the same five paths it did before the Crew tab
+    (and the Live view's poll since M22-05), and the page asks only for the
+    four it reads."""
     source = (Path(ui.__file__)).read_text(encoding="utf-8")
     paths = {
         node.value
@@ -343,6 +345,7 @@ def test_no_new_endpoint(crew_at: Any) -> None:
         "/api/run",
         "/api/commands",
         "/api/looks-page",
+        "/api/live",
     }
     assert len(re.findall(r"\bfetch\(", script)) == len(re.findall(r'\bfetch\(api\("', script))
     crew = crew_at(_three())
