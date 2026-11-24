@@ -41,16 +41,24 @@ The flags describe a unit as the logging player sees it (docs/LAB_FORMATS.md
 §8); the bits for hostile, party, raid, pet and guardian are community
 documentation that no fixture shows (not yet confirmed).
 
-**Where.** Only a fight in the open world counts: after a `ZONE_CHANGE`
-line whose difficulty (its third field) is 0, as the one real log shows for
-open-world Tirisfal Glades (`ZONE_CHANGE,0,"Tirisfal Glades",0`), outside an
-`ARENA_MATCH_START` .. `ARENA_MATCH_END` span, and on no map that the crew
-database keeps a battleground or arena match on (`pvp_maps`: the match's
-`map_id` is the instance id the client gives, which is `ZONE_CHANGE`'s first
-field by community documentation). That battlegrounds log a difficulty
-other than 0, and the arena lines themselves, are not yet confirmed. A
-fight before the log's first zone line is not counted (`no_zone`). A duel
-cannot be told from the log, so a duel in the open world is counted.
+**Where** (`in_open_world`, the one place the rule lives). Only a fight in
+the open world counts. The open world is a stay (from one `ZONE_CHANGE` to
+the next) whose instance id, the zone line's first field, is a map whose
+`InstanceType` in the game's build-keyed `Map` table (`maps`, read from the
+`gamedata` cache by the caller, `map_types`) is `WORLD_INSTANCE_TYPE` (0);
+a dungeon (1), raid (2), battleground (3), arena (4) or any other type is
+not (M22-22, owner decision of 2026-11-23). The difficulty cannot decide
+it: the launch client writes `ZONE_CHANGE,33,"Shadowfang Keep",0`, a
+dungeon with difficulty 0, as it writes `ZONE_CHANGE,0,"Tirisfal Glades",0`
+for the open world. With no table (`maps` None), or an instance id the
+table does not hold, the rule falls back to the difficulty: 0 is taken for
+the open world, and the caller says so. Either way a fight is never the
+open world inside an `ARENA_MATCH_START` .. `ARENA_MATCH_END` span or on a
+map that the crew database keeps a battleground or arena match on
+(`pvp_maps`: the match's `map_id` is the instance id the client gives). The
+arena lines themselves are not yet confirmed. A fight before the log's
+first zone line is not counted (`no_zone`). A duel cannot be told from the
+log, so a duel in the open world is counted.
 
 **An encounter.** A fight joins the open encounter of the same character of
 yours that already holds the same opponent, when its last fight was at most
@@ -123,6 +131,7 @@ __all__ = [
     "ENCOUNTER_GAP_SECONDS",
     "JOIN_SECONDS",
     "KILLING_HIT_SECONDS",
+    "MAP_TABLE",
     "MAX_ENCOUNTERS",
     "MAX_NAMES",
     "MAX_OPEN",
@@ -130,6 +139,7 @@ __all__ = [
     "SAVED_NAMES",
     "SIDE_MAX",
     "WORLD_EVENTS",
+    "WORLD_INSTANCE_TYPE",
     "Side",
     "UnitParts",
     "Who",
@@ -137,6 +147,9 @@ __all__ = [
     "WorldPlayer",
     "WorldScan",
     "ZoneState",
+    "decided_by_map",
+    "in_open_world",
+    "map_types",
     "normalize_realm",
     "player_key",
     "read_world",
@@ -168,6 +181,17 @@ SIDE_MAX = 100
 """At most this many players on each side of one encounter (as a match's)."""
 KEY_MAX_BYTES = 256
 ZONE_MAX_BYTES = 256
+MAP_TABLE = "Map"
+"""The game table whose `InstanceType` tells the open world from an
+instance (fetched through `gamedata`, keyed by build). A table name, not
+game data and nothing about a flavor (L6)."""
+WORLD_INSTANCE_TYPE = 0
+"""`Map.InstanceType` of the open world (the recorded table of build
+1.60.1.71037: 0 on Eastern Kingdoms and Kalimdor, 1 on dungeons such as
+Shadowfang Keep, 2 on raids, 3 on battlegrounds; 4, arenas, by community
+documentation)."""
+MAX_MAPS = 100_000
+"""At most this many maps are read from the table (the recorded one has 78)."""
 
 DAMAGE_EVENTS = frozenset({"SWING_DAMAGE", "RANGE_DAMAGE", "SPELL_DAMAGE", "SPELL_PERIODIC_DAMAGE"})
 WORLD_EVENTS = frozenset(
@@ -261,7 +285,9 @@ class WorldPlayer(_Model):
 class WorldEncounter(_Model):
     """One encounter: which of your characters (`owner_guid`), when it
     started and ended (seconds since the epoch, UTC), the zone and instance
-    id, whether you died in it, and its players."""
+    id, whether you died in it, and its players. `by_map`: its place was
+    found to be the open world by the game's map table (M22-22); else by the
+    zone line's difficulty, which a dungeon's line can share."""
 
     owner_guid: str
     start: int
@@ -271,6 +297,7 @@ class WorldEncounter(_Model):
     died: bool
     players: list[WorldPlayer]
     players_left_out: int = 0
+    by_map: bool = False
 
 
 class WorldScan(_Model):
@@ -444,6 +471,51 @@ def player_key(
     return None if who is None else (who.key, who.name, who.realm)
 
 
+def map_types(rows: Iterable[Mapping[str, str]]) -> dict[int, int]:
+    """Each map's `InstanceType` by its id (`ID`), from the rows of the
+    game's `Map` table (`gamedata.cached_rows(MAP_TABLE, build)`). A row
+    whose id or type is not a bare decimal is left out; at most `MAX_MAPS`
+    maps are read."""
+    found: dict[int, int] = {}
+    for row in rows:
+        if len(found) >= MAX_MAPS:
+            break
+        map_id, kind = _int(row.get("ID")), _int(row.get("InstanceType"))
+        if map_id is not None and kind is not None:
+            found[map_id] = kind
+    return found
+
+
+def in_open_world(
+    state: ZoneState,
+    pvp_maps: Iterable[int] | frozenset[int] = (),
+    *,
+    maps: Mapping[int, int] | None = None,
+) -> bool:
+    """Whether the log is in the open world at `state` (the one place this
+    rule lives): outside an arena match, on no instance id of `pvp_maps`
+    (the battlegrounds and arenas a match is kept on), and on a map whose
+    `InstanceType` in `maps` (`map_types`) is `WORLD_INSTANCE_TYPE`. With no
+    `maps`, or an instance id `maps` does not hold, a zone line whose
+    difficulty is 0 is taken for the open world (the rule before the map
+    table; a dungeon's zone line can say 0 too)."""
+    if state.arena:
+        return False
+    if state.instance_id is not None and state.instance_id in pvp_maps:
+        return False
+    if maps is not None and state.instance_id is not None:
+        kind = maps.get(state.instance_id)
+        if kind is not None:
+            return kind == WORLD_INSTANCE_TYPE
+    return state.difficulty == 0
+
+
+def decided_by_map(state: ZoneState, maps: Mapping[int, int] | None) -> bool:
+    """Whether `in_open_world` decides `state` by the map table: `maps`
+    holds its instance id."""
+    return maps is not None and state.instance_id is not None and state.instance_id in maps
+
+
 # ─── encounters being built ──────────────────────────────────────────────────
 
 
@@ -469,6 +541,7 @@ class _Open:
     last: int
     zone: str | None
     instance_id: int | None
+    by_map: bool = False
     players: dict[str, _Player] = dataclasses.field(default_factory=dict)  # by GUID
     sides: dict[str, int] = dataclasses.field(default_factory=lambda: {"foe": 0, "ally": 0})
     left_out: int = 0
@@ -501,6 +574,7 @@ class _Open:
                 for p in sorted(self.players.values(), key=lambda p: (p.side != "foe", p.key))
             ],
             players_left_out=self.left_out,
+            by_map=self.by_map,
         )
 
 
@@ -530,8 +604,10 @@ class _Reader:
         state: ZoneState | None,
         pvp_maps: frozenset[int],
         second_names: bool = False,
+        maps: Mapping[int, int] | None = None,
     ) -> None:
         self.second_names = second_names
+        self.maps = maps
         self.owners = {
             g.upper(): (normalize_realm(r) or None if r else None) for g, r in owners.items()
         }
@@ -595,11 +671,7 @@ class _Reader:
         s = self.state
         if s.difficulty is None and s.instance_id is None and s.zone is None:
             return None
-        return (
-            s.difficulty == 0
-            and not s.arena
-            and (s.instance_id is None or s.instance_id not in self.pvp_maps)
-        )
+        return in_open_world(s, self.pvp_maps, maps=self.maps)
 
     # who ---------------------------------------------------------------------
 
@@ -722,6 +794,7 @@ class _Reader:
             last=now,
             zone=self.state.zone,
             instance_id=self.state.instance_id,
+            by_map=decided_by_map(self.state, self.maps),
         )
         self.open.append(e)
         return e
@@ -947,18 +1020,22 @@ def scan_entries(
     state: ZoneState | None = None,
     pvp_maps: Iterable[int] = (),
     second_names: bool = False,
+    maps: Mapping[int, int] | None = None,
 ) -> WorldScan:
     """The open-world encounters in a log's lines (as `combatlog.read_log`
     yields them, from `start`), for your characters' GUIDs `owners` (each
     with its realm as the lab-addon stored it, or None). `state` is where
     the log was at `start` (a read that continues); `pvp_maps` the instance
-    ids of the battlegrounds and arenas the crew database keeps matches on.
+    ids of the battlegrounds and arenas the crew database keeps matches on;
+    `maps` each map's `InstanceType` from the game's map table (`map_types`;
+    None when it is not cached: `in_open_world` falls back to the
+    difficulty).
     A last line with no line break (still being written) is not read, and
     `end` is its offset, so the next read takes it whole. A read that
     holds `MAX_ENCOUNTERS` or `MAX_READ_PLAYERS` stops at the first line
     with no encounter open, and at twice either bound before the line that
     would start one (`more`, `end` that line's offset)."""
-    reader = _Reader(owners, state, frozenset(pvp_maps), second_names)
+    reader = _Reader(owners, state, frozenset(pvp_maps), second_names, maps)
     lines = unparsed = bad = 0
     end = start
     more = False
@@ -1075,6 +1152,7 @@ def read_world(
     state: ZoneState | None = None,
     pvp_maps: Iterable[int] = (),
     second_names: bool = False,
+    maps: Mapping[int, int] | None = None,
 ) -> WorldScan:
     """`scan_entries` on the log at `path`, read-only from `start`, with
     only `WORLD_EVENTS` tokenized, and of their damage lines only those
@@ -1087,4 +1165,5 @@ def read_world(
         state=state,
         pvp_maps=pvp_maps,
         second_names=second_names,
+        maps=maps,
     )

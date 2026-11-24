@@ -785,7 +785,7 @@ def test_a_schema_1_database_is_migrated_and_its_own_marks_survive_constructed(
         conn.close()
     conn = sqlite3.connect(env.db())
     try:
-        assert conn.execute("PRAGMA user_version").fetchone()[0] == crewdb.SCHEMA == 5
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == crewdb.SCHEMA == 6
     finally:
         conn.close()
     assert _own(env, KEY_B) == (1, 1) and _own(env, KEY_A) == (0, 0)

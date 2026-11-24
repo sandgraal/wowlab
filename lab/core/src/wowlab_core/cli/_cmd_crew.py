@@ -34,6 +34,7 @@ from wowlab_core import (
     crewbook,
     crewdb,
     crewedit,
+    gamedata,
     guard,
     install,
     labaddon,
@@ -1312,9 +1313,10 @@ _WORLD_NOTES = [
     "you: your own hits always, other players' only near you. The game writes it in chunks, so "
     "a read while you play lags behind.",
     "Only damage counts: a player who only stunned, feared or missed you is not counted yet.",
-    "Fights in battlegrounds, arenas and dungeons are left out by the zone the log names; that a "
-    "battleground's zone line differs from the open world's is not yet confirmed, and a map "
-    "wowlab keeps a battleground or arena match on is always left out.",
+    "Fights in dungeons, raids, battlegrounds and arenas are left out by the game's map table, "
+    "which says which of the maps the log names are instances; without that table, by the "
+    "zone line alone, which a dungeon's can share with the open world's. A map wowlab keeps a "
+    "battleground or arena match on is always left out.",
     "A duel cannot be told from the log, so one fought in the open world counts as a fight.",
     "Which flags the game writes for a hostile player, a group member, a pet and a guardian is "
     "not yet confirmed.",
@@ -1394,6 +1396,61 @@ class CrewScanLogReport(_Out):
     logs_kept_old_keys: int = 0
     marks_carried: int = 0
     marks_not_carried: int = 0
+    # M22-22: whether the game's map table told the open world from the
+    # instances (`map_table`), the game version whose table was read or is
+    # missing (`map_version`, None when the version is unknown), and what
+    # the re-check of earlier reads against it did.
+    map_table: bool = False
+    map_version: str | None = None
+    recheck: crewdb.WorldRecheck = pydantic.Field(default_factory=crewdb.WorldRecheck)
+
+
+def _map_types(version: str | None) -> dict[int, int] | None:
+    """Each map's instance type from the game's map table cached for
+    `version` (M22-22), or None when it is not cached or cannot be read.
+    Never fetches: `db2 fetch Map` downloads it."""
+    if version is None:
+        return None
+    try:
+        rows = gamedata.cached_rows(worldpvp.MAP_TABLE, version)
+        if rows is None:
+            return None
+        found = worldpvp.map_types(rows)
+    except (ValueError, OSError, gamedata.GameDataError):
+        return None
+    return found or None
+
+
+def _map_lines(
+    maps: dict[int, int] | None, version: str | None, folder: str, recheck: crewdb.WorldRecheck
+) -> list[str]:
+    """What the text says about the map table: that it was missing, or how
+    many encounters an earlier read kept were removed by it."""
+    if maps is None:
+        fetch = f"wowlab db2 fetch {worldpvp.MAP_TABLE} --flavor {folder}"
+        if version is None:
+            return [
+                "  wowlab cannot tell this game's version, so it told dungeons from the open "
+                "world by the zone line alone, which a dungeon's can share."
+            ]
+        return [
+            f"  The game's map table for {version} is not downloaded, so a dungeon whose zone "
+            f"line looks like the open world's may be counted: {fetch} downloads it, and the "
+            "next read removes what it shows was in an instance."
+        ]
+    if recheck.checked:
+        return [
+            f"  Checked {_plural(recheck.checked, 'open-world encounter')} an earlier read kept "
+            f"against the game's map table: removed {recheck.removed:,} that "
+            f"{'was' if recheck.removed == 1 else 'were'} in a dungeon, raid, battleground or "
+            "arena."
+        ]
+    if recheck.skipped:
+        return [
+            "  The open-world encounters an earlier read kept were not checked against the game's "
+            "map table: another wowlab was writing the crew database; the next read checks them."
+        ]
+    return []
 
 
 def _owner_guids(lay: layout.Layout, account: str) -> tuple[dict[str, str | None], int]:
@@ -1494,6 +1551,7 @@ def _read_log_parts(
     path: Path,
     owners: dict[str, str | None],
     second_names: bool = False,
+    maps: dict[int, int] | None = None,
 ) -> crewdb.WorldOutcome:
     """Read the log and keep what it holds, a bounded part at a time: each
     part is read from where the last stopped and kept in its own write."""
@@ -1505,7 +1563,7 @@ def _read_log_parts(
         except OSError as exc:
             raise CliError(f"cannot read the combat log {path}: {exc.strerror or exc}") from exc
         head_sha = hashlib.sha256(head).hexdigest()
-        maps = crewdb.world_maps(target.flavor_folder, target.account)
+        pvp_maps = crewdb.world_maps(target.flavor_folder, target.account)
         resume = crewdb.world_resume(target.flavor_folder, target.account, key, size, head_sha)
         try:
             scan = worldpvp.read_world(
@@ -1513,8 +1571,9 @@ def _read_log_parts(
                 owners,
                 start=resume.start,
                 state=resume.state,
-                pvp_maps=maps,
+                pvp_maps=pvp_maps,
                 second_names=second_names,
+                maps=maps,
             )
         except OSError as exc:
             raise CliError(f"cannot read the combat log {path}: {exc.strerror or exc}") from exc
@@ -1550,13 +1609,15 @@ def crew_scan_log(
     notes: NotesOpt = False,
 ) -> None:
     """Read a combat log (turn it on in game with /combatlog) for the players
-    who fought you outside battlegrounds and arenas, and keep them in
-    wowlab's own crew database with who fought beside you and how each
-    fight ended. The log holds only what the game showed you while logging
-    was on. Each log is read once; a log that grew is read on from where
-    the last read stopped. Without PATH every log in the Logs folder not
-    read before is read (the newest 1,000), oldest first; one that cannot
-    be read is skipped and named. Nothing in the game folder is changed.
+    who fought you outside dungeons, raids, battlegrounds and arenas, and
+    keep them in wowlab's own crew database with who fought beside you and
+    how each fight ended. Which maps are instances comes from the game's
+    map table, once downloaded (wowlab db2 fetch Map). The log holds only
+    what the game showed you while logging was on. Each log is read once; a
+    log that grew is read on from where the last read stopped. Without PATH
+    every log in the Logs folder not read before is read (the newest
+    1,000), oldest first; one that cannot be read is skipped and named.
+    Nothing in the game folder is changed.
 
     \f
     JSON: CrewScanLogReport."""
@@ -1567,17 +1628,23 @@ def crew_scan_log(
             "several game accounts and no crew book to choose by; choose one with --account",
             EXIT_USAGE,
         )
-    _, lay = opened.where
+    chosen_flavor, lay = opened.where
     owners, without = _owner_guids(lay, target.account)
     if not owners:
         raise CliError(_NO_OWNER.format(account=target.account))
+    # M22-22: the open world is told from the instances by the game's map
+    # table for this flavor's version, when it is cached; the encounters an
+    # earlier read kept are checked against it first.
+    map_version = chosen_flavor.version
+    maps = _map_types(map_version)
+    recheck = crewdb.recheck_world(target, maps) if maps is not None else crewdb.WorldRecheck()
     # M21-02: four-part unit names are first and second name only where the
     # flavor's characters have second names (read from the folders, L6).
     second_names = layout.has_second_names(lay)
     assert opened.place is not None
     place = _place_words(opened.place)
     if path is not None:
-        outcome = _read_log_parts(target, path, owners, second_names)
+        outcome = _read_log_parts(target, path, owners, second_names, maps)
         label = _log_label(lay, path)
         words = f"{outcome.words} ({place}, {label})"
         lines = _scan_lines(outcome, without) if outcome.state in ("scanned", "unchanged") else []
@@ -1596,7 +1663,7 @@ def crew_scan_log(
                 "fight, then run this again"
             )
         if len(found) == 1:
-            outcome = _read_log_parts(target, found[0], owners, second_names)
+            outcome = _read_log_parts(target, found[0], owners, second_names, maps)
             label = _log_label(lay, found[0])
             files = [CrewScanLogFile(log=label, scan=outcome)]
             words = f"{outcome.words} ({place}, {label})"
@@ -1607,7 +1674,7 @@ def crew_scan_log(
             files = []
             for each in found:
                 try:
-                    got = _read_log_parts(target, each, owners, second_names)
+                    got = _read_log_parts(target, each, owners, second_names, maps)
                 except CliError as exc:
                     # One log that cannot be read does not hold the others.
                     cause = exc.__cause__
@@ -1666,6 +1733,8 @@ def crew_scan_log(
             "more than one player, or the full name already has a rating or note; both rows "
             "are kept."
         )
+    if outcome.state not in ("skipped", "elsewhere"):
+        lines += _map_lines(maps, map_version, target.flavor_folder, recheck)
     report = CrewScanLogReport(
         flavor_folder=target.flavor_folder,
         account=target.account,
@@ -1685,6 +1754,9 @@ def crew_scan_log(
         logs_kept_old_keys=kept_old,
         marks_carried=carried,
         marks_not_carried=not_carried,
+        map_table=maps is not None,
+        map_version=map_version,
+        recheck=recheck,
     )
     failed = outcome.state in ("skipped", "elsewhere")
     if json_out:
