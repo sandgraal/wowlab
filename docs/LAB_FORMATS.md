@@ -1022,7 +1022,7 @@ throughout.
   server's later push (Grovekeeper and Spiritcaller pieces 273888 to
   273935, pushes 114069 → 114318 changing their stat shares; Filcher's Cowl
   219343, push 114312 changing `RequiredLevel` from 50 to 0, in the
-  derived fixture; four more with prices and `Flags_0`).
+  derived fixture; four more with prices and `Flags_1`).
 - **Row data:** not bit-packed. The fields of the table's layout in order,
   at their declared widths, byte-aligned; strings inline, UTF-8, ending in
   a zero byte; the ID is not in the data (the header carries it). For the
