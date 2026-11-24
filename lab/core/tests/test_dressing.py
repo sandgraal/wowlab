@@ -28,7 +28,7 @@ from typing import Any
 
 import pytest
 
-from wowlab_core import dressing, gear, labaddon, ui
+from wowlab_core import dressing, gear, labaddon, links, ui
 
 FIXTURES = Path(__file__).resolve().parent / "fixtures"
 DERIVED = FIXTURES / "macos-70450" / "derived" / "dressing-room.json"
@@ -347,9 +347,14 @@ def test_the_shipped_file_names_no_flavor_product_or_build() -> None:
 
 
 def test_the_page_checks_the_shipped_origin() -> None:
+    """M21-03: the page names no origin; it checks the room's address
+    against the Wowhead origin the server sends from `link_sites.toml`,
+    which must be this file's (test_ui_dressing.py drives the page)."""
     script = (Path(ui.__file__).resolve().parent / "templates" / "page.js").read_text("utf-8")
     origin = dressing.load_sites().site.origin
-    assert script.count(f'const DRESSING_ORIGIN = "{origin}";') == 1
+    assert links.origins()["wowhead"] == origin
+    assert origin not in script
+    assert script.count('return outsideAddress(value, "wowhead");') == 1
 
 
 def _broken(edit: str, to: str) -> str:

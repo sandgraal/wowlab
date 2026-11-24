@@ -39,6 +39,7 @@ from test_ui_character import (
     NEWER,
     OLDER,
     PICK_READS,
+    PLANS,
     READS,
     _gear_params,
     _local,
@@ -981,15 +982,23 @@ def test_the_panels_request_only_read_commands_cross_capture(
     scenario = _scenario(server, steps, [PICKED, NEWER])
     out = _drive(tmp_path / "node", scenario)
     asked = _tab_requests(out, 0)
-    assert {tuple(b["command"]) for b in asked} == READS
+    assert {tuple(b["command"]) for b in asked} - PLANS == READS
     for body in asked:
-        if body["command"] != ["char", "list"]:
+        if tuple(body["command"]) in PLANS:  # the pick's params and the button's own
+            mine = {
+                k: v for k, v in body["params"].items() if k in ("character", "account", "flavor")
+            }
+            assert mine in (_gear_params(PICKED), _gear_params(NEWER)), body
+        elif body["command"] != ["char", "list"]:
             assert body["params"] in (_gear_params(PICKED), _gear_params(NEWER)), body
     for request in out["requests"]:
         if request["body"] is None:
             assert request["url"].startswith("/api/commands"), request
         else:
-            assert tuple(request["body"]["command"]) in READS | {("tree",)}, request
+            # M21-03: the saved-links panel's buttons run a plan, never a
+            # confirmed run (no token).
+            assert tuple(request["body"]["command"]) in READS | PLANS | {("tree",)}, request
+            assert "confirm" not in request["body"], request
     offered = {tuple(c["path"]): c for c in scenario["commands"]["commands"]}
     for path in READS:
         assert offered[path]["excluded"] is None and not offered[path].get("confirm"), path
@@ -1024,14 +1033,23 @@ def test_the_tab_offers_no_edit_control_and_says_so() -> None:
         named.append((tag, ident.group(1), kind.group(1) if kind else ""))
     named.sort()
     # Since M22-06, the Twink panel's two pickers and Show the gaps, which
-    # run the read `char twink` (test_ui_twink.py).
+    # run the read `char twink` (test_ui_twink.py). Since M21-03, the saved
+    # links' address field, Show the plan, Confirm and the three Forget
+    # buttons: they change only wowlab's own list of links, never the game
+    # folder, through the confirm step (test_ui_links.py).
     assert named == [
         ("button", "char-back", "button"),
+        ("button", "char-saved-confirm", "button"),
+        ("button", "char-saved-ft-build-forget", "button"),
+        ("button", "char-saved-ft-profile-forget", "button"),
+        ("button", "char-saved-plan", "button"),
+        ("button", "char-saved-wcl-report-forget", "button"),
         ("button", "char-sim-button", "button"),
         ("button", "char-twink-show", "button"),
         ("input", "char-keys-disagree", "checkbox"),
         ("input", "char-keys-filter", "search"),
         ("input", "char-macros-findings", "checkbox"),
+        ("input", "char-saved-address", "text"),
         ("select", "char-picker", ""),
         ("select", "char-twink-bracket", ""),
         ("select", "char-twink-weights", ""),
@@ -1047,7 +1065,16 @@ def test_the_tab_offers_no_edit_control_and_says_so() -> None:
     # The intro names the four commands.
     intro = re.search(r'<p class="intro">(.*?)</p>', section, re.S)
     assert intro is not None
-    for command in ("char list", "char gear", "char binds", "char macros"):
+    # M21-03: and the two that change wowlab's own links.json, said as such.
+    assert "never the game folder" in intro.group(1)
+    for command in (
+        "char list",
+        "char gear",
+        "char binds",
+        "char macros",
+        "char link set",
+        "char link forget",
+    ):
         assert f"<code>wowlab {command}</code>" in intro.group(1), command
 
 

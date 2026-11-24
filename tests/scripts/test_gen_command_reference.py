@@ -46,6 +46,9 @@ ASKS_FIRST = {
     "wowlab snap rm",
     # On a first run it offers a first snapshot into the Lab's store (M13-04).
     "wowlab doctor",
+    # M21-03: the addresses a player pastes, in the Lab's own links.json.
+    "wowlab char link set",
+    "wowlab char link forget",
 }
 
 ASKS_MARKER = "**Asks before changing files.**"
@@ -113,11 +116,15 @@ def test_every_leaf_appears_exactly_once_under_its_full_name(page: str) -> None:
 
 def test_every_group_has_a_section(page: str) -> None:
     root = typer.main.get_command(cli.app)
-    groups = ["wowlab"] + [
-        f"wowlab {n}"
-        for n, c in root.commands.items()
-        if isinstance(getattr(c, "commands", None), dict)
-    ]
+    groups = ["wowlab"]
+
+    def walk(command: object, name: str) -> None:
+        for n, c in getattr(command, "commands", {}).items():
+            if isinstance(getattr(c, "commands", None), dict):
+                groups.append(f"{name} {n}")
+                walk(c, f"{name} {n}")  # a group inside a group (`char link`, M21-03)
+
+    walk(root, "wowlab")
     headings = re.findall(r"^## (.+)$", page, flags=re.MULTILINE)
     assert sorted(headings) == sorted(groups)
 

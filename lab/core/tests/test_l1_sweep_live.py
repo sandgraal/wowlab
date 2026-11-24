@@ -25,8 +25,9 @@ What it does, in order:
    folder, every account folder, and one character per flavor; `snap show`,
    `snap diff`, `snap verify`, `profile show` and `cvar get` on what the
    store and the install hold; `crew list` for every account and `crew show`
-   for the first player of each crew book (M19-02); `spy list` for every
-   flavor and `spy show` for its first player (M22-01). Three groups read game tables that they
+   for the first player of each crew book (M19-02); `lookup` for every flavor,
+   never with `--fetch` (M22-08); `spy list` for every flavor and `spy show`
+   for its first player (M22-01). Three groups read game tables that they
    download when missing, so each runs only when every table it reads is
    already cached, and is otherwise listed as skipped with that reason:
    `names fetch`, `looks races/options/show/compare` and `db2 head`.
@@ -143,6 +144,9 @@ EXCLUDED: dict[str, str] = {
     "looks page": "writes a page into wowlab's user data directory",
     "casc cat": "writes an extracted file into wowlab's user data directory",
     "char model": "writes a model into wowlab's user data directory and downloads tables",
+    # M21-03: the addresses a player pastes, kept in wowlab's links.json.
+    "char link set": "writes into wowlab's user data directory",
+    "char link forget": "writes into wowlab's user data directory",
     "snap export": "writes a file outside the install",
     "db2 fetch": "downloads a table into wowlab's cache",
     "db2 builds": "asks wago.tools for its list of versions",
@@ -702,6 +706,7 @@ def run_commands(inst: install.Install, sweep: Sweep) -> None:
     sweep.cli("tree", "--install", "--json")
     sweep.hide_rows(_report(sweep.cli("char", "list", "--json")), "characters", "label")
     sweep.cli("char", "list", "--summary", "--json")
+    sweep.cli("char", "link", "list", "--json")  # M21-03: every saved address
     kept = _report(sweep.cli("char", "kept", "--json"))
     sweep.hide_rows(kept, "kept", "label")
     rows = [r for r in (kept or {}).get("kept", []) if isinstance(r, dict)]
@@ -751,6 +756,11 @@ def run_commands(inst: install.Install, sweep: Sweep) -> None:
         _offline_tables(f, sweep)
         sweep.cli("addons", "list", *fl, "--json")
         sweep.cli("addons", "check", *fl, "--json")
+        # Reads the flavor's QuestieDB and the cached item and zone tables
+        # (M22-08); never `--fetch`, so it never goes online. Exit 1 where
+        # there is nothing to search.
+        sweep.cli("lookup", *fl, "--kind", "item", "--limit", "3", "--json", "--", "claw")
+        sweep.cli("lookup", *fl, "--json", "--", "a")
         # Reads the game-data archives (M15-06); exit 1 where there are none.
         sweep.cli("casc", "stat", "--fdid", "1", *fl, "--json")
         sweep.cli("char", "kept", *fl, "--json")
@@ -803,6 +813,8 @@ def run_commands(inst: install.Install, sweep: Sweep) -> None:
         # M21-08: `char sim-export` reads only without --out, which the sweep never passes.
         for sub in ("show", "gear", "binds", "macros", "history", "sim-export"):
             sweep.cli("char", sub, *ch, "--json")
+        # M21-03: the addresses saved for this character, from wowlab's links.json.
+        sweep.cli("char", "link", "list", *ch, "--json")
         # M22-05: the Live view's recap reads the logs, the store and the book.
         sweep.cli("live", "recap", *ch, "--json")
         # M22-06: `char twink` downloads its game tables on a first run, so it
@@ -929,6 +941,7 @@ def run_ui(inst: install.Install, sweep: Sweep) -> None:
                 (["cvar", "list"], fl),
                 (["sv", "list"], fl),
                 (["char", "list"], {**fl, "summary": True}),
+                (["lookup"], {**fl, "query": "claw", "limit": "3"}),
                 (["live", "recap"], fl),
             ]
             runs += [(["crew", "list"], {**fl, "account": a}) for a in _accounts(f.path)]
@@ -1432,6 +1445,8 @@ def test_sweep_on_a_captured_install_changes_nothing_constructed(
         "ui POST /api/run live recap",
         "ui POST /api/run char list",
         "ui POST /api/run crew list",
+        "wowlab lookup ",
+        "ui POST /api/run lookup",
         "wowlab spy list ",
         "wowlab spy show ",
         "ui POST /api/run spy list",
@@ -1465,6 +1480,28 @@ def test_sweep_on_a_captured_install_changes_nothing_constructed(
     assert len([x for x in sweep.summary if x.startswith("exit ")]) == len(sweep.ran)
     assert "install: " in summary and "; unchanged" in summary
     assert "excluded db2 builds: " in summary
+
+
+def test_sweep_with_a_questiedb_changes_nothing_constructed(
+    captured_install: tuple[Path, Path],
+) -> None:
+    """The same sweep with a QuestieDB in the copy (M22-08; a constructed
+    slice from `_questie_build.py`, no byte of the third-party data): the
+    `lookup` runs read it and answer, and the copy and the data folder stay
+    as they were. The test above runs it with no QuestieDB."""
+    from _questie_build import place, slice_toc
+
+    root, home = captured_install
+    place(root / FLAVOR, slice_toc())
+    sweep = sweep_and_compare(root, home)
+    lookups = [r for r in sweep.ran if r.what.startswith("wowlab lookup ")]
+    assert lookups and all(r.exit_code == 0 for r in lookups), [
+        (r.what, r.exit_code, r.stderr) for r in lookups
+    ]
+    claw = json.loads(lookups[0].stdout)
+    assert claw["questiedb"]["state"] == "read" and claw["total"] >= 1
+    ui_runs = [r for r in sweep.ran if r.what.startswith("ui POST /api/run lookup")]
+    assert ui_runs and all(r.exit_code == 0 for r in ui_runs)
 
 
 # ─── graders of the sweep's own checks (stand-in commands) ───────────────────
