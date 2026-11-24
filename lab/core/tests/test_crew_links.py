@@ -115,7 +115,7 @@ def test_a_battleground_opponent_and_ally_carry_their_links_constructed(make: An
 def test_plain_crew_show_prints_each_link_or_why_constructed(make: Any) -> None:
     env = make(book({KEY_A: player()}))
     out = env.run("crew", "show", KEY_A).stdout.splitlines()
-    at = out.index("Profiles (addresses to open in your browser; wowlab itself requests nothing):")
+    at = out.index("Profiles:")
     assert out[at + 1 : at + 4] == [
         f"  Armory: {ARMORY}inventeda-fakerealm",
         f"  Journey Companion: {JOURNEY}name=Inventeda&surname=Fakerealm",
@@ -221,3 +221,32 @@ def test_the_links_are_the_builders_own(make: Any) -> None:
     version = "1.60.1.70888"  # the capture's .build.info (tests may name it, L6)
     made = links.profiles("Inventeda", "Fakerealm", "us", version=version)
     assert _rows(env)[KEY_A]["links"] == [m.model_dump(mode="json") for m in made]
+
+
+def test_crew_show_says_once_behind_notes_that_nothing_is_requested_constructed(
+    make: Any,
+) -> None:
+    env = make(book({KEY_A: player()}))
+    plain = env.run("crew", "show", KEY_A).stdout
+    assert "requests nothing" not in plain
+    noted = env.run("crew", "show", KEY_A, "--notes").stdout
+    assert noted.count("wowlab itself requests nothing from those sites") == 1
+    assert _json(env, "crew", "show", KEY_A)["notes"][-1].startswith("The profile links are")
+
+
+def test_no_links_leaves_the_links_out_of_list_and_matches_constructed(make: Any) -> None:
+    env = make(
+        book(
+            {KEY_A: player(), KEY_B: player(), KEY_C: player(), KEY_D: player()},
+            schema=2,
+            matches=[match([KEY_A, KEY_B], [KEY_C, KEY_D])],
+        )
+    )
+    listed = _json(env, "crew", "list", "--no-links")["players"]
+    assert len(listed) == 4 and all(p["links"] == [] for p in listed)
+    assert all(len(p["links"]) == 3 for p in _rows(env).values())  # the default keeps them
+    profiles = _json(env, "crew", "matches", "--no-links")["profiles"]
+    assert [p["key"] for p in profiles] == [KEY_A, KEY_B, KEY_C, KEY_D]
+    assert all(p["links"] == [] for p in profiles)
+    # The text lists no link either way.
+    assert env.run("crew", "list", "--no-links").stdout == env.run("crew", "list").stdout

@@ -98,10 +98,15 @@ def _harness() -> str:
 
 
 def _drive(
-    server: ui.UiServer, folder: Path, steps: list[dict[str, Any]], origins: Any = None
+    server: ui.UiServer,
+    folder: Path,
+    steps: list[dict[str, Any]],
+    origins: Any = None,
+    sent: list[dict[str, Any]] | None = None,
 ) -> list[dict[str, Any]]:
     """Runs `steps` after opening the Crew tab; returns what each step
-    recorded. `origins` replaces the served allowlist (constructed)."""
+    recorded. `origins` replaces the served allowlist (constructed); `sent`,
+    when given, gets the body of every crew and spy run the page asked for."""
     folder.mkdir(parents=True, exist_ok=True)
     served_origins = links.origins() if origins is None else origins
     scenario = {
@@ -141,6 +146,8 @@ def _drive(
     out: dict[str, Any] = json.loads(done.stdout)
     assert "error" not in out, out["error"]
     assert not out["traps"], out["traps"]
+    if sent is not None:
+        sent.extend(r["body"] for r in out["requests"] if r["body"] and "command" in r["body"])
     steps_out: list[dict[str, Any]] = out["steps"][1:]
     assert not any("missing" in s for s in steps_out), steps_out
     return steps_out
@@ -244,3 +251,38 @@ def test_a_spy_row_opens_the_players_links(served: Any, tmp_path: Path) -> None:
     view = step["profiles"]
     assert view["title"] == "Nefzik-Spoonz"
     _shows_links(view, "nefzik-spoonz", "Nefzik", "Spoonz")
+
+
+def test_the_list_and_the_match_history_ask_for_no_links(crew_at: Any, tmp_path: Path) -> None:
+    """The list and the match history draw no profile link, so the page
+    asks for none (`--no-links`), which keeps a long list's report small;
+    the player opened gets theirs from `crew show`, which carries them."""
+    crew = crew_at(_match_book())
+    sent: list[dict[str, Any]] = []
+    _drive(
+        crew.server,
+        tmp_path / "node",
+        [{"links_click": "crew-matches-show"}, {"links_person": 0}],
+        sent=sent,
+    )
+    by_command: dict[str, list[dict[str, Any]]] = {}
+    for body in sent:
+        by_command.setdefault(" ".join(body["command"]), []).append(body["params"])
+    assert by_command["crew list"] and all(p["no_links"] is True for p in by_command["crew list"])
+    assert by_command["crew matches"] == [
+        {"account": crew_tab.ACCOUNT, "flavor": FLAVOR, "no_links": True}
+    ]
+    assert all("no_links" not in p for p in by_command["crew show"])
+    # What those runs print: no link in the list or the history, the
+    # player's own in crew show.
+    listed = crew.report(crew_tab.LIST, {"sort": "last", "no_links": True})
+    assert listed["players"] and all(p["links"] == [] for p in listed["players"])
+    history = crew.report(("crew", "matches"), {"no_links": True})
+    assert history["profiles"] and all(p["links"] == [] for p in history["profiles"])
+    assert all(p["links"] for p in crew.report(crew_tab.LIST, {"sort": "last"})["players"])
+    shown = crew.report(crew_tab.SHOW, {"name": KEY_A})
+    assert [m["link"] for m in shown["player"]["links"]] == [
+        "armory_character",
+        "journey",
+        "raiderio",
+    ]

@@ -524,7 +524,7 @@ class CrewRow(crewbook.CrewPlayer):
     # flavor's game version: the armory, the Journey Companion and
     # Raider.IO, in that order, each an address or why there is none. Built
     # by the crew commands, which know the game version; empty in a row
-    # read without one. Never a ForeverTwinking link: those are the
+    # read without one, and in `crew list --json --no-links`. Never a ForeverTwinking link: those are the
     # player's own, pasted for their own characters (M21-03).
     links: list[ProfileLink] = Field(default_factory=list)
 

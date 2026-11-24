@@ -4705,7 +4705,10 @@
   async function loadCrew() {
     const seq = ++crew.listSeq;
     crewSay("Reading the crew book…", false);
-    const reply = await runJson(["crew", "list"], crewFilters());
+    // `no_links` (M21-05): the list draws no profile link, so it asks for
+    // none, which keeps a long list's report small; the player opened
+    // gets theirs from crew show.
+    const reply = await runJson(["crew", "list"], Object.assign(crewFilters(), { no_links: true }));
     if (seq !== crew.listSeq) return;
     const report = reply.data;
     if (!report || typeof report !== "object" || typeof report.state !== "string") {
@@ -4757,7 +4760,8 @@
   // it is. Each line is the command's own text, shown through `visible()`.
   // With `world`, `crew matches --world` (M20-18): the open-world fights.
   async function readCrewMatches(key, world) {
-    const extra = key === null ? {} : { name: key };
+    // No profile links (M21-05): a player listed here opens their own panel.
+    const extra = key === null ? { no_links: true } : { name: key, no_links: true };
     if (world) extra.world = true;
     const reply = await runJson(["crew", "matches"], crewParams(extra));
     const report = reply.data;

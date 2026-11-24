@@ -100,6 +100,13 @@ _MATCH_NOTE = (
     "and against you are the teams of that match, not factions."
 )
 _MATCH_NOTES = [*_CREW_NOTES, _MATCH_NOTE]
+# `crew show`'s profile links (M21-05), said once behind --notes.
+_LINKS_NOTE = (
+    "The profile links are addresses to open in your browser; wowlab itself requests nothing "
+    "from those sites. Each uses the region a combat log gave the player, or else the one "
+    "your game's settings name, which wowlab assumes is theirs."
+)
+_SHOW_NOTES = [*_CREW_NOTES, _LINKS_NOTE]
 # `crew list --sort`: the book's own orders (`last`, `met`, `name`) and the
 # database's: `faced` and `allied` (M20-09), `world`, latest open-world
 # encounter first (M20-18), and `deaths` and `team_losses`, most killed by
@@ -636,6 +643,16 @@ def _default_sort(*, nemeses: bool, rivals: bool, world: bool) -> CrewSort:
     return "last"
 
 
+NoLinksOpt = Annotated[
+    bool,
+    typer.Option(
+        "--no-links",
+        help="With --json, leave out each player's profile links (a shorter list; crew show "
+        "still gives them).",
+    ),
+]
+
+
 @crew_app.command("list", short_help="The players in the crew book, newest group first.")
 @_handled
 def crew_list(
@@ -699,6 +716,7 @@ def crew_list(
         ),
     ] = False,
     sort: SortOpt = None,
+    no_links: NoLinksOpt = False,
     account: AccountOpt = None,
     root: RootOpt = None,
     flavor: FlavorOpt = None,
@@ -767,8 +785,10 @@ def crew_list(
         rated=rated,
         noted=noted,
         search=search,
-        # The text lists no link, so only the JSON pays for building them.
-        players=_linked(shown, opened) if json_out else shown,
+        # The text lists no link, so only the JSON pays for building them;
+        # the Crew tab's list asks for none (`--no-links`: it shows them only
+        # for the player opened, from crew show).
+        players=_linked(shown, opened) if json_out and not no_links else shown,
         unread=_unread(book),
         places=opened.places,
         words=words,
@@ -993,7 +1013,7 @@ def crew_show(
         player=player,
         places=opened.places,
         lines=lines,
-        notes=_CREW_NOTES,
+        notes=_SHOW_NOTES,
         fights=_fights_of(opened, player),
         sync=outcome,
         region=_region_fields(reading)[0],
@@ -1007,7 +1027,7 @@ def crew_show(
     if player is not None:
         for line in _profile_lines(player.links):
             _say(line)
-        _say_notes(_CREW_NOTES, notes)
+        _say_notes(_SHOW_NOTES, notes)
 
 
 def _profile_lines(made: Sequence[crewdb.ProfileLink]) -> list[str]:
@@ -1015,7 +1035,7 @@ def _profile_lines(made: Sequence[crewdb.ProfileLink]) -> list[str]:
     site's name and address, or why there is no link."""
     if not made:
         return []
-    lines = ["Profiles (addresses to open in your browser; wowlab itself requests nothing):"]
+    lines = ["Profiles:"]
     for made_link in made:
         label = made_link.label or "Profile"  # no label: the list of sites cannot be used
         if isinstance(made_link, links.Link):
@@ -1078,8 +1098,8 @@ class CrewMatchesReport(_Out):
     region_absent: str | None = None
     # Links out (M21-05): every player the listed matches or encounters
     # name, with you and against you, once each in the order first named,
-    # with their profile links. A key the database no longer keeps is in
-    # no match, so every one listed has its row.
+    # with their profile links (empty with `--no-links`). A key the database
+    # no longer keeps is in no match, so every one listed has its row.
     profiles: list[CrewProfile] = pydantic.Field(default_factory=list)
 
 
@@ -1136,6 +1156,7 @@ def crew_matches(
             "read: when, where, who was against you and with you, and how each ended.",
         ),
     ] = False,
+    no_links: NoLinksOpt = False,
     account: AccountOpt = None,
     root: RootOpt = None,
     flavor: FlavorOpt = None,
@@ -1208,10 +1229,11 @@ def crew_matches(
         else [k for m in found for k in (*m.team, *m.foes)]
     )
     rows = {p.key: p for p in kept}
+    picked = [rows[k] for k in dict.fromkeys(named) if k in rows]
     profiles = (
         [
             CrewProfile(key=r.key, game_name=r.game_name, region=r.region, links=r.links)
-            for r in _linked([rows[k] for k in dict.fromkeys(named) if k in rows], opened)
+            for r in (_linked(picked, opened) if not no_links else picked)
         ]
         if json_out  # the text lists no link
         else []

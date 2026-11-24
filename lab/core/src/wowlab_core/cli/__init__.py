@@ -1162,6 +1162,12 @@ if TYPE_CHECKING:
         char_model as char_model,
     )
     from wowlab_core.cli._cmd_crew import (
+        _LINKS_NOTE as _LINKS_NOTE,
+    )
+    from wowlab_core.cli._cmd_crew import (
+        _SHOW_NOTES as _SHOW_NOTES,
+    )
+    from wowlab_core.cli._cmd_crew import (
         CrewEditReport as CrewEditReport,
     )
     from wowlab_core.cli._cmd_crew import (
@@ -1184,6 +1190,9 @@ if TYPE_CHECKING:
     )
     from wowlab_core.cli._cmd_crew import (
         CrewSyncReport as CrewSyncReport,
+    )
+    from wowlab_core.cli._cmd_crew import (
+        NoLinksOpt as NoLinksOpt,
     )
     from wowlab_core.cli._cmd_crew import (
         _crew_version as _crew_version,
