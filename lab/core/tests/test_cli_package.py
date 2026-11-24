@@ -142,6 +142,7 @@ def test_commands_are_registered_in_the_order_they_were_before_the_split() -> No
         "casc",  # M15-06, added after the split
         "crew",  # M19-02
         "live",  # M22-05
+        "spy",  # M22-01
     ]
     snap = root.commands["snap"]
     assert isinstance(snap, typer.core.TyperGroup)

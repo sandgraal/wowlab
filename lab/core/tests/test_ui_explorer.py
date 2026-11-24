@@ -567,6 +567,10 @@ def test_the_explorer_runs_only_listed_read_commands(server: Any) -> None:
         # M22-05: the Live view reads with `live recap` (graded in
         # test_ui_live.py).
         ("live", "recap"),
+        # M22-01: the Crew tab's Seen by Spy reads with `spy list` and `spy
+        # show`, which only read (graded in test_ui_spy.py).
+        ("spy", "list"),
+        ("spy", "show"),
     }, used
     for path in used:
         assert path in offered, path
