@@ -1566,6 +1566,7 @@
     clearPurist();
     clearSim();
     clearSaved();
+    clearTalents();
     clearProfiles();
     character.params = null;
     clearTwink();
@@ -1611,6 +1612,7 @@
     drawPurist(report.purist);
     byId("char-sim-button").hidden = false;
     drawSaved(report.saved_links, params);
+    drawTalents(report.talents, params);
     drawProfiles(report.links, report.saved_links);
   }
 
@@ -2532,6 +2534,118 @@
   byId("char-sim-button").addEventListener("click", () => {
     loadSim();
   });
+
+  // ─── Open my talents (M21-07) ───
+  // `char gear --json`'s `talents`: WoW Forever Builds' talent calculator
+  // with the talents of the spec active when the character last saved. Its
+  // address becomes the static link's href only when `outsideAddress`
+  // passes it for WoW Forever Builds (`TALENTS_SITE`, whatever site the
+  // report names); else the report's reason is shown as text. When the
+  // reason is that the game's talent tables are not downloaded
+  // (`download`, for `download_build`), a button runs `wowlab db2 fetch`
+  // for each of them that is one of `TALENT_TABLES`, then `char gear`
+  // again, and draws its `talents`. Nothing is fetched
+  // from the site: the player's browser opens it on a click.
+  const talentsView = { params: null, seq: 0, fetching: false, download: [], build: null };
+  // The only site this link goes to, and the only game tables its button
+  // downloads (the talent layout tables `char gear` names); anything else a
+  // report names is not offered.
+  const TALENTS_SITE = "wowforeverbuilds";
+  const TALENT_TABLES = ["TraitNode", "TraitNodeGroup", "TraitNodeGroupXTraitNode"];
+  const GAME_BUILD = /^[0-9]{1,9}(\.[0-9]{1,9}){3}$/;
+
+  function talentsSay(text) {
+    byId("char-talents-why").textContent = text;
+  }
+
+  function clearTalents() {
+    talentsView.seq += 1;
+    talentsView.params = null;
+    talentsView.download = [];
+    talentsView.build = null;
+    const link = byId("char-talents-link");
+    link.removeAttribute("href");
+    link.hidden = true;
+    link.title = "";
+    byId("char-talents-fetch").hidden = true;
+    byId("char-talents-fetch").disabled = false;
+    talentsSay("");
+    byId("char-talents").hidden = true;
+  }
+
+  // `params` is the pick's (character, account, flavor), for the second read.
+  function drawTalents(talents, params) {
+    clearTalents();
+    talentsView.params = params && typeof params === "object" ? Object.assign({}, params) : null;
+    if (!talents || typeof talents !== "object") return;
+    const made = charObj(talents.link);
+    byId("char-talents").hidden = false;
+    const site = typeof made.site_name === "string" && made.site_name ? visible(made.site_name) : "the talent calculator";
+    if (typeof made.url === "string") {
+      const checked = outsideAddress(made.url, TALENTS_SITE);
+      if (checked === null) {
+        talentsSay("The talents address in the report is not one this page links to, so no link is shown.");
+        return;
+      }
+      const link = byId("char-talents-link");
+      pointLink(link, checked);
+      link.title = "Opens " + site + " in a new tab: the talents of the spec active when the character last saved; wowlab sends nothing";
+      link.textContent = "Open my talents";
+      link.hidden = false;
+      return;
+    }
+    talentsSay("No talents link: " + (typeof made.why === "string" ? visible(made.why) : "the report says no more") + ".");
+    // A list naming any other table is not offered at all.
+    const named = Array.isArray(talents.download) ? talents.download : [];
+    const tables = named.every((t) => TALENT_TABLES.includes(t)) ? named.slice() : [];
+    const build = typeof talents.download_build === "string" && GAME_BUILD.test(talents.download_build) ? talents.download_build : null;
+    if (tables.length && build && talentsView.params) {
+      talentsView.download = tables;
+      talentsView.build = build;
+      byId("char-talents-fetch").hidden = false;
+    }
+  }
+
+  async function fetchTalentTables() {
+    if (talentsView.fetching || !talentsView.download.length || !talentsView.build || !talentsView.params) return;
+    const seq = talentsView.seq;
+    const tables = talentsView.download.slice();
+    const build = talentsView.build;
+    const params = Object.assign({}, talentsView.params);
+    talentsView.fetching = true;
+    byId("char-talents-fetch").disabled = true;
+    talentsSay("Downloading the talent tables…");
+    let failed = "";
+    try {
+      for (const table of tables) {
+        const reply = await runJson(["db2", "fetch"], { table: table, build: build }, false, true);
+        if (reply.error) {
+          failed = shown(reply.error);
+          break;
+        }
+      }
+    } finally {
+      talentsView.fetching = false;
+    }
+    if (seq !== talentsView.seq) return;
+    if (failed) {
+      byId("char-talents-fetch").disabled = false;
+      talentsSay("The talent tables could not all be downloaded: " + failed);
+      return;
+    }
+    talentsSay("Talent tables downloaded; reading the character again…");
+    const reply = await runJson(["char", "gear"], params);
+    if (seq !== talentsView.seq) return;
+    const report = reply.data;
+    if (reply.error || !report || typeof report !== "object") {
+      byId("char-talents-fetch").disabled = false;
+      talentsSay(reply.error ? shown(reply.error) : "wowlab char gear printed something this page does not know.");
+      return;
+    }
+    drawTalents(report.talents, params);
+  }
+
+  byId("char-talents-fetch").addEventListener("click", () => fetchTalentTables());
 
   // ─── the Twink panel (M22-06) ───
   // Laid out from `char twink --json`, run only when the reader presses Show
