@@ -728,12 +728,12 @@ id = "hotfix-cache"
 section = "flavor"
 base = "flavor"
 doc_path = "`Cache/ADB/<locale>/DBCache.bin`"
-what = "Fixes the server sent for the game's data tables"
-notes = "Hotfixes the server pushed over the shipped DB2 tables; not read yet"
+what = "Game-table rows the server sent: fixes, and rows for items the game showed"
+notes = "Rows the server sent over the shipped DB2 tables, at login or when the game first needed one; wowlab reads its item and talent rows, never a key"
 written_by = "The game"
 edit = "no"
-tier = "A (read, later wave)"
-module = "none in Wave 1"
+tier = "A (read)"
+module = "`hotfix` (read-only; only the Item, ItemSparse and TraitNodeEntry records are kept, laid over the game tables of the same build by `gamedata`)"
 match = ["Cache/ADB/*/DBCache.bin"]
 
 [[entry]]
