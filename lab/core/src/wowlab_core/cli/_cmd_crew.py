@@ -441,7 +441,8 @@ def _profile_links(p: crewdb.CrewRow, version: str | None) -> list[crewdb.Profil
 
 def _linked(rows: Sequence[crewdb.CrewRow], opened: _Opened) -> list[crewdb.CrewRow]:
     """The rows a report shows, each with its profile links (M21-05). Built
-    for those rows only: a few tenths of a millisecond a player."""
+    for those rows only, and only for output that shows them: about a
+    third of a millisecond a player."""
     version = _crew_version(opened)
     return [r.model_copy(update={"links": _profile_links(r, version)}) for r in rows]
 
@@ -762,7 +763,8 @@ def crew_list(
         rated=rated,
         noted=noted,
         search=search,
-        players=_linked(shown, opened),
+        # The text lists no link, so only the JSON pays for building them.
+        players=_linked(shown, opened) if json_out else shown,
         unread=_unread(book),
         places=opened.places,
         words=words,
@@ -1202,10 +1204,14 @@ def crew_matches(
         else [k for m in found for k in (*m.team, *m.foes)]
     )
     rows = {p.key: p for p in kept}
-    profiles = [
-        CrewProfile(key=r.key, game_name=r.game_name, region=r.region, links=r.links)
-        for r in _linked([rows[k] for k in dict.fromkeys(named) if k in rows], opened)
-    ]
+    profiles = (
+        [
+            CrewProfile(key=r.key, game_name=r.game_name, region=r.region, links=r.links)
+            for r in _linked([rows[k] for k in dict.fromkeys(named) if k in rows], opened)
+        ]
+        if json_out  # the text lists no link
+        else []
+    )
     report = CrewMatchesReport(
         flavor_folder=place.flavor_folder if place else None,
         account=place.account if place else None,
