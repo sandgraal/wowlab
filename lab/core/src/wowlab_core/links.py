@@ -33,6 +33,7 @@ from __future__ import annotations
 
 import functools
 import re
+import string
 import tomllib
 import unicodedata
 import urllib.parse
@@ -90,6 +91,7 @@ _TEMPLATE_TEXT = re.compile(r"(?:[A-Za-z0-9._~/?=&-]|%[0-9A-F]{2})*")
 _MAX_PASTED = 512
 _FIXED = ("region", "locale", "ruleset", "id")
 _APOSTROPHES = ("'", chr(0x2019))  # the typewriter and the typographic apostrophe
+_ASCII_LETTERS = frozenset(string.ascii_letters)
 
 
 class _Model(BaseModel):
@@ -324,9 +326,24 @@ def room_of(version: str | None) -> str | None:
     """The room of a client version, by `dressing_sites.toml`'s band table,
     or None when no band covers it or that file cannot be used."""
     try:
-        return dressing.room_for(dressing.load_sites(), version)
+        table = dressing.load_sites()
     except dressing.SitesError:
         return None
+    # The room of each version is kept beside the table it was read from
+    # (M21-05: one per address, 150,000 for a crew list of 50,000 players),
+    # and read again whenever the table is another object.
+    held = _ROOMS.get(version)
+    if held is not None and held[0] is table:
+        return held[1]
+    room = dressing.room_for(table, version)
+    if len(_ROOMS) >= _ROOMS_HELD:
+        _ROOMS.clear()
+    _ROOMS[version] = (table, room)
+    return room
+
+
+_ROOMS: dict[str | None, tuple[dressing.Sites, str | None]] = {}
+_ROOMS_HELD = 64
 
 
 class _RefusedError(Exception):
@@ -357,6 +374,12 @@ def _slug(value: str, rule: SlugRule, what: str) -> str:
             replace = rule.apostrophes
         elif char == "-":
             replace = rule.hyphens
+        elif char in _ASCII_LETTERS:
+            # An ASCII letter is unreserved: `quote` would give it back as
+            # it is (M21-05: a crew list of 50,000 players builds 150,000
+            # addresses, and `quote` per letter was most of the time).
+            out.append(char.lower() if rule.case == "lower" else char)
+            continue
         elif char.isalpha() and unicodedata.category(char) in ("Lu", "Ll", "Lt", "Lo"):
             if not char.isascii() and rule.accents == "refuse":
                 raise _RefusedError(f"the {what} holds a letter the site's addresses do not take")
