@@ -3719,7 +3719,7 @@ def discover_identity(root: Path, flavors: Sequence[Flavor], args: argparse.Name
 #   letter), spelled the same way. Any other home folder still refuses.
 #
 # Refused before anything is read: a path that is a link or not a regular file
-# (a FIFO is never waited on), one past `--max-bytes`, a file inside an install
+# (checked again after the read; read_outside), one past `--max-bytes`, a file inside an install
 # (use `--root` for those), and a file whose name, or whose folder's name,
 # suggests a secret (OUTSIDE_SECRET_WORDS: a token, cookie, login, credentials
 # or session file is never opened). Refused after reading: an SQLite file, a

@@ -1878,7 +1878,7 @@ never edited. Every capture passes through `scripts/lab_capture.py`, which
 > app-install or account id under a known JSON key (WowUp's `install_id`,
 > CurseForge's `SyncProfileID`) gets a stand-in, and the capturing
 > machine's home folder becomes `/Volumes/Labdisk`. It refuses a link, a
-> file that is not regular (never waiting on a FIFO), one past
+> file that is not regular (a FIFO before any open), one past
 > `--max-bytes`, a file inside an install, one whose name or folder name
 > suggests a token, cookie, login, credentials or session file (never
 > opened), and a compressed, NUL-holding or non-UTF-8 file. The provenance
