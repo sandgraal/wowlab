@@ -55,9 +55,9 @@
 local _, ns = ...
 
 -- The book's own version number (§20.1, §21.2; 3 since M21-12). A book of
--- schema 1 or 2 that is on is migrated (crewMigrate); a book of any other schema (a newer WowLab,
--- a restored snapshot) is left wholly alone: crewOn, crewLoaded and the
--- slash handler's first lines test it.
+-- schema 1 or 2 that is on is migrated (crewMigrate); a book of any other
+-- schema (a newer WowLab, a restored snapshot) is left wholly alone: crewOn,
+-- crewLoaded and the slash handler's first lines test it.
 local CREW_SCHEMA = 3
 -- The drop order (§20.1 "Limits", §21.2): at most MAX_PLAYERS players. When
 -- the book is full, the unrated, un-noted player with the oldest `last` is

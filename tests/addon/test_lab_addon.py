@@ -1182,8 +1182,8 @@ def _crew_row_walk(path: Path, tokens: list[Token], i: int) -> bool:
     Crew.lua? M20-11 (owner decision, 2026-11-20): no longer only in the
     pinned pvpSnapshot; in any function that binds `row` as
     _CREW_ROW_BINDING (what is done with each value is the secret rule's,
-    `_crew_score_problems`)."""
-    if CREW_ROW_WALK not in _relaxed(path, "PAIRS") or _crew_pins(tokens).schema != 2:
+    `_crew_score_problems`). M21-12: at schema 3 too (schema 2 or later)."""
+    if CREW_ROW_WALK not in _relaxed(path, "PAIRS") or _crew_pins(tokens).schema < 2:
         return False
     if _render(tokens[i : i + 4]) != "pairs ( row )":
         return False
