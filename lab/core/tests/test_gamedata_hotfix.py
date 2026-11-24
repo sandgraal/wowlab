@@ -75,17 +75,20 @@ def _rows(overlay: gamedata.HotfixOverlay, path: Path) -> list[dict[str, str]]:
 
 def test_statuses_and_push_order_constructed(tables: dict[str, Path]) -> None:
     records = [
-        Rec("ItemSparse", 2, _data("Two, fixed"), push_id=10),  # replaces
+        Rec("ItemSparse", 2, _data("Two, first"), push_id=10),  # replaces
         Rec("ItemSparse", 9, _data("Nine"), push_id=10),  # adds
         Rec("ItemSparse", 7, _data("Seven"), push_id=10),  # adds
         Rec("ItemSparse", 5, status=2, push_id=10),  # removes
         Rec("ItemSparse", 1, status=4, push_id=10),  # left alone
         Rec("ItemSparse", 1, status=1, push_id=10),  # a row with no data: left alone
-        # Applied by push id, not file order: 8 is removed, then added.
-        Rec("ItemSparse", 8, _data("Eight"), push_id=30),
-        Rec("ItemSparse", 8, status=3, push_id=20),
-        # And 2's later push wins over its earlier one.
-        Rec("ItemSparse", 2, _data("Two, older"), push_id=-1),
+        # Applied in file order, not by push id: 8 is removed, then added,
+        # though the removal's push id is the higher.
+        Rec("ItemSparse", 8, status=3, push_id=30),
+        Rec("ItemSparse", 8, _data("Eight"), push_id=20),
+        # And 2's later record wins over its earlier one, whatever its push
+        # id (an on-demand row's runs from 0x01000000 up).
+        Rec("ItemSparse", 2, _data("Two, on demand"), push_id=0x01000005),
+        Rec("ItemSparse", 2, _data("Two, fixed"), push_id=11),
         Rec("Item", 3, status=3, push_id=10),  # removes
         Rec("Item", 6, encode_row(ITEM, blank_row(ITEM, ClassID="2")), push_id=10),
     ]
@@ -98,9 +101,10 @@ def test_statuses_and_push_order_constructed(tables: dict[str, Path]) -> None:
     counts = {t.table: t for t in report.tables}
     assert counts["ItemSparse"].model_dump() == {
         "table": "ItemSparse",
-        "records": 9,
+        "records": 10,
         "added": 3,
         "replaced": 1,
+        "changed": 1,
         "removed": 1,
         "left_alone": 2,
     }
@@ -199,3 +203,38 @@ def test_cached_table_path_never_fetches(tmp_path: Path) -> None:
     folder.mkdir(parents=True)
     (folder / "Item.csv").write_text("ID\n", encoding="utf-8")
     assert gamedata.cached_table_path("Item", BUILD, cache_dir=tmp_path) == folder / "Item.csv"
+
+
+def test_too_many_rows_of_one_table_refuse_the_overlay_constructed(
+    tables: dict[str, Path], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(hotfix, "MAX_TABLE_ROWS", 2)
+    records = [Rec("ItemSparse", n, _data("Many")) for n in (7, 8, 9)]
+    report = gamedata.overlay_hotfixes(
+        _cache(NUMBER, records), BUILD, tables.get, tables=ITEMS
+    ).report()
+    assert not report.applied
+    assert report.refused == (
+        "the hotfix cache holds 3 ItemSparse records, more than the 2 wowlab reads"
+    )
+
+
+def test_a_refusal_names_no_absolute_path_constructed(
+    tables: dict[str, Path], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = tmp_path / "install"
+    flavor = root / "_flavor_"
+    folder = flavor / "Cache" / "ADB" / "enUS"
+    folder.mkdir(parents=True)
+    outside = tmp_path / "outside.bin"
+    outside.write_bytes(cache(NUMBER, []))
+    (folder / hotfix.CACHE_FILE).write_bytes(cache(NUMBER, []))
+    # The file swapped for a link after it was listed: the read refuses it.
+    real = hotfix.find_caches(flavor)
+    (folder / hotfix.CACHE_FILE).unlink()
+    (folder / hotfix.CACHE_FILE).symlink_to(outside)
+    monkeypatch.setattr(hotfix, "find_caches", lambda *_a, **_k: real)
+    report = gamedata.flavor_hotfixes(flavor, root, BUILD, tables.get, tables=ITEMS).report()
+    assert not report.applied and report.refused is not None
+    assert report.refused.startswith("Cache/ADB/enUS/DBCache.bin cannot be read: ")
+    assert str(tmp_path) not in report.refused

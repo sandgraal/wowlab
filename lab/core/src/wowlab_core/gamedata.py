@@ -983,10 +983,14 @@ class HotfixOverlay:
     the tables' build, each layout matches its table's columns, every row
     decodes), and, per table, which rows the cache adds, replaces and
     removes. `rows` then filters a table's rows; `report` says what was
-    done, or why nothing was. Records apply in ascending push id, file
-    order kept within one (wowsims/forever's order): status 1 with data
-    adds or replaces the row, 2 and 3 remove it, anything else is left
-    alone. Every row taken from the cache carries `hotfix.SOURCE_KEY`."""
+    done, or why nothing was. Records apply in file order, a later record
+    of a row winning (**[verify]**): the client appends to the file in time
+    order, and on the owner's file at 71037 sorting by push id, as
+    wowsims/forever and DBCD do, keeps an older copy of 15 `ItemSparse` rows
+    over the server's later push (domain review of M22-23; DATA_SOURCES,
+    2026-11-24). Status 1 with data adds or replaces the row; 2 and 3
+    remove it and anything else is left alone, both **[verify]**. Every row
+    taken from the cache carries `hotfix.SOURCE_KEY`."""
 
     def __init__(
         self,
@@ -1077,8 +1081,8 @@ def overlay_hotfixes(
     cached. Refused, with the reason in `report().refused`, when `refused`
     is given (the caller could not read the cache), when there is no cache,
     when the cache is of another build, when a table is not cached, when a
-    layout does not match its table's columns, or when a row does not
-    decode. Raises `ValueError` for a `build` that is not a full build
+    layout does not match its table's columns, when a table has more than
+    `hotfix.MAX_TABLE_ROWS` records, or when a row does not decode. Raises `ValueError` for a `build` that is not a full build
     string, and `MalformedTable` or `OSError` when a cached table cannot be
     read."""
     tables_build = _build_number(build)
@@ -1118,7 +1122,15 @@ def overlay_hotfixes(
                 f"the columns of the game table {name} of {build} are not the ones wowlab "
                 "decodes the hotfix cache's rows with",
             )
-        records = sorted(by_table.get(name, []), key=lambda r: r.push_id)  # stable
+        records = by_table.get(name, [])  # file order: a later record wins [verify]
+        if len(records) > hotfix.MAX_TABLE_ROWS:
+            return _refused(
+                build,
+                file,
+                cache.build,
+                f"the hotfix cache holds {len(records)} {name} records, more than the "
+                f"{hotfix.MAX_TABLE_ROWS} wowlab reads",
+            )
         final: dict[int, dict[str, str] | None] = {}
         left_alone = 0
         for record in records:
@@ -1131,13 +1143,16 @@ def overlay_hotfixes(
                 final[record.record_id] = None
             else:
                 left_alone += 1
-        added = replaced = removed = 0
+        added = replaced = changed = removed = 0
         if final:
             present: set[int] = set()
             for row in _iter_rows(path):
                 rid = _row_id(row)
                 if rid is not None and rid in final:
                     present.add(rid)
+                    new = final[rid]
+                    if new is not None and any(new[k] != v for k, v in row.items()):
+                        changed += 1
             for rid, new in final.items():
                 if new is None:
                     removed += rid in present
@@ -1152,6 +1167,7 @@ def overlay_hotfixes(
                 records=len(records),
                 added=added,
                 replaced=replaced,
+                changed=changed,
                 removed=removed,
                 left_alone=left_alone,
             )
@@ -1180,12 +1196,14 @@ def flavor_hotfixes(
     *,
     tables: Iterable[str] | None = None,
 ) -> HotfixOverlay:
-    """`overlay_hotfixes` of the newest `Cache/ADB/<locale>/DBCache.bin` in
-    the flavor folder, read read-only from the install root (L1), for
-    `tables` (default: every table with a shipped layout). A cache that
-    cannot be read refuses the overlay with the reason."""
+    """`overlay_hotfixes` of the flavor folder's `Cache/ADB/<locale>/DBCache.bin`
+    (the one of the game's `textLocale` when there is one, else the newest),
+    read read-only from the install root (L1), for `tables` (default: every
+    table with a shipped layout). A cache that cannot be read refuses the
+    overlay with the reason, its paths written relative to the flavor
+    folder."""
     names = list(_layouts_of(tables))
-    found = hotfix.find_caches(flavor_path)
+    found = hotfix.find_caches(flavor_path, hotfix.game_locale(flavor_path, install_root))
     if not found:
         return overlay_hotfixes(None, build, table_path, tables=names)
     path = found[0]
@@ -1195,12 +1213,20 @@ def flavor_hotfixes(
     except hotfix.HotfixError as exc:
         why = str(exc)
     except OSError as exc:
-        why = exc.strerror or str(exc)
+        why = _relative_words(exc.strerror or str(exc), flavor_path, install_root)
     else:
         return overlay_hotfixes(cache, build, table_path, tables=names, file=rel)
     return overlay_hotfixes(
         None, build, table_path, tables=names, file=rel, refused=f"{rel} cannot be read: {why}"
     )
+
+
+def _relative_words(text: str, flavor_path: Path, install_root: Path) -> str:
+    """`text` with the flavor folder's and the install's absolute paths
+    written relative to them, so no home folder reaches a note."""
+    for base in (flavor_path, install_root):
+        text = text.replace(str(base) + os.sep, "").replace(str(base), ".")
+    return text
 
 
 def cached_table_path(name: str, build: str, *, cache_dir: Path | None = None) -> Path | None:

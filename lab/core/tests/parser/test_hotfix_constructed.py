@@ -10,6 +10,7 @@ reads an install.
 from __future__ import annotations
 
 import os
+import shutil
 import struct
 import sys
 from pathlib import Path
@@ -323,3 +324,42 @@ def test_an_inline_id_must_be_the_records_row_id_constructed() -> None:
         hotfix.decode_row(layout, bad)
     with pytest.raises(hotfix.LayoutError, match="an inline ID is first"):
         hotfix.parse_layouts('[tables.T]\nfields = ["A:i32", "ID:i32"]')
+
+
+@pytest.mark.parametrize("linked", ["Cache", "Cache/ADB"])
+def test_find_caches_follows_no_linked_cache_or_adb_folder_constructed(
+    tmp_path: Path, linked: str
+) -> None:
+    """Security review of M22-23: a `Cache` or `ADB` folder that is a link
+    is not followed, so nothing outside the flavor folder is looked at."""
+    outside = tmp_path / "outside"
+    (outside / "ADB" / "enUS").mkdir(parents=True)
+    (outside / "ADB" / "enUS" / hotfix.CACHE_FILE).write_bytes(header(1))
+    _, flavor = _flavor(tmp_path)
+    if linked == "Cache":
+        shutil.rmtree(flavor / "Cache")
+        (flavor / "Cache").symlink_to(outside)
+    else:
+        shutil.rmtree(flavor / "Cache" / "ADB")
+        (flavor / "Cache" / "ADB").symlink_to(outside / "ADB")
+    assert hotfix.find_caches(flavor) == []
+
+
+def test_the_game_locale_comes_first_constructed(tmp_path: Path) -> None:
+    root, flavor = _flavor(tmp_path)
+    adb = flavor / "Cache" / "ADB"
+    (adb / "deDE").mkdir()
+    en = adb / "enUS" / hotfix.CACHE_FILE
+    de = adb / "deDE" / hotfix.CACHE_FILE
+    en.write_bytes(header(1))
+    de.write_bytes(header(1))
+    os.utime(en, ns=(2_000_000_000, 2_000_000_000))
+    os.utime(de, ns=(1_000_000_000, 1_000_000_000))
+    assert hotfix.game_locale(flavor, root) is None
+    assert hotfix.find_caches(flavor, None) == [en, de]
+    (flavor / "WTF").mkdir()
+    (flavor / "WTF" / "Config.wtf").write_bytes(b'SET textLocale "deDE"\r\n')
+    assert hotfix.game_locale(flavor, root) == "deDE"
+    assert hotfix.find_caches(flavor, "deDE") == [de, en]
+    (flavor / "WTF" / "Config.wtf").write_bytes(b'SET textLocale "../x"\r\n')
+    assert hotfix.game_locale(flavor, root) is None

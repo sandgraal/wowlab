@@ -28,10 +28,13 @@ The rules, each **[verify]** on Forever:
   weapon fills nothing for a class that does not dual wield.
   About half of the armour and weapons in `Item` have no `ItemSparse`
   row in wago.tools' export (at 70888 and 71037: 11231 of 19079). Most of
-  those in this game's range are sent by the server as hotfixes, which
+  those in this game's range the server sends as hotfix rows, which
   wago.tools' copy lacks (4,108 of the 4,944 classic-range ones are in the
   client's hotfix cache, which M22-23 reads; GLOSSARY, "Hotfix cache");
-  the rest are other games' items or removed (DATA_SOURCES, 2026-11-23).
+  the rest may be other games' items, removed ones, or items the owner's
+  game has not shown yet: the cache holds rows the server sent at login or
+  when the game first showed an item (DATA_SOURCES, 2026-11-23 and
+  2026-11-24).
   The caller lays the cache over `Item` and `ItemSparse` first, when it is
   of the tables' build (`gamedata.HotfixOverlay`, M22-23); a row read from
   it carries `hotfix.SOURCE_KEY`, and every item scored says whether its
@@ -961,7 +964,10 @@ def _worn(
         if slot.item_id is None:
             why = "the link has no item id"
         elif cache_read:
-            why = "the game tables have no stats for it, even with your game's hotfix cache read"
+            why = (
+                "the game tables have no stats for it, even with your game's hotfix cache as "
+                "your game last saved it"
+            )
         else:
             why = "a hotfix the copy of the game tables wowlab downloads lacks"
 
@@ -1273,24 +1279,27 @@ def _notes(
         pieces = _plural(hotfix_items, "weapon or armour piece", "weapons and armour pieces")
         notes.append(
             f"Stats for {pieces} were read from your game's hotfix cache (build "
-            f"{cache.cache_build if cache else '?'}), which holds the items the server sends at "
-            "login and the copy of the game tables wowlab downloads lacks; each item says where "
-            "its stats came from."
+            f"{cache.cache_build if cache else '?'}), as your game last saved it: the item rows "
+            "the server has sent your game, at login or when it first showed the item, which "
+            "the copy of the game tables wowlab downloads lacks. Each item says where its stats "
+            "came from; an item your game has never shown you may not be in the cache."
         )
     if tables.gear_without_details and cache_read:
         notes.append(
             f"{tables.gear_without_details} of the {tables.gear_in_item} weapons and armour "
             "pieces the game tables list have no stats even with the hotfix cache read, so they "
-            "are never candidates and a worn one is not scored: mostly other games' items or "
-            "removed ones."
+            "are never candidates and a worn one is not scored. Some are other games' items or "
+            "removed ones; others may be items your game has not shown you yet."
         )
     elif tables.gear_without_details:
-        unread = (
-            " wowlab did not read your game's hotfix cache, which holds most of those in this "
-            f"game's range: {cache.refused}."
-            if cache is not None and cache.refused
-            else ""
-        )
+        unread = ""
+        if cache is not None and cache.file is None:
+            unread = " This game folder has no hotfix cache, which can hold such items."
+        elif cache is not None and cache.refused:
+            unread = (
+                " Your game's hotfix cache, which can hold such items, was not used: "
+                f"{cache.refused}."
+            )
         notes.append(
             f"{tables.gear_without_details} of the {tables.gear_in_item} weapons and armour "
             "pieces the game tables list have no stats in the copy wowlab downloads, so they are "

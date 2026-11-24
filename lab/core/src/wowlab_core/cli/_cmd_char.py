@@ -1951,13 +1951,18 @@ def char_sim_export(
     who = f"{report.character} in account {acct.folder}{_picked_words(how, tie)}"
     _note("Character: {}", who)
     if talents.table_build is not None:
-        cached = hotfixes is not None and hotfixes.applied and hotfixes.rows_from_cache > 0
+        # Named only when the cache changed a row (domain review of M22-23).
+        cached = (
+            hotfixes is not None and hotfixes.applied and any(t.differs for t in hotfixes.tables)
+        )
         _note(
             "Talents read with the game table {} of {}{}.",
             simexport.TALENT_TABLE,
             talents.table_build,
-            " and your game's hotfix cache" if cached else "",
+            ", with your game's hotfix cache's rows over it" if cached else "",
         )
+    if hotfixes is not None and not hotfixes.applied and hotfixes.file is not None:
+        _note("Your game's hotfix cache was not used: {}.", hotfixes.refused or "")
     if talents.table_note is not None:
         _note("{}", talents.table_note)
     for item in sim.left_out:

@@ -58,7 +58,11 @@ def _report(launch: Path) -> cli.CharSimExportReport:
     return cli.CharSimExportReport.model_validate_json(done.stdout)
 
 
-def test_a_cached_talent_row_is_used_and_said_constructed(launch: Path, cached: Path) -> None:
+def test_a_cached_row_that_matches_the_table_is_not_said_constructed(
+    launch: Path, cached: Path
+) -> None:
+    """The owner's case at 71037: every cached talent row equals the
+    table's, so the text names the table alone (domain review of M22-23)."""
     row = _first_entry(launch, cached)
     layout = hotfix.layouts()[TABLE]
     _write(launch, [Rec(TABLE, int(row["ID"]), encode_row(layout, row))])
@@ -66,12 +70,28 @@ def test_a_cached_talent_row_is_used_and_said_constructed(launch: Path, cached: 
     plain = _report(launch)
     assert plain.hotfix_cache is not None and plain.hotfix_cache.applied
     [counts] = plain.hotfix_cache.tables
-    assert (counts.table, counts.replaced, counts.added) == (TABLE, 1, 0)
+    assert (counts.table, counts.replaced, counts.changed, counts.added) == (TABLE, 1, 0, 0)
     done = run()
     assert done.exit_code == 0, done.output
-    said = f"Talents read with the game table {TABLE} of {BUILD} and your game's hotfix cache."
-    assert said in done.stderr.splitlines()
+    assert f"Talents read with the game table {TABLE} of {BUILD}." in done.stderr.splitlines()
+    assert "hotfix" not in done.stderr
     assert _tree(launch) == before
+
+
+def test_a_cached_row_that_differs_is_used_and_said_constructed(launch: Path, cached: Path) -> None:
+    row = _first_entry(launch, cached)
+    layout = hotfix.layouts()[TABLE]
+    changed = {**row, "MaxRanks": str(int(row["MaxRanks"]) + 1)}
+    _write(launch, [Rec(TABLE, int(row["ID"]), encode_row(layout, changed))])
+    report = _report(launch)
+    assert report.hotfix_cache is not None
+    assert report.hotfix_cache.tables[0].changed == 1
+    done = run()
+    said = (
+        f"Talents read with the game table {TABLE} of {BUILD}, with your game's hotfix "
+        "cache's rows over it."
+    )
+    assert said in done.stderr.splitlines()
 
 
 def test_a_talent_the_cache_removes_is_left_out_constructed(launch: Path, cached: Path) -> None:
@@ -98,3 +118,10 @@ def test_a_cache_of_another_build_leaves_the_talents_alone_constructed(
     assert report.hotfix_cache is not None and not report.hotfix_cache.applied
     assert report.hotfix_cache.refused is not None
     assert report.hotfix_cache.refused.startswith("the hotfix cache is of build 1 ")
+    done = run()
+    said = [line for line in done.stderr.splitlines() if "hotfix" in line]
+    assert said == [
+        "Your game's hotfix cache was not used: the hotfix cache is of build 1 and the game "
+        f"tables of {BUILD}; wowlab lays a hotfix cache only over the game tables of its own "
+        "build."
+    ]

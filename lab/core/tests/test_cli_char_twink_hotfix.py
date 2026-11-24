@@ -117,7 +117,7 @@ def test_a_cache_of_another_build_is_not_used_and_says_why_constructed() -> None
         "a hotfix cache only over the game tables of its own build"
     )
     notes = " ".join(" ".join(r.twink.notes).split())
-    assert "wowlab did not read your game's hotfix cache" in notes
+    assert "Your game's hotfix cache, which can hold such items, was not used" in notes
     assert "the hotfix cache is of build 71037" in notes
 
 
@@ -128,3 +128,5 @@ def test_no_cache_says_so_in_json() -> None:
     assert cache_report is not None and not cache_report.applied
     assert cache_report.refused == "this game folder has no hotfix cache"
     assert cache_report.file is None
+    notes = " ".join(" ".join(r.twink.notes).split())
+    assert "This game folder has no hotfix cache, which can hold such items." in notes

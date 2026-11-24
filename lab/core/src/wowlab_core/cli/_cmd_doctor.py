@@ -464,9 +464,11 @@ def _hotfix_line(r: hotfix.OverlayReport) -> str:
     names = ", ".join(listed[:-1]) + " and " + listed[-1] if len(listed) > 1 else "".join(listed)
     if r.applied:
         replaced = sum(t.replaced for t in r.tables)
+        removed = sum(t.removed for t in r.tables)
         return (
             f"  Hotfix cache: build {r.cache_build}; adds {_plural(r.rows_added, 'row')} the "
-            f"downloaded game tables lack and replaces {replaced} ({names}), read from {r.file}"
+            f"downloaded game tables lack, replaces {replaced} and removes {removed} ({names}), "
+            f"read from {r.file} as your game last saved it"
         )
     build = f"build {r.cache_build}" if r.cache_build is not None else "build unknown"
     return f"  Hotfix cache: {build}; not used: {r.refused}"

@@ -46,7 +46,10 @@ def test_the_stats_source_is_shown_constructed(
     )
     detail = opened["slots"][0]["candidates"][0]["detail"]
     at = detail.index("Stats from")
-    assert detail[at + 1] == "your game's hotfix cache (items the server sends at login)"
+    assert detail[at + 1] == (
+        "your game's hotfix cache (item rows the server has sent your game, at login or when it "
+        "first showed the item)"
+    )
     other = opened["slots"][0]["candidates"][1]["detail"]
     assert other[other.index("Stats from") + 1] == "the game tables wowlab downloads"
     assert not out["traps"]

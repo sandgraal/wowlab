@@ -12,8 +12,9 @@ time) and writes, as JSON: the product, version and build of the flavor
 header (format version, build), how many records it holds, per table the
 cache is read for (`Item` and `ItemSparse`) its hash, record count and
 records by status, and, per item asked for, every record the cache holds
-for it in `Item` and `ItemSparse` (push id, status, data size) and the row
-that ends up applied, decoded as the table's export holds it. With
+for it in `Item` and `ItemSparse`, in file order (push id, status, data
+size and the row it holds, decoded), and the row that ends up applied
+(file order: a later record wins), decoded as the table's export holds it. With
 `--tables-dir` (wowlab's game-data cache, holding `tables/<version>/`), the
 overlay's counts against those tables as well. No byte of the file, no
 record of any other table, no install path.
@@ -94,26 +95,23 @@ def hotfix_facts(
     for item_id in items:
         entry: dict[str, Any] = {"id": item_id}
         for name, layout in layouts.items():
-            mine = sorted(
-                (r for r in by_table[name] if r.record_id == item_id), key=lambda r: r.push_id
-            )
+            # File order, as `gamedata` applies them: a later record wins.
+            mine = [r for r in by_table[name] if r.record_id == item_id]
             applied: dict[str, str] | None = None
             size: int | None = None
+            listed: list[dict[str, Any]] = []
             for r in mine:
+                decoded: dict[str, str] | None = None
                 if r.status == hotfix.STATUS_ROW and r.data:
-                    applied = hotfix.decode_row(layout, r)
-                    size = len(r.data)
+                    decoded = hotfix.decode_row(layout, r)
+                    decoded.pop(hotfix.SOURCE_KEY)
+                    applied, size = decoded, len(r.data)
                 elif r.status in hotfix.STATUS_REMOVED:
                     applied, size = None, None
-            if applied is not None:
-                applied.pop(hotfix.SOURCE_KEY)
-            entry[name] = {
-                "records": [
-                    {"push_id": r.push_id, "status": r.status, "size": len(r.data)} for r in mine
-                ],
-                "row": applied,
-                "size": size,
-            }
+                listed.append(
+                    {"push_id": r.push_id, "status": r.status, "size": len(r.data), "row": decoded}
+                )
+            entry[name] = {"records": listed, "row": applied, "size": size}
         rows.append(entry)
     overlay: dict[str, Any] | None = None
     if tables_dir is not None:

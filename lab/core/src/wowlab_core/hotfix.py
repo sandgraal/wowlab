@@ -1,8 +1,9 @@
 """hotfix: the client's own hotfix cache, read as data (M22-23).
 
-`Cache/ADB/<locale>/DBCache.bin` in a flavor folder holds the rows of the
-game tables the server sent at login over the tables the client shipped
-with (GLOSSARY, "Hotfix cache"). wago.tools' exports lack them, so about
+`Cache/ADB/<locale>/DBCache.bin` in a flavor folder holds rows of the game
+tables the server has sent the client, at login or when the client first
+needed a row it did not ship with (an item it showed), as the client last
+saved them (GLOSSARY, "Hotfix cache"). wago.tools' exports lack them, so about
 half of the weapons and armour in `Item` have no `ItemSparse` row there
 (`docs/DATA_SOURCES.md`, 2026-11-23). This module reads the file and
 decodes the rows of the tables `hotfix_layouts.toml` describes (`Item`,
@@ -22,8 +23,12 @@ copied), checked on the owner's file at build 71037:
   (int32), the data size (int32), a status byte, three zero bytes) and
   then `data size` bytes of row data;
 - the table hash is `sstrhash` of the table's name in capitals;
-- status 1 is a row (added or replaced), 2 and 3 remove the row, anything
-  else is left alone (`gamedata`).
+- the header's build is that of the client that last wrote the file;
+  records carried over from an earlier build keep their bytes;
+- status 1 is a row; what 2, 3 and 4 mean is **[verify]**: `gamedata`
+  takes 2 and 3 as the row removed and leaves anything else alone, where
+  wowsims removes the row on any status but 1 (the two rules differ on
+  two non-gear rows of the owner's file at 71037).
 
 What this module holds to:
 
@@ -59,7 +64,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict
 
-from wowlab_core import snapshot
+from wowlab_core import snapshot, wtfconfig
 from wowlab_core.errors import WowlabError
 
 __all__ = [
@@ -70,6 +75,7 @@ __all__ = [
     "MAX_FILE_BYTES",
     "MAX_KEPT",
     "MAX_RECORDS",
+    "MAX_TABLE_ROWS",
     "RECORD_HEADER_BYTES",
     "SOURCE_HOTFIX",
     "SOURCE_KEY",
@@ -86,6 +92,7 @@ __all__ = [
     "TableLayout",
     "decode_row",
     "find_caches",
+    "game_locale",
     "layouts",
     "parse",
     "parse_layouts",
@@ -100,11 +107,16 @@ HEADER_BYTES = 44  # magic, version, build, 32 bytes not read
 RECORD_HEADER_BYTES = 32  # magic, six int32 fields, the status byte, three zero bytes
 CACHE_FILE = "DBCache.bin"
 LAYOUTS_FILE = "hotfix_layouts.toml"
-# The owner's file was 8 MB at build 71037 (106,407 records); these leave
-# room for many times that and bound what a crafted file can cost.
-MAX_FILE_BYTES = 128 * 1024 * 1024
+# The owner's file was 8 MB at build 71037 (106,407 records, 18,999 of them
+# Item, ItemSparse or TraitNodeEntry); these leave room for about four times
+# that and bound what a crafted file can cost on every `doctor` run
+# (security review of M22-23: at 128 MiB a crafted cache cost about 4 GiB).
+MAX_FILE_BYTES = 32 * 1024 * 1024
 MAX_RECORDS = MAX_FILE_BYTES // RECORD_HEADER_BYTES
-MAX_KEPT = 1_000_000
+MAX_KEPT = 200_000
+# Rows of one table `gamedata` decodes at most (9,532 ItemSparse records in
+# the owner's file); past it the overlay is refused.
+MAX_TABLE_ROWS = 50_000
 STATUS_ROW = 1
 STATUS_REMOVED = frozenset({2, 3})
 # The key a row read from the cache carries beside its columns, and its
@@ -171,10 +183,13 @@ class HotfixRecord(_Model):
 
     table: str
     record_id: int
-    push_id: int  # -1: a row the client cached on demand
+    # Server pushes count up through the file; -1 and ids from 0x01000000 up
+    # are rows the client fetched when it needed them (the reference; the
+    # owner's file is consistent with it).
+    push_id: int
     unique_id: int
     region_id: int
-    status: int  # 1 a row; 2 and 3 remove it; anything else is left alone
+    status: int  # 1 a row; 2, 3 and 4 [verify] (`gamedata` takes 2 and 3 as removed)
     data: bytes
     offset: int  # of the record's header in the file
 
@@ -233,8 +248,10 @@ def parse(data: bytes, tables: Iterable[str]) -> HotfixCache:
         if kept is not None:
             if len(records) >= MAX_KEPT:
                 raise HotfixError(f"the hotfix cache holds more than {MAX_KEPT} rows wowlab reads")
+            # Every value is already an int or bytes of the type the model
+            # declares: no validation per record (security review of M22-23).
             records.append(
-                HotfixRecord(
+                HotfixRecord.model_construct(
                     table=kept,
                     record_id=record_id,
                     push_id=push,
@@ -260,11 +277,24 @@ def read(path: Path, tables: Iterable[str], *, root: Path | None = None) -> Hotf
     return parse(data, tables)
 
 
-def find_caches(flavor_path: Path) -> list[Path]:
-    """The `Cache/ADB/<locale>/DBCache.bin` files of a flavor folder, newest
+def _real_folder(path: Path) -> bool:
+    try:
+        return stat.S_ISDIR(path.lstat().st_mode)  # lstat: a link is not a folder
+    except OSError:
+        return False
+
+
+def find_caches(flavor_path: Path, prefer: str | None = None) -> list[Path]:
+    """The `Cache/ADB/<locale>/DBCache.bin` files of a flavor folder: the
+    one of the locale `prefer` names first when there is one, then newest
     first (by modification time, then by path). Lists folders only; opens
-    nothing. A folder or file that is a link is passed over."""
-    adb = flavor_path / "Cache" / "ADB"
+    nothing. A `Cache`, `ADB` or locale folder or a file that is a link is
+    passed over (none is followed), so nothing outside the folder is
+    looked at (security review of M22-23)."""
+    cache = flavor_path / "Cache"
+    adb = cache / "ADB"
+    if not (_real_folder(cache) and _real_folder(adb)):
+        return []
     found: list[tuple[int, str, Path]] = []
     try:
         with os.scandir(adb) as entries:
@@ -279,8 +309,23 @@ def find_caches(flavor_path: Path) -> list[Path]:
             continue
         if stat.S_ISREG(st.st_mode):  # lstat: a link is not regular
             found.append((st.st_mtime_ns, str(candidate), candidate))
-    found.sort(key=lambda t: (-t[0], t[1]))
+    found.sort(key=lambda t: (t[2].parent.name != prefer, -t[0], t[1]))
     return [p for _, _, p in found]
+
+
+def game_locale(flavor_path: Path, root: Path | None = None) -> str | None:
+    """The `textLocale` setting of the flavor folder's `WTF/Config.wtf`
+    (the language the game shows its text in), or None when the file or the
+    setting is not there or cannot be read. Read-only. Whether the client
+    keeps its hotfix cache under that locale's folder is **[verify]**."""
+    try:
+        doc = wtfconfig.read_config(flavor_path / "WTF" / "Config.wtf", root=root)
+    except (OSError, ValueError):
+        return None
+    cvar = doc.get("textLocale")
+    if cvar is None or not _TABLE.fullmatch(cvar.value):
+        return None
+    return cvar.value
 
 
 # ─── the layouts ─────────────────────────────────────────────────────────────
@@ -418,16 +463,24 @@ def decode_row(layout: TableLayout, record: HotfixRecord) -> dict[str, str]:
 
 class OverlayTable(_Model):
     """One table's part of an overlay. `added`: rows the cached table did not
-    have; `replaced`: rows it had, now the cache's; `removed`: rows the cache
-    removed (status 2 or 3); `left_alone`: records neither a row nor a
-    removal (another status, or a row with no data)."""
+    have; `replaced`: rows it had, now the cache's; `changed`: of those, the
+    ones whose values differ from the cached table's; `removed`: rows the
+    cache removed (status 2 or 3, whose meaning is **[verify]**);
+    `left_alone`: records neither a row nor a removal (another status, or a
+    row with no data)."""
 
     table: str
     records: int
     added: int
     replaced: int
+    changed: int = 0
     removed: int
     left_alone: int
+
+    @property
+    def differs(self) -> bool:
+        """Whether the cache changed anything in this table."""
+        return bool(self.added or self.changed or self.removed)
 
 
 class OverlayReport(_Model):

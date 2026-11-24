@@ -2531,7 +2531,7 @@
     fact("Stats", twinkStats(c.stats));
     fact("Item level", typeof c.item_level === "number" ? String(c.item_level) : "not known");
     // Where its name, level and stats were read (M22-23).
-    fact("Stats from", c.stats_from === "hotfix cache" ? "your game's hotfix cache (items the server sends at login)" : "the game tables wowlab downloads");
+    fact("Stats from", c.stats_from === "hotfix cache" ? "your game's hotfix cache (item rows the server has sent your game, at login or when it first showed the item)" : "the game tables wowlab downloads");
     if (c.two_hand === true) fact("Wielded", "with both hands, so it also takes the off hand");
     for (const other of objects(c.other_suffixes)) {
       fact("Also rolls", visible(String(other.name || "suffix " + other.id)) + ": score " + twinkScore(other.score) + " (" + twinkStats(other.stats) + ")");

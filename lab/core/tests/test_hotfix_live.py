@@ -74,7 +74,7 @@ def test_the_real_cache_reads_as_recorded() -> None:
     layouts = hotfix.layouts()
     decoded: dict[tuple[str, int], dict[str, str]] = {}
     counts = dict.fromkeys(layouts, 0)
-    for record in sorted(cache.records, key=lambda r: r.push_id):
+    for record in cache.records:  # file order, as gamedata applies them
         counts[record.table] += 1
         if record.status == hotfix.STATUS_ROW and record.data:
             decoded[(record.table, record.record_id)] = hotfix.decode_row(

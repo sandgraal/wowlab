@@ -43,7 +43,9 @@ FACTS: dict[str, Any] = json.loads(
 WOWSIMS: dict[str, Any] = json.loads(
     (FIXTURES / "wowsims" / "leftover_db.a8bd7fd8.items.json").read_text(encoding="utf-8")
 )
-ITEMS = (6537, 6541, 6543, 14113, 2632)
+ITEMS = (6537, 6541, 6543, 14113, 2632)  # the owner's worn items, in wowsims' database
+COWL = 219343  # Filcher's Cowl: a later server push changed its required level
+ALL = (*ITEMS, COWL)
 TABLES = ("Item", "ItemSparse")
 
 
@@ -57,7 +59,7 @@ def test_the_record_is_of_one_build_and_holds_no_bytes() -> None:
     assert FACTS["header"] == {"version": hotfix.SUPPORTED_VERSION, "build": FACTS["build"]}
     assert FACTS["version"].rsplit(".", 1)[1] == str(FACTS["build"])
     assert FACTS["file"] == "Cache/ADB/enUS/DBCache.bin"
-    assert sorted(i["id"] for i in FACTS["items"]) == sorted(ITEMS)
+    assert sorted(i["id"] for i in FACTS["items"]) == sorted(ALL)
     text = json.dumps(FACTS)
     assert "/Users/" not in text and "\\\\" not in text
     assert not re.search(r'"data"', text)
@@ -77,7 +79,7 @@ def test_the_counts_add_up() -> None:
     assert sparse["added"] > 4000
 
 
-@pytest.mark.parametrize("item_id", ITEMS)
+@pytest.mark.parametrize("item_id", ALL)
 def test_a_recorded_row_written_back_decodes_to_itself(item_id: int) -> None:
     entry = _item(item_id)
     layouts = hotfix.layouts()
@@ -114,6 +116,33 @@ def test_each_item_is_what_wowsims_read_from_the_same_hotfixes(item_id: int) -> 
     assert sim["randomSuffixOptions"]
     assert all(int(sparse[f"StatPercentEditor_{n}"]) == 0 for n in range(10))
     assert set(sim["scalingOptions"]["0"].get("stats", {})) <= {"27"}  # wowsims' armour
+
+
+def test_records_apply_in_file_order_and_a_later_push_wins() -> None:
+    """Filcher's Cowl has three ItemSparse rows in the cache, in file order
+    push 114128 (required level 50), an on-demand row (50) and push 114312
+    (0): applied in file order the last wins, as the recorded applied row
+    says. Sorted by push id (wowsims' and DBCD's order) the on-demand row's
+    id, from 0x01000000 up, would sort last and keep the older 50: the
+    finding of the domain review of M22-23 (DATA_SOURCES, 2026-11-24)."""
+    sparse = _item(COWL)["ItemSparse"]
+    pushes = [r["push_id"] for r in sparse["records"]]
+    levels = [r["row"]["RequiredLevel"] for r in sparse["records"]]
+    assert pushes == [114128, 16996559, 114312] and levels == ["50", "50", "0"]
+    assert sparse["row"] == sparse["records"][-1]["row"]
+    by_push = sorted(sparse["records"], key=lambda r: r["push_id"])
+    assert by_push[-1]["row"]["RequiredLevel"] == "50"
+    # The same through the overlay, on a constructed cache of the recorded rows.
+    layout = hotfix.layouts()["ItemSparse"]
+    records = [
+        Rec("ItemSparse", COWL, encode_row(layout, r["row"]), push_id=r["push_id"])
+        for r in sparse["records"]
+    ]
+    parsed = hotfix.parse(cache(FACTS["build"], records), ["ItemSparse"])
+    final = {}
+    for record in parsed.records:  # what `gamedata` does, in file order
+        final[record.record_id] = hotfix.decode_row(layout, record)
+    assert final[COWL]["RequiredLevel"] == "0"
 
 
 def test_the_overlay_marks_the_five_as_hotfix_rows(tmp_path: Path) -> None:

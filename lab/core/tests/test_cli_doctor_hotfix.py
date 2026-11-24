@@ -115,8 +115,9 @@ def test_the_line_names_the_build_and_the_rows_added_constructed(
     assert (counts["ItemSparse"]["added"], counts["ItemSparse"]["replaced"]) == (1, 1)
     assert counts["Item"]["removed"] == 1
     assert (
-        f"Hotfix cache: build {NUMBER}; adds 1 row the downloaded game tables lack and "
-        "replaces 1 (Item and ItemSparse), read from Cache/ADB/enUS/DBCache.bin"
+        f"Hotfix cache: build {NUMBER}; adds 1 row the downloaded game tables lack, replaces "
+        "1 and removes 1 (Item and ItemSparse), read from Cache/ADB/enUS/DBCache.bin as your "
+        "game last saved it"
     ) in _text()
     assert _state(root) == before
 
