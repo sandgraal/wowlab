@@ -81,8 +81,8 @@ from pydantic import (
     ValidationInfo,
 )
 
+from wowlab_core import charname, longpath
 from wowlab_core import filemap as _filemap
-from wowlab_core import longpath
 from wowlab_core.filemap import FileMapEntry
 
 # `is_link`: the one link test, defined in `install` so discovery uses it
@@ -112,6 +112,7 @@ __all__ = [
     "WtfWalk",
     "absent",
     "classify",
+    "has_second_names",
     "is_link",
     "layouts",
     "link_facts",
@@ -894,21 +895,21 @@ class Layout:
                     if realm_name.casefold() == _SAVED_VARIABLES.casefold():
                         continue
                     rrel = (*arel, realm_name)
-                    numeric = realm_name.isascii() and realm_name.isdigit()
+                    numeric = charname.is_numeric_folder(realm_name)
                     characters = []
                     for char_name in dirs_in(rrel):
                         if char_name.casefold() == _SAVED_VARIABLES.casefold():
                             continue  # not a character (review probe, M10-06)
                         crel = (*rrel, char_name)
-                        first, sep, second = char_name.partition("-")
+                        first, second = charname.split_folder(char_name, numeric=numeric)
                         characters.append(
                             Character(
                                 folder=char_name,
                                 path=_rel_text(crel),
                                 realm_folder=realm_name,
                                 shape="numeric_folder" if numeric else "realm_name",
-                                first_name=first if numeric and sep else char_name,
-                                second_name=second if numeric and sep else None,
+                                first_name=first,
+                                second_name=second,
                                 files=files_in(crel),
                                 folders=dirs_in(crel),
                                 twins=(),
@@ -1639,3 +1640,24 @@ def named_paths(folder: Path, parts: Sequence[str]) -> list[str]:
 def layouts(install: Install, limits: Limits | None = None) -> tuple[Layout, ...]:
     """One `Layout` per discovered flavor, in `install.flavors` order."""
     return tuple(Layout.for_flavor(f, install.root, limits) for f in install.flavors)
+
+
+def has_second_names(lay: Layout) -> bool:
+    """Whether a flavor names its characters by first and second name
+    (M21-02): a digits-only folder of one of its accounts holds a
+    `<First>-<Second>` character folder. The client then reports a player's
+    second name where retail reports the realm (a crew key is
+    `<First>-<Second>`), and its combat log writes four-part unit names.
+    Read from the folders, never from the flavor's name (L6); a walk that
+    cannot be made says no."""
+    try:
+        accounts = lay.wtf_walk().accounts
+    except (OSError, ValueError):
+        return False
+    return any(
+        c.second_name is not None
+        for acct in accounts
+        for realm in acct.realms
+        if realm.kind == "numeric"
+        for c in realm.characters
+    )

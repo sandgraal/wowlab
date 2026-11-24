@@ -219,6 +219,53 @@ EXPECTED["macos-70888"] = {
     ],
 }
 
+# The M21-02 run (2026-11-23): .build.info, .flavor.info, Config.wtf and a
+# combat-log slice of the launch client at build 71037.
+_MACOS_71037_BUILD_KEY = _cell("macos-71037", 2)
+_MACOS_71037_CDN_KEY = _cell("macos-71037", 3)
+EXPECTED["macos-71037"] = {
+    "flavors": [
+        {
+            "folder": "_forever_",
+            "product": "wowf",
+            "version": "1.60.1.71037",
+            "build": 71037,
+            "build_key": _MACOS_71037_BUILD_KEY,
+            "matching_rows": 1,
+        }
+    ],
+    "rows": [
+        {
+            "product": "wowf",
+            "version": "1.60.1.71037",
+            "build_key": _MACOS_71037_BUILD_KEY,
+            "branch": "us",
+            "active": "1",
+            "tags": (
+                "OSX x86_64 US? acct-ZZZ? geoip-ZZ? enUS speech?:"
+                "OSX x86_64 US? acct-ZZZ? geoip-ZZ? enUS text?"
+            ),
+            "extra": (
+                ("CDN Key", _MACOS_71037_CDN_KEY),
+                ("Install Key", ""),
+                ("IM Size", ""),
+                ("CDN Path", "tpr/wow"),
+                ("CDN Hosts", "level3.blizzard.com us.cdn.blizzard.com"),
+                (
+                    "CDN Servers",
+                    "http://level3.blizzard.com/?maxhosts=8 "
+                    "http://us.cdn.blizzard.com/?maxhosts=4&fallback=1 "
+                    "https://level3.ssl.blizzard.com/?maxhosts=4&fallback=1 "
+                    "https://us.cdn.blizzard.com/?maxhosts=4&fallback=1",
+                ),
+                ("Armadillo", ""),
+                ("Last Activated", ""),
+                ("KeyRing", ""),
+            ),
+        }
+    ],
+}
+
 
 @pytest.mark.parser
 def test_hand_split_keys_of_the_70888_run_are_the_keys() -> None:

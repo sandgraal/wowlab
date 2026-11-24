@@ -278,6 +278,29 @@ def test_constructed_unit_names_to_keys(name: str, home: str | None, want: str |
 
 
 @pytest.mark.parser
+@pytest.mark.parametrize(
+    ("name", "want"),
+    [
+        # M21-02: on a flavor with second names, four or more parts are the
+        # launch client's <First>-<Second>-<Realm>-<Region>.
+        ("Inventeda-Fake-realm-EU", ("Inventeda-Fake", "Inventeda", "Fake")),
+        ("Tay-Soulrend-Roleplay PvP-US", ("Tay-Soulrend", "Tay", "Soulrend")),
+        # Fewer parts read as before.
+        ("Inventeda-Fakerealm-", ("Inventeda-Fakerealm", "Inventeda", "Fakerealm")),
+        ("Inventeda-Fake realm-EU", ("Inventeda-Fakerealm", "Inventeda", "Fakerealm")),
+    ],
+    ids=["four-parts", "launch", "three-parts", "three-parts-space"],
+)
+def test_constructed_unit_names_on_a_second_name_flavor(
+    name: str, want: tuple[str, str, str]
+) -> None:
+    assert worldpvp.player_key(name, None, second_names=True) == want
+    if name.count("-") >= 3:  # without second names, the old reading
+        got = worldpvp.player_key(name, None)
+        assert got is not None and got[0] != want[0]
+
+
+@pytest.mark.parser
 def test_constructed_a_continued_read_carries_the_zone(tmp_path: Path) -> None:
     bg = zone(5, instance=489, name="Invented Gulch", difficulty=34)
     data = log(bg) + (you_hit(FOE_A, 10) + "\r\n").encode()

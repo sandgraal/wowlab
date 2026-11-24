@@ -40,6 +40,7 @@ from wowlab_core import (
     layout,
     luadata,
     nemesis,
+    region,
     snapshot,
     worldpvp,
 )
@@ -65,6 +66,8 @@ from wowlab_core.cli._common import (
     _listed,
     _Out,
     _plural,
+    _region_fields,
+    _region_text,
     _Report,
     _say,
     _say_err,
@@ -74,6 +77,7 @@ from wowlab_core.cli._common import (
     crew_app,
 )
 from wowlab_core.errors import WowlabError
+from wowlab_core.region import Region
 
 # ─── crew ────────────────────────────────────────────────────────────────────
 
@@ -176,6 +180,14 @@ class CrewReport(_Out):
     # M20-18: only players met in the open world (from a combat log `crew
     # scan-log` read), latest open-world encounter first.
     world: bool = False
+    # M21-02: the region the flavor's Config.wtf names (its `portal`
+    # setting as the client last wrote it: `us`, `eu`, `kr`, `tw` or `cn`),
+    # which every player row carries as `region`, since wowlab assumes every
+    # player is in your region (not yet confirmed); when
+    # it is None, `region_absent` says why. Both None when no book was
+    # chosen.
+    region: Region | None = None
+    region_absent: str | None = None
 
 
 class CrewShowReport(_Out):
@@ -203,6 +215,9 @@ class CrewShowReport(_Out):
     nemesis_rule: str = nemesis.NEMESIS_RULE
     rival_rule: str = nemesis.RIVAL_RULE
     sync: crewdb.SyncOutcome | None = None
+    # M21-02: as in `CrewReport`.
+    region: Region | None = None
+    region_absent: str | None = None
 
 
 class _Opened:
@@ -348,19 +363,65 @@ def _target(opened: _Opened) -> crewdb.Target | None:
     )
 
 
+def _crew_region(opened: _Opened) -> region.RegionReading | None:
+    """The chosen book's region (M21-02): its flavor's `portal` setting,
+    read from the flavor's Config.wtf; None when no one book was chosen."""
+    if opened.place is None or opened.where is None:
+        return None
+    _, lay = opened.where
+    return region.read(lay.flavor_path, root=lay.install_root)
+
+
+_CREW_REGION_SOURCE = (
+    "from your game's settings at its last exit; wowlab assumes every player is in your region"
+)
+
+
+def _crew_region_line(reading: region.RegionReading | None, *, unconfirmed: bool) -> str | None:
+    """The text line that names the book's region, as `crew list`, `crew
+    show` and `crew matches` print it; None without a book. It says the
+    assumption is not yet confirmed (`unconfirmed`) unless the run prints
+    the standing notes, which already say "not yet confirmed" once (the
+    role): a report says it at most once."""
+    if reading is None:
+        return None
+    source = _CREW_REGION_SOURCE + (", not yet confirmed" if unconfirmed else "")
+    return _region_text(reading.region, reading.absent, source)
+
+
+def _crew_second_names(opened: _Opened) -> bool:
+    """Whether the chosen book's flavor names characters by first and
+    second name (M21-02): a digits-only folder of one of its accounts holds
+    a `<First>-<Second>` character folder, as `layout` reads it. The client
+    then reports a player's second name where retail reports the realm, so
+    a crew key is `<First>-<Second>`. Read from the folders, never from the
+    flavor's name (L6)."""
+    if opened.place is None or opened.where is None:
+        return False
+    _, lay = opened.where
+    return layout.has_second_names(lay)
+
+
 def _from_database(
-    opened: _Opened,
+    opened: _Opened, reading: region.RegionReading | None = None
 ) -> tuple[crewdb.SyncOutcome | None, list[crewdb.CrewRow]]:
     """Sync the chosen book into wowlab's crew database, then every player
-    the database keeps (§21.3, "Reading"). A sync that did not run says why
-    in its outcome; the players are then the database's as they were."""
+    the database keeps (§21.3, "Reading"), each with the book's region
+    (`reading`). A sync that did not run says why in its outcome; the
+    players are then the database's as they were."""
     target = _target(opened)
     if target is None:
         return None, []
     outcome: crewdb.SyncOutcome | None = None
     if opened.book.state != "not_turned_on" and opened.data is not None:
         outcome = crewdb.sync(target, opened.data, opened.book, reread=_rereader(opened))
-    return outcome, crewdb.read(target.flavor_folder, target.account, opened.book)
+    return outcome, crewdb.read(
+        target.flavor_folder,
+        target.account,
+        opened.book,
+        region=reading.region if reading is not None else None,
+        second_names=_crew_second_names(opened),
+    )
 
 
 def _rereader(opened: _Opened) -> Callable[[], bytes] | None:
@@ -637,7 +698,8 @@ def crew_list(
         sort = _default_sort(nemeses=nemeses, rivals=rivals, world=world)
     opened = _open_book(root, flavor, account)
     book = opened.book
-    outcome, kept = _from_database(opened)
+    reading = _crew_region(opened)
+    outcome, kept = _from_database(opened, reading)
     on_map: set[str] | None = None
     target = _target(opened)
     if map_text is not None:
@@ -692,6 +754,8 @@ def crew_list(
         map=map_text,
         since=since,
         world=world,
+        region=_region_fields(reading)[0],
+        region_absent=_region_fields(reading)[1],
     )
     if json_out:
         _emit(report)
@@ -720,6 +784,9 @@ def crew_list(
         _say(_row(p))
     for line in _unread_lines(book):
         _say(line)
+    region_line = _crew_region_line(reading, unconfirmed=not notes)
+    if region_line is not None:
+        _say(region_line)
     _say_notes(_CREW_NOTES, notes)
 
 
@@ -839,7 +906,8 @@ def crew_show(
     JSON: CrewShowReport."""
     opened = _open_book(root, flavor, account)
     book, place = opened.book, opened.place
-    outcome, kept = _from_database(opened)
+    reading = _crew_region(opened)
+    outcome, kept = _from_database(opened, reading)
     caveat = _sync_caveat(outcome)
     player: crewdb.CrewRow | None = None
     if book.state != "not_turned_on" or kept:
@@ -866,6 +934,9 @@ def crew_show(
         assert place is not None
         lines = [f"{player.key}, from the crew book of {_place_words(place)}, {_AS_OF}:"]
         lines += _field_lines(player)
+        region_line = _crew_region_line(reading, unconfirmed=not notes)
+        if region_line is not None:
+            lines.append(f"  {region_line}")
         if player.also_known_as:
             lines.append(
                 "  Also seen as: "
@@ -897,6 +968,8 @@ def crew_show(
         notes=_CREW_NOTES,
         fights=_fights_of(opened, player),
         sync=outcome,
+        region=_region_fields(reading)[0],
+        region_absent=_region_fields(reading)[1],
     )
     if json_out:
         _emit(report)
@@ -942,6 +1015,10 @@ class CrewMatchesReport(_Out):
     # showed, and the stored keys against you and with you.
     world: bool = False
     encounters: list[crewdb.CrewWorldEncounterRow] = pydantic.Field(default_factory=list)
+    # M21-02: the region of every stored key in `matches` and `encounters`,
+    # as in `CrewReport`.
+    region: Region | None = None
+    region_absent: str | None = None
 
 
 _MATCH_KIND_WORDS = {"bg": "battleground", "arena": "arena", "shuffle": "solo shuffle"}
@@ -1013,7 +1090,8 @@ def crew_matches(
     JSON: CrewMatchesReport."""
     opened = _open_book(root, flavor, account)
     book, place = opened.book, opened.place
-    outcome, kept = _from_database(opened)
+    reading = _crew_region(opened)
+    outcome, kept = _from_database(opened, reading)
     target = _target(opened)
     caveat = _sync_caveat(outcome)
     key: str | None = None
@@ -1078,6 +1156,8 @@ def crew_matches(
         sync=outcome,
         world=world,
         encounters=encounters,
+        region=_region_fields(reading)[0],
+        region_absent=_region_fields(reading)[1],
     )
     if json_out:
         _emit(report)
@@ -1087,6 +1167,12 @@ def crew_matches(
         _say(caveat)
     for line in lines:
         _say(line)
+    # The notes are printed only under listed matches, so only then do they
+    # carry the caveat.
+    shown_notes = notes and bool(lines)
+    region_line = None if never_on else _crew_region_line(reading, unconfirmed=not shown_notes)
+    if region_line is not None:
+        _say(region_line)
     if lines:
         _say_notes(_WORLD_NOTES if world else _MATCH_NOTES, notes)
 
@@ -1298,6 +1384,16 @@ class CrewScanLogReport(_Out):
     logs_already_read: int = 0
     logs_unreadable: int = 0
     logs_not_looked_at: int = 0
+    # M21-02: logs read again from their start because an earlier wowlab
+    # keyed their launch-client players the old way (the schema-5 step).
+    logs_read_again: int = 0
+    # M21-02: logs the schema-5 step could not read again (their players
+    # keep the old key; said once), and ratings and notes moved from an old
+    # launch-log key to the full name, or left because the match was not
+    # unambiguous.
+    logs_kept_old_keys: int = 0
+    marks_carried: int = 0
+    marks_not_carried: int = 0
 
 
 def _owner_guids(lay: layout.Layout, account: str) -> tuple[dict[str, str | None], int]:
@@ -1397,6 +1493,7 @@ def _read_log_parts(
     target: crewdb.Target,
     path: Path,
     owners: dict[str, str | None],
+    second_names: bool = False,
 ) -> crewdb.WorldOutcome:
     """Read the log and keep what it holds, a bounded part at a time: each
     part is read from where the last stopped and kept in its own write."""
@@ -1412,7 +1509,12 @@ def _read_log_parts(
         resume = crewdb.world_resume(target.flavor_folder, target.account, key, size, head_sha)
         try:
             scan = worldpvp.read_world(
-                path, owners, start=resume.start, state=resume.state, pvp_maps=maps
+                path,
+                owners,
+                start=resume.start,
+                state=resume.state,
+                pvp_maps=maps,
+                second_names=second_names,
             )
         except OSError as exc:
             raise CliError(f"cannot read the combat log {path}: {exc.strerror or exc}") from exc
@@ -1469,10 +1571,13 @@ def crew_scan_log(
     owners, without = _owner_guids(lay, target.account)
     if not owners:
         raise CliError(_NO_OWNER.format(account=target.account))
+    # M21-02: four-part unit names are first and second name only where the
+    # flavor's characters have second names (read from the folders, L6).
+    second_names = layout.has_second_names(lay)
     assert opened.place is not None
     place = _place_words(opened.place)
     if path is not None:
-        outcome = _read_log_parts(target, path, owners)
+        outcome = _read_log_parts(target, path, owners, second_names)
         label = _log_label(lay, path)
         words = f"{outcome.words} ({place}, {label})"
         lines = _scan_lines(outcome, without) if outcome.state in ("scanned", "unchanged") else []
@@ -1491,7 +1596,7 @@ def crew_scan_log(
                 "fight, then run this again"
             )
         if len(found) == 1:
-            outcome = _read_log_parts(target, found[0], owners)
+            outcome = _read_log_parts(target, found[0], owners, second_names)
             label = _log_label(lay, found[0])
             files = [CrewScanLogFile(log=label, scan=outcome)]
             words = f"{outcome.words} ({place}, {label})"
@@ -1502,7 +1607,7 @@ def crew_scan_log(
             files = []
             for each in found:
                 try:
-                    got = _read_log_parts(target, each, owners)
+                    got = _read_log_parts(target, each, owners, second_names)
                 except CliError as exc:
                     # One log that cannot be read does not hold the others.
                     cause = exc.__cause__
@@ -1532,6 +1637,35 @@ def crew_scan_log(
                 f"  {_plural(older, 'older log')} not looked at: only the newest {_MAX_LOGS:,} are."
             )
     states = [f.scan.state for f in files if f.scan is not None]
+    again = sum(1 for f in files if f.scan is not None and f.scan.read_again)
+    if again:
+        lines.append(
+            f"  {_plural(again, 'combat log')} an earlier wowlab read "
+            f"{'was' if again == 1 else 'were'} read again from the start, so each player "
+            "in them is now kept under their first and second name."
+        )
+    scans = [f.scan for f in files if f.scan is not None]
+    kept_old = sum(o.logs_kept_old_keys for o in scans)
+    carried = sum(o.marks_carried for o in scans)
+    not_carried = sum(o.marks_not_carried for o in scans)
+    if kept_old:
+        lines.append(
+            f"  {_plural(kept_old, 'combat log')} an earlier wowlab read could not be read "
+            "again (moved, deleted or changed since): "
+            f"{'its' if kept_old == 1 else 'their'} players keep the old key, the second name "
+            "and the realm run together; crew forget removes one."
+        )
+    if carried:
+        lines.append(
+            f"  Kept your rating or note on {_plural(carried, 'player')} under their full name."
+        )
+    if not_carried:
+        lines.append(
+            f"  {_plural(not_carried, 'player')} rated or noted under an old key "
+            f"{'was' if not_carried == 1 else 'were'} left as they were: their game id names "
+            "more than one player, or the full name already has a rating or note; both rows "
+            "are kept."
+        )
     report = CrewScanLogReport(
         flavor_folder=target.flavor_folder,
         account=target.account,
@@ -1547,6 +1681,10 @@ def crew_scan_log(
         logs_already_read=states.count("unchanged"),
         logs_unreadable=sum(1 for f in files if f.unreadable is not None),
         logs_not_looked_at=0 if path is not None else older,
+        logs_read_again=again,
+        logs_kept_old_keys=kept_old,
+        marks_carried=carried,
+        marks_not_carried=not_carried,
     )
     failed = outcome.state in ("skipped", "elsewhere")
     if json_out:
