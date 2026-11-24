@@ -15,6 +15,10 @@ The rules this module exists to hold:
 - **ADR-0012.** This is the only network client in the library and no test
   exercises it live; tests inject a transport that replays recordings.
 
+The client's hotfix cache (`hotfix`, M22-23) is laid over cached tables by
+`overlay_hotfixes` and `flavor_hotfixes` only when its build is the
+tables' build; the cached files themselves are never changed (L5).
+
 Downloads stream into a temp name in the cache directory and are published
 under the final name only when complete, so an interrupted download never
 leaves a partial file there. Publishing is a hard link, which fails
