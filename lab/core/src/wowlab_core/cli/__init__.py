@@ -521,9 +521,6 @@ if TYPE_CHECKING:
         _check_toc_lines as _check_toc_lines,
     )
     from wowlab_core.cli._cmd_addons import (
-        _record_words as _record_words,
-    )
-    from wowlab_core.cli._cmd_addons import (
         _scope_lines as _scope_lines,
     )
     from wowlab_core.cli._cmd_addons import (
@@ -537,6 +534,9 @@ if TYPE_CHECKING:
     )
     from wowlab_core.cli._cmd_addons import (
         _ui_text as _ui_text,
+    )
+    from wowlab_core.cli._cmd_addons import (
+        _wowup_record_words as _wowup_record_words,
     )
     from wowlab_core.cli._cmd_addons import (
         addons_check as addons_check,

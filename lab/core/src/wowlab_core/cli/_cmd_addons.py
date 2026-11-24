@@ -87,7 +87,7 @@ def _toc_words(versions: Sequence[addonsource.TocVersion]) -> str:
     return "the TOCs here say " + ", ".join(parts)
 
 
-def _record_words(match: addonsource.RecordMatch) -> str:
+def _wowup_record_words(match: addonsource.RecordMatch) -> str:
     """What one record says about its addon, for the line of each folder it
     claims."""
     if not match.provider_known:
@@ -200,7 +200,7 @@ def addons_list(
         if a.blizzard:
             bits.append("named like a Blizzard addon")
         for claim in where.claims:
-            bits.append(_record_words(matches[(claim.manager, claim.record_id)]))
+            bits.append(_wowup_record_words(matches[(claim.manager, claim.record_id)]))
         if where.unclaimed:
             bits.append("not in WowUp's list")
         _say("  ".join(bits))
