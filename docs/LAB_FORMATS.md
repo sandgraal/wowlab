@@ -586,6 +586,52 @@ the M2's vertices are the seven skins' sets one after another; whether a
 LOD skin's lookup is relative to its set and what other models do stay
 **[verify]**, amendment of 2026-11-17).
 
+## 13. WowUp's `addons.json` (outside the install; M22-16)
+
+The WowUp addon manager's list of the addons it installed. It is not an
+install file: it lives in WowUp's own user-data folder, Electron's
+`userData` for the app (macOS `~/Library/Application Support/WowUp/`,
+seen 2026-11-23; Windows `%APPDATA%\WowUp\` and Linux `~/.config/WowUp/`
+by Electron's rule, **[verify]**). The same folder holds `sensitive.json`
+(WowUp's own keys), which wowlab never opens, and `preferences.json`,
+which wowlab does not read.
+
+electron-store JSON, UTF-8, tab-indented, no trailing newline (fixture
+`wowup/macos/addons.json`): one object keyed by WowUp's record id (a UUID),
+each value one addon. electron-store may add its own `__internal__` key;
+wowlab skips keys that start with `__` and values that are not objects.
+Fields in the capture, every one optional to the reader:
+
+- `id` (the key again), `name`, `author`, `summary`, `thumbnailUrl`;
+- `providerName` (`Wago` in the capture; CurseForge, GitHub and others by
+  WowUp's providers), `externalId`, `externalUrl` (the addon's page),
+  `externalIds` (a list of `{id, providerName}`; DBM's dungeon pack lists
+  two), `externalChannel` (`Stable`), `channelType`;
+- `installedVersion`, `latestVersion` (as of WowUp's last check),
+  `latestChangelogVersion`, `releasedAt`, `installedAt` (ISO 8601 text);
+- `installedFolderList` (a list) and `installedFolders` (the same names
+  joined with `,`); one record can name many folders (DBM: nine);
+- `clientType` (WowUp's own number for the kind of game folder: `5` in the
+  capture, whose one installation was the Forever beta's `_classic_beta_`;
+  what each number means is WowUp's and is not read), `installationId`
+  (WowUp's id for the game folder, defined in `preferences.json`),
+  `gameVersion` (a list of version strings, repeated);
+- `isIgnored`, `autoUpdateEnabled`, `autoUpdateNotificationsEnabled`,
+  `isLoadOnDemand`, `dependencies`, `fundingLinks`;
+- `downloadUrl`: a Wago download address whose `link=` query is an
+  encrypted, server-issued token. The capture tool cannot take a file
+  outside an install, so the fixture was copied by hand and that query's
+  value blanked (`REDACTED`) on all six records; wowlab never reads the
+  field.
+
+A record says what WowUp did when it last wrote the file, not what is on
+disk: the owner's file (last written 2026-09-26) records Baganator 829,
+and the launch-client capture of the same folder (`macos-70888`) says
+850. A TOC's `## Version:` need not equal `installedVersion`
+(`DBM-Dungeons-r264` against `r264`; `Pawn 2.13.16` against `2.13.16`;
+DBM's `DBM-VPVEM` carries a commit id), so `addonsource.versions_agree`
+compares them by the rule in that module's docstring.
+
 ## Amendments
 
 Dated entries, newest last. Each names the fixture that prompted it.

@@ -140,6 +140,8 @@ Anything weekly is anchored to the character's region, never to the local machin
 
 **TOC** — an addon's manifest (`Foo.toc`): metadata directives and the ordered list of files to load. One addon can ship several TOCs with suffixes so each flavor loads its own.
 
+**Addon manager** — a desktop app (WowUp, the CurseForge app) that downloads addons from a site (Wago, CurseForge, GitHub) and unzips them into `Interface/AddOns/`. **One addon is often several folders** (DBM's record in the owner's WowUp list names nine), and the manager keeps its own list of what it installed, outside the install, which the game never reads. That list says what the manager did, not what is on disk now: a folder updated by hand or by another app leaves the record behind (the owner's list of 2026-09-26 records Baganator 829 where the TOC captured later says 850). A folder's TOC `## Version:` is the addon author's text and need not match the manager's version label (`DBM-Dungeons-r264` against `r264`; DBM's voice pack carries a commit id). 2026-11-23, M22-16.
+
 **CVar** — a client console variable: a named setting persisted in `Config.wtf` or a `config-cache.wtf`. Scope is machine, account or character depending on the variable.
 
 **Account folder** — `WTF/Account/<NAME>/`. One folder per game account that logged in on the machine: a number with `#<n>` (e.g. `#1` or `#6`), where the `#<n>` suffix numbers the game accounts under one Battle.net account **[verify]**, or an old account name. It is personal data; fixtures pseudonymize it. An old-style name counts as an account folder only while it holds a character folder (M13-50). `WTF/Account/SavedVariables/` is the client's own and not an account.

@@ -552,6 +552,9 @@ def test_the_explorer_runs_only_listed_read_commands(server: Any) -> None:
         # M20-18: its "Read the combat logs not read before" runs `crew scan-log`, which
         # writes only into wowlab's crew database (graded in test_ui_crew.py).
         ("crew", "scan-log"),
+        # M22-16: the Addons view's "Where they came from" reads `addons list`
+        # (graded in test_ui_addon_sources.py).
+        ("addons", "list"),
     }, used
     for path in used:
         assert path in offered, path

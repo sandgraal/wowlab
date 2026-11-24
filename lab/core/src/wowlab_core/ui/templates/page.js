@@ -3243,6 +3243,8 @@
           ),
           // A backup's record of a folder with no lab record (M18-11).
           held: Array.isArray(report.records_in_backups) ? objects(report.records_in_backups) : [],
+          // The flavor folders, for the Addons view's reads (M22-16).
+          flavors: objects(report.flavors).map((f) => f.folder).filter((f) => typeof f === "string" && f !== ""),
         };
         hub.note = reply.error ? shown(reply.error) : "";
         // Each card fails on its own: an error in one is said in that card,
@@ -3593,6 +3595,7 @@
       }
       loadHub();
     }
+    if (name === "addons") alone(sourcesSay, () => loadSources());
     if (name === "gaps") loadGaps();
     if (name === "crew") loadCrew();
     if (name === "character" || keys) {
@@ -5433,6 +5436,173 @@
     inputs.push({ param: param, input: input, box: box });
     return box;
   }
+
+  // ─── where each addon came from (M22-16) ───
+  // Per flavor the hub's report lists, the `sources` of `addons list
+  // --json`: the records of the addon managers wowlab reads (the WowUp
+  // app's), joined to the addon folders by the command. Every judgement (a
+  // record out of date, an update, a folder in no list) is the command's;
+  // the page lays it out. Read the first time the Addons view is shown,
+  // after the patch-day reads, one run at a time. Nothing here edits
+  // anything, and no address in a record becomes a link.
+
+  const sources = {
+    asked: null, // the reads, once; asked again after the hub failed
+    flavors: [], // per flavor folder, what `addons list` said
+  };
+
+  function sourcesSay(text, isError) {
+    const node = byId("sources-status");
+    announce(node, text, Boolean(isError));
+    node.classList.toggle("error", Boolean(isError));
+  }
+
+  function loadSources() {
+    if (!sources.asked) {
+      sources.asked = (async () => {
+        await loadHub();
+        if (!hub.report) {
+          // The hub's own line says why; the next visit asks again.
+          sources.asked = null;
+          return;
+        }
+        await (patchDay.reading || Promise.resolve());
+        const folders = [...new Set(hub.report.flavors || [])];
+        if (!folders.length) {
+          sourcesSay("wowlab found no flavor folder to read.", false);
+          return;
+        }
+        sourcesSay("Reading where your addons came from…", false);
+        const read = [];
+        for (const folder of folders) {
+          const reply = await runJson(["addons", "list"], { flavor: folder }, false, true);
+          read.push(sourcesRead(folder, reply));
+        }
+        sources.flavors = read;
+        sourcesSay("", false);
+        drawSources();
+      })();
+    }
+    return sources.asked;
+  }
+
+  function sourcesRead(folder, reply) {
+    const data = reply.data && typeof reply.data === "object" ? reply.data.sources : null;
+    if (!data || typeof data !== "object" || !Array.isArray(data.files) || !Array.isArray(data.records) ||
+        !Array.isArray(data.folders)) {
+      return {
+        flavor: folder,
+        error: reply.error ? shown(reply.error) : "wowlab addons list printed something this page does not know.",
+        files: [], records: [], folders: [],
+      };
+    }
+    return {
+      flavor: folder,
+      error: "",
+      files: objects(data.files).filter((f) => typeof f.state === "string"),
+      records: objects(data.records).filter((r) => typeof r.record_id === "string"),
+      folders: objects(data.folders).filter((f) => typeof f.folder === "string"),
+    };
+  }
+
+  function sourcesLine(box, className, text) {
+    const line = make("p", text);
+    line.className = className;
+    box.appendChild(line);
+  }
+
+  // One record as a line: its name, the site, the version WowUp installed,
+  // and either the update WowUp knew of or why the record is out of date.
+  function sourcesRecord(record) {
+    const item = make("li");
+    item.className = "sources-item";
+    const name = hubStr(record.name) ? record.name : record.record_id;
+    item.appendChild(make("strong", visible(name)));
+    const words = [];
+    if (hubStr(record.provider)) words.push("from " + visible(record.provider));
+    const installed = hubStr(record.installed_version);
+    const stale = record.stale === true;
+    if (installed) words.push((stale ? "WowUp installed " : "version ") + visible(installed));
+    if (stale) {
+      const why = texts(record.stale_why);
+      const parts = [];
+      if (why.includes("version_differs") && texts(record.toc_versions).length) {
+        parts.push("the TOC now says " + texts(record.toc_versions).map(visible).join(", "));
+      }
+      if (why.includes("folders_missing") && texts(record.folders_missing).length) {
+        parts.push("not here: " + texts(record.folders_missing).map(visible).join(", "));
+      }
+      words.push("WowUp's record is out of date" + (parts.length ? " (" + parts.join("; ") + ")" : ""));
+    } else if (record.update_available === true && hubStr(record.latest_version)) {
+      words.push("update " + visible(record.latest_version) + " available when WowUp last checked");
+    }
+    item.appendChild(make("span", (words.length ? ": " + words.join(", ") : "") + "."));
+    const here = texts(record.folders_here);
+    if (here.length) {
+      const folders = make("span", " Folders: " + here.map(visible).join(", ") + ".");
+      folders.className = "sources-folders";
+      item.appendChild(folders);
+    }
+    return item;
+  }
+
+  function sourcesList(box, what, items) {
+    if (!items.length) return;
+    sourcesLine(box, "sources-what", what);
+    const list = make("ul");
+    list.className = "sources-list";
+    list.append(...items);
+    box.appendChild(list);
+  }
+
+  function sourcesBlock(read, several) {
+    const item = make("li");
+    if (several) item.appendChild(make("h4", visible(read.flavor)));
+    if (read.error) sourcesLine(item, "sources-error", read.error);
+    let anyRead = false;
+    for (const file of read.files) {
+      if (file.state === "read") {
+        anyRead = true;
+        const n = hubNum(file.written_ns);
+        const held = Array.isArray(file.records) ? file.records.length : null;
+        sourcesLine(item, "sources-clear",
+          "WowUp's list" + (n === null ? "" : ", last written " + localTime(n)) + ": " +
+          plural(held, "addon", "addons") + ".");
+      } else if (file.state === "unreadable") {
+        sourcesLine(item, "sources-error", "wowlab could not read WowUp's list: " +
+          (hubStr(file.error) ? visible(file.error) : "no reason given") + ".");
+      }
+    }
+    if (!read.error && !anyRead && !read.files.some((f) => f.state === "unreadable")) {
+      sourcesLine(item, "sources-clear",
+        "wowlab found no WowUp list on this computer, so it cannot tell where these addons came from.");
+    }
+    const records = read.records;
+    sourcesList(item, "In WowUp's list",
+      records.filter((r) => texts(r.folders_here).length > 0).map(sourcesRecord));
+    sourcesList(item, "In WowUp's list, with none of their folders here",
+      records.filter((r) => texts(r.folders_here).length === 0).map(sourcesRecord));
+    const loose = read.folders.filter((f) => f.unclaimed === true).map((f) => visible(f.folder));
+    if (loose.length) {
+      sourcesLine(item, "sources-what", "In no addon manager's list (" + grouped(loose.length) + ")");
+      sourcesLine(item, "sources-loose", loose.join(", "));
+    }
+    if (anyRead) {
+      sourcesLine(item, "sources-note",
+        "Matched by folder name. An out-of-date record means the addon changed after WowUp last wrote its list.");
+    }
+    return item;
+  }
+
+  function drawSources() {
+    const flavor = byId("hub-flavor").value;
+    const several = sources.flavors.length > 1;
+    byId("sources-lines").replaceChildren(
+      ...sources.flavors.filter((r) => !flavor || "f:" + r.flavor === flavor).map((r) => sourcesBlock(r, several)),
+    );
+  }
+
+  byId("hub-flavor").addEventListener("change", () => drawSources());
 
   // ─── the confirm step (M14-02) ───
 
