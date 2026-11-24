@@ -16,7 +16,7 @@ buttons, where button n of the bar showing page p is slot (p - 1) * 12 + n.
 That numbering is the default UI's **[verify]**. The real record is
 consistent with it and proves no more: `MULTIACTIONBAR1BUTTON1` to `3` hold
 keys and slots 61 to 63 hold spells, and slots 49 and 50 fit page 5; no
-`MULTIACTIONBAR5` to `7` command has a key in it, so bars 5 to 7 are
+`MULTIACTIONBAR5` to `7` command has a key in it, so Action Bars 6 to 8 are
 unconfirmed on Forever. The main bar is read at page 1 only. Its other pages
 (`UNFOLLOWED_SLOTS`: page 2, and the pages forms, stances and stealth show)
 are not followed, nor are the pet and stance bars, an addon's buttons, or a

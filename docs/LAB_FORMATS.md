@@ -664,6 +664,84 @@ the M2's vertices are the seven skins' sets one after another; whether a
 LOD skin's lookup is relative to its set and what other models do stay
 **[verify]**, amendment of 2026-11-17).
 
+## 13. Talent loadout strings (M22-18)
+
+*Written 2026-11-23 from Blizzard's own interface code, Gethe/wow-ui-source
+branch `forever` at commit `734f0653` ("1.60.1 (71037)"):
+`Blizzard_PlayerSpells/ClassTalents/Blizzard_ClassTalentImportExport.lua`
+and the stream it writes with, `Blizzard_SharedXMLBase/ExportUtil.lua`. No
+loadout string from a Forever client has been captured; nothing here is
+checked against one.* For M21-07 and the character planner. This is the
+`C_Traits` loadout string the talent frame imports and exports; it is not
+the wowforeverbuilds.com URL M21-07 builds from the Legacy talents record.
+
+**Text.** One character per 6 bits, from the alphabet
+`A`–`Z`, `a`–`z`, `0`–`9`, `+`, `/` (character n stands for the number n;
+`A` is 0), with no padding character and no separators. The last character
+carries the stream's last bits in its low positions, the rest zero.
+
+**Bit order.** The stream is little-endian at every level: each value is
+written low bits first, and bit i of the stream is bit (i mod 6) of
+character i div 6. A value of width w takes the stream's next w bits, its
+bit 0 first. (`ExportUtil.ConvertToBase64` and
+`ImportDataStreamMixin:ExtractValue`.)
+
+**Header** (152 bits; a string shorter than that is refused as a bad
+string):
+
+| Field | Bits | What it is |
+|---|---|---|
+| serialization version | 8 | `C_Traits.GetLoadoutSerializationVersion()`; a string of another version is refused ("serialization version mismatch"). Its value on Forever is **[verify]**. |
+| specialization id | 16 | the `ChrSpecialization` id the loadout is for; importing it on another specialization is refused. |
+| tree hash | 16 × 8 | `C_Traits.GetTreeHash(treeID)`, 16 bytes in order. All zero is allowed, and skips the check (the comment says so for third-party sites); otherwise a tree that changed is refused ("tree changed"). |
+
+**Content**, one record per node of the class's tree, in the order
+`C_Traits.GetTreeNodes(treeID)` returns them (every node of the class tree,
+all specializations', ascending by node id; only the header's
+specialization's nodes may be selected). As the code writes it:
+
+```
+selected            1 bit   granted or purchased
+  if selected:
+  purchased         1 bit   0: granted, read as rank 1 granted, nothing more for this node
+    if purchased:
+    partially ranked  1 bit  ranks purchased differ from the node's max ranks
+      if partially ranked:
+      ranks purchased 6 bits
+    choice node       1 bit  a Selection or SubTreeSelection node
+      if choice node:
+      entry index     2 bits zero-based index into the node's entry ids
+```
+
+The file's own header comment says the partially-ranked and choice bits are
+written whenever a node is selected; the code writes them only when it is
+purchased, as above. Follow the code. A purchased node that is not
+partially ranked takes its max ranks. A tiered node's purchased ranks are
+spread over its entries in order, each up to its own max ranks. The export
+raises an error for a choice entry index outside 1 to 4 (so 2 bits hold
+it). `ExtractValue` returns nil only for a read that starts past the last
+character: a node whose first bit would be there reads as not selected
+(nil is not 1), and a ranks field read there is nil, which the import
+then treats as max ranks (`partialRanksPurchased or maxRanks`). A field
+that starts in the last character and runs past it raises a Lua error
+instead (the stream's next value is nil, and the arithmetic on it fails).
+`ConvertFromBase64` looks each character up in the alphabet and inserts
+the result with `table.insert`; for a character outside the alphabet the
+lookup is nil, and under Lua 5.1 inserting nil appends nothing, so such a
+character is probably skipped rather than refused **[verify]**.
+
+**On Forever** (all **[verify]**). `Blizzard_ClassTalentImportExport.lua`
+is listed in `Blizzard_PlayerSpells.toc` with no game-type condition, so it
+loads for Forever's `camelot` game type. But the `Camelot` talent frame
+that the TOC loads for that game type
+(`Camelot/ClassTalents/Blizzard_ClassTalentsFrame.lua`) hides the whole
+loadout system (`InitializeLoadSystem` calls `self.LoadSystem:Hide()`),
+which is where the import, the copy-to-clipboard export and the chat link
+live, and the button that copies an inspected player's loadout
+(`HasCopyButton` returns false). Whether a Forever player can export or
+import a loadout string in game at all, the serialization version, and the
+order `C_Traits.GetTreeNodes` gives on Forever are all unobserved.
+
 ## Amendments
 
 Dated entries, newest last. Each names the fixture that prompted it.
@@ -1437,3 +1515,37 @@ Dated entries, newest last. Each names the fixture that prompted it.
   hyphen, which would make a four-part name ambiguous, is **[verify]**; so is
   whether the launch client writes the owner's own unit name in four parts
   too (the slice holds no line of the owner's).
+- **2026-11-23, §6 and §7, the client's own commands (M22-18; the fixtures
+  `macos-70425/…/Labchard-Labrealme/SavedVariables/WowLab.lua`,
+  `macos-70888/…/Sandgraal-Rizzen/` (its `bindings-cache.wtf`,
+  `macros-cache.txt` and `WowLab.lua`) and the other real `macros-cache.txt`
+  files).** The list of the client's key-binding commands and the list of
+  its slash commands are now read from Blizzard's interface code at
+  1.60.1.71037 (Gethe/wow-ui-source `forever`, commit `734f0653`) and, for
+  the texts a player types and the English names, the client's strings at
+  1.60.1.70938 (Ketho/BlizzardInterfaceResources, commit `e230342a`), by
+  `scripts/forever_api.py`, and shipped as
+  `lab/core/src/wowlab_core/client_lists/`. §6: the binding file Forever
+  loads is taken to be `Blizzard_FrameXML/Bindings_Camelot.xml` (of five
+  `Bindings_*.xml`; the TOC files load `[Game]` folders named `Camelot`
+  for Forever's game type), with every Blizzard addon's `Bindings.xml`.
+  Against the real records, every command with a key is in that list but
+  two: `QUESTIE_TOGGLE_JOURNEY` (Questie) and `ITEMTREE_OPEN` (ItemTree), both an
+  addon's, and `TOGGLELEGACYSYSTEM`, in the 70888 record, is defined only
+  by `Bindings_Camelot.xml`. So the "other bound commands **unexplained**"
+  of the 2026-10-16 entry's item 8 are the game's own commands, each now
+  named in the game's words (`TOGGLEWORLDMAP` is "Toggle World Map Pane",
+  under "Interface Panel"), with `ITEMTREE_OPEN` the one addon command in
+  that record. Why a command with a key is in no `bindings-cache.wtf` is
+  still **[verify]**. §7: every `/command` in the real macro files (`/cast`,
+  `/use`, `/castsequence` and the emotes `/kneel` and `/dance`) is one of
+  the client's. The slash list holds every client language's texts, each
+  with the languages that name it; the check reads English and the
+  install's `textLocale` (`SET textLocale "enUS"` in every real
+  `Config.wtf`), and every language when no `textLocale` is set. Both
+  lists judge only a client of their own major.minor.patch (1.60.1); any
+  other build is "cannot judge". Three chat commands `macrocheck` lists
+  from memory (`/bn`, `/print`, `/raidwarning`) are named by no client
+  string at this build. A key bound straight to a spell, item or macro
+  (`SPELL …`, `ITEM …`, `MACRO …`) or to a frame's button (`CLICK …`) is
+  the client's own binding kind, not an addon's command.
