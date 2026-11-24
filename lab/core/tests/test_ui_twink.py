@@ -161,9 +161,10 @@ def test_the_links_are_static_markup_with_no_href() -> None:
         '<a id="char-twink-wowhead" class="dressing-link" target="_blank" '
         'rel="noopener noreferrer" hidden>',
     ]
-    # After the dressing room's and M21-03's; M21-05's profile links follow.
+    # After the dressing room's, See my look's (M21-06) and M21-03's; M21-05's
+    # profile links follow.
     assert [a for a in anchors if 'id="char-twink-' in a] == twink_links
-    assert anchors.index(twink_links[0]) == 4
+    assert anchors.index(twink_links[0]) == 5
     script = (_TEMPLATES / "page.js").read_text(encoding="utf-8")
     # Since M21-03 the page names no origin: each twink link takes only an
     # address checked against the origin the server's allowlist gives its
@@ -175,8 +176,9 @@ def test_the_links_are_static_markup_with_no_href() -> None:
     # The one sink's helper: its definition and its calls, each given an
     # address `outsideAddress` returned for that link's own site (the
     # dressing room, the three saved links, the planner, the Wowhead link,
-    # and M21-05's profile links of other players, one call for all six).
-    assert script.count("pointLink(") == 6
+    # since M21-06 See my look, graded in test_ui_purist.py, and M21-05's
+    # profile links of other players, one call for all six).
+    assert script.count("pointLink(") == 7
     assert script.count("function pointLink(link, checked) {") == 1
     for call, checked in (
         ("pointLink(link, checked);", "const checked = dressingAddress(dressing.url);"),

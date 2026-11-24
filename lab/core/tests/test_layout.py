@@ -33,6 +33,7 @@ from wowlab_core.layout import (
     classify,
     layouts,
 )
+from wowlab_core.toc import PartialTocError
 
 FIXTURES = Path(__file__).resolve().parent / "fixtures"
 REAL_TOC = (
@@ -318,13 +319,24 @@ def test_addons_tocs_and_selection_constructed(tmp_path: Path) -> None:
     assert addons["Empty"].selection == "no_toc"
 
 
-def test_oversized_toc_is_reported_not_read_constructed(tmp_path: Path) -> None:
+def test_oversized_toc_is_read_in_part_constructed(tmp_path: Path) -> None:
+    """A TOC over the limit gives its header only, within the limit (M22-21;
+    before it, the TOC was not read at all)."""
     _, flavor = _install(tmp_path, {"Interface/AddOns/Foo/Foo.toc": REAL_TOC})
     (addon,) = Layout(flavor, limits=Limits(max_toc_bytes=100)).addons()
     (toc,) = addon.tocs
-    assert toc.document is None
-    assert toc.error is not None and "larger than 100 bytes" in toc.error
+    assert toc.error is None
     assert toc.size == len(REAL_TOC)
+    doc = toc.document
+    assert doc is not None and doc.partial is True
+    kept = b"".join(line.raw + line.ending.encode("ascii") for line in doc.lines)
+    assert 0 < len(kept) <= 100 and REAL_TOC.startswith(kept) and kept.endswith(b"\n")
+    with pytest.raises(PartialTocError):
+        doc.to_bytes()  # a summary, never the file
+    assert doc.interface is not None and doc.interface.versions == (50504, 120100)
+    assert doc.get("Version") == "r264"
+    whole = Layout(flavor).addons()[0].tocs[0].document
+    assert whole is not None and whole.partial is False and whole.to_bytes() == REAL_TOC
 
 
 # ─── other areas and overrides ──────────────────────────────────────────────

@@ -478,6 +478,9 @@ if TYPE_CHECKING:
         addon_remove as addon_remove,
     )
     from wowlab_core.cli._cmd_addons import (
+        _BEFORE_FILES as _BEFORE_FILES,
+    )
+    from wowlab_core.cli._cmd_addons import (
         _CHECK_BLIZZARD as _CHECK_BLIZZARD,
     )
     from wowlab_core.cli._cmd_addons import (
@@ -488,6 +491,9 @@ if TYPE_CHECKING:
     )
     from wowlab_core.cli._cmd_addons import (
         _CHECK_OUT_OF_DATE as _CHECK_OUT_OF_DATE,
+    )
+    from wowlab_core.cli._cmd_addons import (
+        _PARTIAL as _PARTIAL,
     )
     from wowlab_core.cli._cmd_addons import (
         _SOURCES_FOLDERS as _SOURCES_FOLDERS,
