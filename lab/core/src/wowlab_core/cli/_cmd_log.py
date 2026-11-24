@@ -338,7 +338,7 @@ def _say_practice(report: PracticeReport, s: practice.PracticeSummary) -> None:
 
 @log_app.command(
     "practice",
-    short_help="One stretch of your play from the combat log: casts, cooldowns, buffs.",
+    short_help="Casts, cooldowns and buffs in one stretch of a combat log.",
 )
 @_handled
 def log_practice(
