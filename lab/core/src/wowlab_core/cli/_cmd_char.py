@@ -24,6 +24,8 @@ from wowlab_core import (
     labaddon,
     lastbackup,
     layout,
+    links,
+    linkstore,
     luadata,
     macrocheck,
     macroplace,
@@ -1318,6 +1320,55 @@ class CharNames(_Out):
     class_name: str | None
 
 
+class CharLinkRow(_Out):
+    """One address the player pasted for a character (M21-03, `char link
+    set`): the character it belongs to (flavor folder, account folder,
+    `<realm or digits folder>/<character folder>`), the site's key and name,
+    the kind (`profile`, `build`, `report`), the words the page shows, the
+    address, and when it was saved (UTC)."""
+
+    flavor_folder: str
+    account: str
+    character: str
+    site: str
+    site_name: str
+    kind: str
+    label: str
+    url: str
+    saved_at: str
+
+
+def _link_row(key: linkstore.CharacterKey, link: linkstore.StoredLink) -> CharLinkRow:
+    """A saved address as a row, named as `link_sites.toml` names its site
+    and kind."""
+    sites = links.load_link_sites()
+    site = sites.sites.get(link.site)
+    shape = next(
+        (p for p in sites.pasted.values() if p.site == link.site and p.kind == link.kind), None
+    )
+    return CharLinkRow(
+        flavor_folder=key.flavor,
+        account=key.account,
+        character=key.character,
+        site=link.site,
+        site_name=site.name if site is not None else link.site,
+        kind=link.kind,
+        label=shape.label if shape is not None else link.kind,
+        url=link.url,
+        saved_at=link.saved_at,
+    )
+
+
+def _saved_links(key: linkstore.CharacterKey) -> tuple[list[CharLinkRow], str | None]:
+    """The addresses saved for one character, and why none could be read
+    (None when the file was read or there is none). Never raises."""
+    try:
+        stored = linkstore.read()
+        return [_link_row(key, s) for s in linkstore.links_for(stored.file, key)], None
+    except (linkstore.LinkStoreError, links.LinkSitesError) as exc:
+        return [], f"Your saved addresses could not be read: {exc}"
+
+
 class CharGearReport(_Out):
     """`wowlab char gear --json`: one character's equipped gear from the
     lab-addon's `gear` record, slot by slot in the client's slot order, each
@@ -1352,6 +1403,10 @@ class CharGearReport(_Out):
     game_name: layout.FsText
     region: Region | None
     region_absent: str | None
+    # The addresses the player pasted for this character (M21-03, `char
+    # link set`), each checked again as it is read; empty for a character
+    # kept only in a backup.
+    saved_links: list[CharLinkRow] = Field(default_factory=list)
     # The flavor folder read, as the other `char` reports name it; just
     # before `dressing`, which stays last (M16-114).
     flavor_folder: str
@@ -1638,6 +1693,14 @@ def char_gear(
     )
     if isinstance(report, str):
         raise CliError(report)
+    saved, unread = _saved_links(
+        linkstore.CharacterKey(
+            flavor=chosen.folder, account=acct.folder, character=report.character
+        )
+    )
+    report = report.model_copy(
+        update={"saved_links": saved, "notes": [*report.notes, *([unread] if unread else [])]}
+    )
     section = record.gear
     assert isinstance(section, labaddon.Gear)  # _gear_report said so
     filled = report.slots
@@ -1653,6 +1716,8 @@ def char_gear(
     _say(f"File: {target.path}")
     _say(f"Written: {_local_time(target.mtime_ns)} ({_SAVED_AT})")
     _say(_region_text(report.region, report.region_absent))
+    for row in report.saved_links:
+        _say(f"{row.label}: {row.url}")
     for line in _header_lines(report):
         _say(line)
     _say(

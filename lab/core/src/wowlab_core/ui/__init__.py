@@ -1403,16 +1403,32 @@ def _positive_bytes(value: object) -> int:
     return value
 
 
+def _link_origins() -> dict[str, str]:
+    """The outside origins the page may link to, by site key (M21-03): the
+    shipped `link_sites.toml`'s `[sites]`, never the player's files. The
+    page draws an outside link only when its address is https: and its
+    origin is exactly the one listed for the site it names. A file that
+    cannot be used gives none, so the page draws no outside link at all."""
+    from wowlab_core import links
+
+    try:
+        return links.origins()
+    except links.LinkSitesError:
+        return {}
+
+
 def _commands_body(leaves: Mapping[tuple[str, ...], _Leaf]) -> bytes:
     """The `/api/commands` body. The home folder is data from the machine,
     like a file name: escaped as a run's output is. `<`, `>` and `&` occur
-    only inside JSON strings, so translating the whole document is safe."""
+    only inside JSON strings, so translating the whole document is safe.
+    `link_origins` is the page's allowlist of outside origins (M21-03)."""
     return (
         json.dumps(
             {
                 "commands": [_describe(leaf) for leaf in leaves.values()],
                 "home": _home(),
                 "sep": os.sep,
+                "link_origins": _link_origins(),
             },
             ensure_ascii=True,
         )

@@ -85,6 +85,9 @@ READS = {
     # and downloads only into wowlab's own game-table cache.
     ("char", "twink"),
 }
+# M21-03: the saved-links panel's buttons run the plan of `char link set`
+# or `char link forget` (a dry run); a confirmed run needs the server's token.
+PLANS = {("char", "link", "set"), ("char", "link", "forget")}
 # The picker asks for no record (M13-72): `char list --json --brief`.
 LIST_PARAMS = {"brief": True}
 PICK_READS = (["char", "gear"], ["char", "binds"], ["char", "macros"], ["char", "history"])
@@ -538,6 +541,9 @@ def test_the_tab_runs_only_the_four_char_reads(server: Any, timed: Path, tmp_pat
     asked = _tab_requests(out, 0)
     assert asked, "the tab ran something"
     for body in asked:
+        if tuple(body["command"]) in PLANS:
+            assert "confirm" not in body, body
+            continue
         assert tuple(body["command"]) in READS, body
         if body["command"] != ["char", "list"]:
             assert body["params"] in (_gear_params(NEWER), _gear_params(OLDER)), body
