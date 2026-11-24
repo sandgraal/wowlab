@@ -78,7 +78,8 @@
       ],
       "names_command": "wowlab names fetch",
       "crew_books": [],
-      "crew_databases": []
+      "crew_databases": [],
+      "hotfix_cache": null
     }
   ],
   "other_dirs": [],
