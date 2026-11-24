@@ -16,6 +16,7 @@ from typing import Literal
 
 from wowlab_core import (
     charhistory,
+    charname,
     combatlog,
     crewbook,
     crewdb,
@@ -146,11 +147,15 @@ def _live_names(target: layout.SavedVariablesFile) -> list[str]:
     `Name-Realm` under a realm-name folder (a digits-only folder names no
     realm)."""
     folder = target.character_folder or ""
-    out = [folder]
-    if "-" in folder:
-        out.append(folder.replace("-", " ", 1))
     realm = target.realm_folder or ""
-    if realm and not (realm.isascii() and realm.isdigit()):
+    numeric = charname.is_numeric_folder(realm)
+    out = [folder]
+    first, second = charname.split_folder(folder, numeric=numeric)
+    if second is not None:
+        out.append(charname.game_name(first, second))
+    elif "-" in folder:
+        out.append(folder.replace("-", " ", 1))
+    if realm and not numeric:
         out.append(f"{folder}-{realm}")
     return out
 
@@ -335,6 +340,8 @@ def live_recap(
     folder = _logs_dir(lay)
     logs = combatlog.find_logs(folder)[-_LIVE_MAX_LOGS:] if folder is not None else []
     book = _live_book(lay, acct.folder)
+    # Forever: a player in the log is keyed `First-Second`, as the book keys them.
+    second = layout.has_second_names(lay)
     matches, book_note = book.matches, book.note
     try:
         maps = crewdb.world_maps(chosen.folder, acct.folder)
@@ -353,7 +360,9 @@ def live_recap(
         match_words = "No combat log: type /combatlog in game to start one."
     else:
         unread: list[str] = []
-        match = live.match_recap(logs, owners, pvp_maps=maps, book=matches, notes=unread)
+        match = live.match_recap(
+            logs, owners, pvp_maps=maps, book=matches, notes=unread, second_names=second
+        )
         if match is not None:
             match_words = None
         elif unread:
@@ -374,7 +383,16 @@ def live_recap(
         session_words = str(exc)
     if target is not None:
         session, session_words = _live_session(
-            lay, chosen.folder, chosen.version, acct.folder, target, logs, owners, maps, matches
+            lay,
+            chosen.folder,
+            chosen.version,
+            acct.folder,
+            target,
+            logs,
+            owners,
+            maps,
+            matches,
+            second,
         )
         if book_note is not None and session is not None:
             session_words = book_note
@@ -420,6 +438,7 @@ def _live_session(
     owners: dict[str, str | None],
     maps: set[int],
     matches: Sequence[crewbook.CrewMatch],
+    second_names: bool = False,
 ) -> tuple[live.SessionRecap | None, str | None]:
     try:
         table = gear.load_slot_table()
@@ -474,7 +493,9 @@ def _live_session(
     world: list[worldpvp.WorldEncounter] = []
     world_note: str | None = None
     if before is not None and owners:
-        world, world_note = live.world_since(logs, owners, before.saved_at_ns, pvp_maps=maps)
+        world, world_note = live.world_since(
+            logs, owners, before.saved_at_ns, pvp_maps=maps, second_names=second_names
+        )
     elif before is not None:
         world_note = "the open world: wowlab does not know which characters are yours yet"
     recap = live.session_recap(

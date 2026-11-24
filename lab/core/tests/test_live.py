@@ -422,6 +422,23 @@ def test_the_cost_of_a_poll_constructed(tmp_path: Path) -> None:
     assert steady < 0.5 and first_s < 5.0
 
 
+def test_a_launch_four_part_name_is_keyed_first_second_constructed(tmp_path: Path) -> None:
+    """The launch client writes `<First>-<Second>-<Realm>-<Region>` (the
+    owner's log of 2026-11-23); with second names the key is the book's
+    `First-Second` (M21-02), in the match and in the open world."""
+    foe = ("Player-9998-0000000E", "Inventede-Second-Fake Realm-US")
+    data = log(you_hit(foe, 10), zone(100, instance=BG, name=BG_NAME, difficulty=34))
+    data += (you_hit(foe, 105) + "\r\n").encode()
+    path = _write(_flavor(tmp_path), data)
+    recap = live.match_recap([path], OWNERS, second_names=True)
+    assert recap is not None and [o.key for o in recap.opponents] == ["Inventede-Second"]
+    assert recap.opponents[0].unit_name == foe[1]
+    found, _ = live.world_since([path], OWNERS, 0, second_names=True)
+    assert [p.key for e in found for p in e.players] == ["Inventede-Second"]
+    plain = live.match_recap([path], OWNERS)
+    assert plain is not None and plain.opponents[0].key != "Inventede-Second"
+
+
 def test_the_open_world_rule_lives_in_one_place() -> None:
     world = worldpvp.ZoneState(zone="Tirisfal Glades", instance_id=0, difficulty=0)
     assert worldpvp.in_open_world(world)

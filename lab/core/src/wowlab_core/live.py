@@ -644,13 +644,16 @@ def match_recap(
     book: Sequence[crewbook.CrewMatch] = (),
     max_bytes: int = RECAP_MAX_BYTES,
     notes: list[str] | None = None,
+    second_names: bool = False,
 ) -> MatchRecap | None:
     """The latest match in `logs` (oldest first, as `combatlog.find_logs`
     gives them; the newest `RECAP_LOGS` are read, within `max_bytes`) for
     your characters' GUIDs `owners`, or None when they show none.
     `pvp_maps`: the instance ids a match was kept on; `book`: the crew
     book's matches, for the result of a battleground. A log not read
-    because it is past `max_bytes` is said in `notes`, when given."""
+    because it is past `max_bytes` is said in `notes`, when given.
+    `second_names`: the flavor's characters have second names, so a
+    player's key is `First-Second` (`worldpvp`)."""
     maps = frozenset(pvp_maps)
     upper = frozenset(g.upper() for g in owners)
     chosen = list(logs)[-RECAP_LOGS:]
@@ -683,7 +686,7 @@ def match_recap(
             if looked > _MAX_STAYS:
                 return None
             newer = chosen[index + 1] if index < len(chosen) - 1 else None
-            recap = _recap(stay, owners, upper, maps, book, newer=newer)
+            recap = _recap(stay, owners, upper, maps, book, newer=newer, second_names=second_names)
             if recap is not None:
                 return recap
     return None
@@ -697,6 +700,7 @@ def _recap(
     book: Sequence[crewbook.CrewMatch],
     *,
     newer: Path | None,
+    second_names: bool = False,
 ) -> MatchRecap | None:
     tally = _Tally(upper)
     here = stay.state
@@ -709,6 +713,7 @@ def _recap(
             tally.see(_span(stay.log, stay.begin, stay.stop)),
             owners,
             start=stay.begin,
+            second_names=second_names,
             place=place,
         )
     except OSError:
@@ -1067,6 +1072,7 @@ def world_since(
     *,
     pvp_maps: Iterable[int] = (),
     max_bytes: int = SESSION_LOG_BYTES,
+    second_names: bool = False,
 ) -> tuple[list[worldpvp.WorldEncounter], str | None]:
     """The open-world encounters of the logs written since `since_ns`
     (oldest first), within `max_bytes` (the newest first), and what was
@@ -1091,7 +1097,11 @@ def world_since(
     maps = list(pvp_maps)
     for log in reversed(picked):
         try:
-            found.extend(worldpvp.read_world(log, owners, pvp_maps=maps).encounters)
+            found.extend(
+                worldpvp.read_world(
+                    log, owners, pvp_maps=maps, second_names=second_names
+                ).encounters
+            )
         except OSError:
             unreadable += 1
     words = []
