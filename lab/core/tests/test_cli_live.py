@@ -193,7 +193,8 @@ def test_the_text_says_what_the_json_says_and_is_player_copy_constructed(
     assert "Your killing blows: 1; your deaths: 1." in text
     assert "Meaty Bat Wing: 2 to 5" in text
     assert "1 match: 1 won, 0 lost." in text
-    assert "Your last save (" in text and "against your last backup (" in text
+    assert "Your last save (" in text
+    assert "against the save before it that your backups hold (" in text
     assert "  gear: slot " in text, "gear lines are char history's own words"
     says = PlayerCopyInstall.of(env.root)
     problems: list[str] = []

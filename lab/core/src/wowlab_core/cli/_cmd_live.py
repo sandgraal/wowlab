@@ -213,7 +213,11 @@ def _live_match_lines(m: live.MatchRecap, book: _LiveBook) -> list[str]:
         None: "the log shows no end yet",
     }[m.ended_by]
     kind = "Arena" if m.arena else "Match"
-    lines = [f"{kind}: {where}, from {_live_when(m.start)} to {_live_when(m.end)}, {ended}."]
+    if m.logged or m.end_at_latest is None:
+        span = f"from {_live_when(m.start)} to {_live_when(m.end)}"
+    else:  # the log was off: only when it left is known
+        span = f"from {_live_when(m.start)}, over by {_live_when(m.end_at_latest)} at the latest"
+    lines = [f"{kind}: {where}, {span}, {ended}."]
     if m.result is not None:
         source = "the combat log" if m.result_from == "log" else "the crew book"
         lines.append(f"  Result: {m.result} (from {source}).")
@@ -256,8 +260,8 @@ def _live_session_lines(s: live.SessionRecap) -> list[str]:
         ]
     snap = f", backup {s.since_snapshot}" if s.since_snapshot else ""
     lines = [
-        f"Your last save ({_local_time(s.saved_at_ns)}), against your last backup "
-        f"({_local_time(s.since_ns)}{snap}):"
+        f"Your last save ({_local_time(s.saved_at_ns)}), against the save before it that "
+        f"your backups hold ({_local_time(s.since_ns)}{snap}):"
     ]
     if s.level_before is not None and s.level_after is not None:
         if s.level_after != s.level_before:

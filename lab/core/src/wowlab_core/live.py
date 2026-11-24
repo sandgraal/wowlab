@@ -30,13 +30,17 @@ the log marks as yours whose target is a player, your deaths the
 `UNIT_DIED` lines of your GUID; both are unknown (None) when the stay
 holds no line but its zone and header lines (the log was off). A zone line
 right after a `COMBAT_LOG_VERSION` header that names the same place again
-is the log switched back on there, not a new stay: the stay goes on, and
+is the log switched back on there, not a new stay, when the header came
+at most `REJOIN_SECONDS` after the line before it: the stay goes on, and
 its `log_gaps` count those. The match is over when the log left the place
-(a later zone line, or a newer log), or showed the arena's end line, and it
-ends at that line. The result comes from the arena's end line (the winning
-team against your team on its start line, not yet confirmed), else from the
-crew book's match on the same map nearest the match's end, from
-`_RESULT_BEFORE` before its start to `_RESULT_AFTER` after its end; the
+(a later zone line, or a newer log), or showed the arena's end line. It is
+shown ending at its last line in the log; the line that ended it (which may
+be the next day's log) only says it was over by then at the latest. The
+result comes from the arena's end line (the winning team against your team
+on its start line, not yet confirmed), else from the crew book's match on
+the same map nearest the match's last line (nearest that latest end when
+the log was off there), from `_RESULT_BEFORE` before its start to
+`_RESULT_AFTER` after that latest end; the
 lab-addon saves the book only at `/reload` or logout. Which places are the
 open world is `worldpvp.in_open_world`'s to decide; which lines end a
 battleground is not yet confirmed.
@@ -70,6 +74,7 @@ __all__ = [
     "POLL_SECONDS",
     "RECAP_LOGS",
     "RECAP_MAX_BYTES",
+    "REJOIN_SECONDS",
     "SESSION_LOG_BYTES",
     "WATCH_MAX_FILES",
     "WATCH_TAIL_BYTES",
@@ -108,6 +113,10 @@ not read."""
 SESSION_LOG_BYTES = 256 * 1024 * 1024
 """The most bytes of combat log a session recap reads for the players who
 fought you in the open world."""
+REJOIN_SECONDS = 600
+"""A header and a zone line naming the stay's own place continue the stay
+only when the header came at most this long after the line before it; a
+longer silence is another visit (two matches on one map)."""
 _MAX_STAYS = 8  # places not the open world a match recap looks at, newest first
 _RESULT_BEFORE = 120  # seconds before a stay's start a book match may be from
 _RESULT_AFTER = 900  # and after its end (the addon reads the scoreboard at the end)
@@ -426,8 +435,10 @@ class MatchRecap(_Model):
 
     `log`: the log's file name. `zone`, `instance_id`, `difficulty`: from
     the zone line that began it. `start`: seconds since the epoch of that
-    line; `end`: of the line that ended it (the next zone line, or the
-    newer log's first line), else of its last line. `over`: the log left
+    line; `end`: of its last line in the log (the zone line itself when the
+    log was off); `end_at_latest`: of the line that ended it (the next zone
+    line, or the newer log's first line, which may be a day later), so the
+    match was over by then at the latest. `over`: the log left
     the place, or showed the arena's end line; `ended_by` says which
     (`left`, `match_end`, `new_log`, or None while the log shows no end).
     `arena`: an arena start line was read. `opponents`: who fought you, most
@@ -445,6 +456,7 @@ class MatchRecap(_Model):
     difficulty: int | None
     start: int | None
     end: int | None
+    end_at_latest: int | None = None
     over: bool
     ended_by: Literal["left", "match_end", "new_log"] | None
     arena: bool
@@ -478,6 +490,13 @@ class _Stay:
     gaps: int = 0  # the log switched on again inside it
 
 
+def _time_of(entry: Record | Unparsed | Skipped) -> int | None:
+    """The time of any line, from the text before its two spaces."""
+    if isinstance(entry, Record):
+        return worldpvp.seconds_of(entry.timestamp)
+    return worldpvp.seconds_of(entry.raw.split("  ", 1)[0])
+
+
 def _same_place(a: worldpvp.ZoneState, b: worldpvp.ZoneState) -> bool:
     return (a.instance_id, a.zone, a.difficulty) == (b.instance_id, b.zone, b.difficulty)
 
@@ -490,19 +509,32 @@ def _stays(log: Path) -> list[_Stay]:
     open_: _Stay | None = None
     last_end = 0
     after_header = False
+    previous: Record | Unparsed | Skipped | None = None
+    # Seconds from the line before a header to the header, when both are known.
+    header_gap: int | None = None
     for entry in combatlog.read_log(log, events=_STAY_EVENTS):
         if entry.ending == "":
             break
         last_end = entry.offset + _length(entry)
+        before, previous = previous, entry
         if not isinstance(entry, Record):
             after_header = False
             continue
         when = worldpvp.seconds_of(entry.timestamp)
         header = after_header
         after_header = entry.event == _HEADER
+        if after_header:
+            earlier = _time_of(before) if before is not None else None
+            header_gap = when - earlier if when is not None and earlier is not None else None
         if entry.event == "ZONE_CHANGE":
             place = _zone_state(entry.fields)
-            if open_ is not None and header and _same_place(open_.state, place):
+            if (
+                open_ is not None
+                and header
+                and _same_place(open_.state, place)
+                and header_gap is not None
+                and 0 <= header_gap <= REJOIN_SECONDS
+            ):
                 open_.gaps += 1
                 open_.stop = last_end
                 continue
@@ -598,16 +630,20 @@ class _Tally:
 
 
 def _book_match(
-    stay: _Stay, end: int | None, book: Sequence[crewbook.CrewMatch]
+    stay: _Stay,
+    near: int | None,
+    latest: int | None,
+    book: Sequence[crewbook.CrewMatch],
 ) -> crewbook.CrewMatch | None:
     """The crew book's match on the stay's map whose time is nearest
-    `end` (the match's end), within `_RESULT_BEFORE` before its start and
-    `_RESULT_AFTER` after `end`."""
+    `near`, within `_RESULT_BEFORE` before the stay's start and
+    `_RESULT_AFTER` after `latest` (the match was over by then at the
+    latest; `near` when not known)."""
     if stay.start is None:
         return None
-    end = end if end is not None else stay.start
+    end = near if near is not None else stay.start
     low = stay.start - _RESULT_BEFORE
-    high = end + _RESULT_AFTER
+    high = (latest if latest is not None else end) + _RESULT_AFTER
     best: crewbook.CrewMatch | None = None
     for m in book:
         if not low <= m.at <= high:
@@ -760,11 +796,15 @@ def _recap(
     if stay.match_end and stay.winner is not None and stay.team is not None:
         result, result_from = ("won" if stay.winner == stay.team else "lost"), "log"
     end = tally.last if tally.last is not None else stay.start
-    if ended_by == "left" and stay.ended_at is not None:
-        end = stay.ended_at
+    latest: int | None = None
+    if ended_by == "left":
+        latest = stay.ended_at
     elif ended_by == "new_log" and newer is not None:
-        end = _first_time(newer) or end
-    found = _book_match(stay, end, book) if ended_by is not None else None
+        latest = _first_time(newer)
+    # With the log off there, the last line is the zone line in: the book's
+    # match nearest the latest end is the one.
+    near = end if tally.logged else (latest if latest is not None else end)
+    found = _book_match(stay, near, latest, book) if ended_by is not None else None
     if found is not None and result is None and found.won is not None:
         result, result_from = ("won" if found.won else "lost"), "crew_book"
     return MatchRecap(
@@ -774,6 +814,7 @@ def _recap(
         difficulty=here.difficulty,
         start=stay.start,
         end=end,
+        end_at_latest=latest,
         over=ended_by is not None,
         ended_by=ended_by,
         arena=stay.arena,

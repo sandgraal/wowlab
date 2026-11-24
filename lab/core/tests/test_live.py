@@ -264,7 +264,8 @@ def test_a_battleground_left_is_recapped_with_the_books_result_constructed(tmp_p
     assert recap is not None
     assert (recap.zone, recap.instance_id, recap.arena) == (BG_NAME, BG, False)
     assert recap.over and recap.ended_by == "left"
-    assert recap.start == BASE + 100 and recap.end == BASE + 200, "ends at the zone line out"
+    assert recap.start == BASE + 100 and recap.end == BASE + 112, "its last line"
+    assert recap.end_at_latest == BASE + 200, "the zone line out bounds it"
     assert recap.logged > 0 and recap.log_gaps == 0
     assert [o.key for o in recap.opponents] == ["Inventedd-Otherfakerealm", "Inventedb-Fakerealm"]
     d = recap.opponents[0]
@@ -476,7 +477,8 @@ def test_a_log_switched_on_again_in_the_same_place_is_one_stay_constructed(
         zone(200),
     )
     recap = live.match_recap([_write(_flavor(tmp_path), data)], OWNERS)
-    assert recap is not None and recap.start == BASE + 100 and recap.end == BASE + 200
+    assert recap is not None and recap.start == BASE + 100 and recap.end == BASE + 130
+    assert recap.end_at_latest == BASE + 200
     assert recap.log_gaps == 1 and recap.killing_blows == 1
     # The same zone line with no header before it is a new stay.
     again = log(
@@ -496,6 +498,7 @@ def test_a_match_the_log_was_off_for_has_unknown_blows_and_deaths_constructed(
     recap = live.match_recap([_write(_flavor(tmp_path), data)], OWNERS, pvp_maps=[BG])
     assert recap is not None and recap.logged == 0
     assert recap.killing_blows is None and recap.deaths is None
+    assert recap.end == BASE + 100 and recap.end_at_latest == BASE + 1420
 
 
 def test_a_newer_log_ends_the_match_at_its_first_line_constructed(tmp_path: Path) -> None:
@@ -505,7 +508,8 @@ def test_a_newer_log_ends_the_match_at_its_first_line_constructed(tmp_path: Path
     new = _write(flavor, (later + "\r\n" + zone(1500) + "\r\n").encode(), "WoWCombatLog-b.txt")
     recap = live.match_recap([old, new], OWNERS)
     assert recap is not None and recap.ended_by == "new_log"
-    assert recap.end == worldpvp.seconds_of("4/1/2026 02:40:00.000-4")
+    assert recap.end == BASE + 112, "its last line, not the next log's"
+    assert recap.end_at_latest == worldpvp.seconds_of("4/1/2026 02:40:00.000-4")
 
 
 def test_a_log_too_large_to_read_is_said_constructed(tmp_path: Path) -> None:
@@ -542,3 +546,60 @@ def test_syndicator_picks_by_key_then_realm_then_a_unique_name_constructed() -> 
     )
     keyed = live.syndicator_items(_TWO_REALMS, ["Sandgraal Rizzen", "Sandgraal Rizzen-Other"])
     assert not isinstance(keyed, str) and [i.item_id for i in keyed] == [2]
+
+
+# ─── fix round 2 ─────────────────────────────────────────────────────────────
+
+
+def test_a_header_after_a_long_silence_is_another_visit_constructed(tmp_path: Path) -> None:
+    """Two matches on one map with the log off between them are two stays:
+    a header more than `REJOIN_SECONDS` after the line before it does not
+    continue the stay."""
+    late = 105 + live.REJOIN_SECONDS + 60
+    data = log(
+        zone(100, instance=BG, name=BG_NAME, difficulty=34),
+        you_hit(FOE_D, 105),
+        HEADER.replace("4/1/2026 02:16:30.666-4", stamp(late)),
+        zone(late, instance=BG, name=BG_NAME, difficulty=34),
+        you_hit(FOE_B, late + 5),
+    )
+    recap = live.match_recap([_write(_flavor(tmp_path), data)], OWNERS)
+    assert recap is not None and recap.start == BASE + late and recap.log_gaps == 0
+    assert [o.key for o in recap.opponents] == ["Inventedb-Fakerealm"]
+
+
+def test_a_match_that_ends_a_session_keeps_its_own_end_constructed(tmp_path: Path) -> None:
+    """The next log starts the next day: the match still ends at its last
+    line, the book saved at logout right after it gives the result, and the
+    next day's first line only bounds the book's window."""
+    flavor = _flavor(tmp_path)
+    old = _write(flavor, _battleground(leave=False, difficulty=34))
+    later = HEADER.replace("4/1/2026", "4/2/2026")
+    new = _write(flavor, (later + "\r\n" + zone(0) + "\r\n").encode(), "WoWCombatLog-b.txt")
+    recap = live.match_recap([old, new], OWNERS, book=[_book_match(BASE + 140)])
+    assert recap is not None and recap.end == BASE + 112
+    assert recap.end_at_latest == BASE + 86_400
+    assert (recap.result, recap.result_from) == ("won", "crew_book")
+
+
+def test_the_text_says_over_by_at_the_latest_only_when_the_log_was_off_constructed(
+    tmp_path: Path,
+) -> None:
+    from wowlab_core.cli import _cmd_live
+
+    off = live.match_recap(
+        [_write(_flavor(tmp_path), log(zone(100, instance=BG, name=BG_NAME), zone(1420)))],
+        OWNERS,
+        pvp_maps=[BG],
+    )
+    on = live.match_recap(
+        [_write(_flavor(tmp_path / "on"), _battleground())], OWNERS, pvp_maps=[BG]
+    )
+    assert off is not None and on is not None
+    book = _cmd_live._LiveBook([], on=True, saved_ns=(BASE + 150) * 10**9)
+    off_text = _cmd_live._live_match_lines(off, book)[0]
+    on_text = _cmd_live._live_match_lines(on, book)
+    assert ", over by " in off_text and " at the latest, over: you left it." in off_text
+    assert " at the latest" not in on_text[0] and " to " in on_text[0]
+    # The book was saved after the match's last line: it holds no result.
+    assert "the crew book saved after this match holds no match" in on_text[1]

@@ -7444,12 +7444,16 @@ deaths are `UNIT_DIED` lines of your GUID; both are unknown when the stay
 holds nothing but zone and header lines (the log was off). A zone line
 right after a `COMBAT_LOG_VERSION` header naming the same place is the log
 switched on again inside the stay (a switch-on appends a header and zone
-lines to the same file, confirmed on the owner's install), not a new stay.
-It is over when a later zone line, the arena's end line or a newer log
-follows, and ends at that line (the newer log's first line). The result is
-the arena's end line against the team on its start line, else the crew
-book's match on that map nearest the match's end, from 120 s before its
-start to 900 s after its end;
+lines to the same file, confirmed on the owner's install), not a new stay,
+when the header came at most 10 minutes after the line before it (a longer
+silence is another visit). It is over when a later zone line, the arena's
+end line or a newer log follows. It is shown ending at its last line in the
+log; the line that ended it (the next zone line, or the newer log's first
+line, perhaps the next day) is only an upper bound, printed as "over by ...
+at the latest" when the log was off there. The result is the arena's end
+line against the team on its start line, else the crew book's match on
+that map nearest the match's last line (nearest the upper bound when the
+log was off), from 120 s before its start to 900 s after the upper bound;
 the book is saved only at `/reload` or logout, and the view says so. **The
 session recap** compares the newest save of the character's `WowLab.lua`
 with the one before it (`charhistory`: level, gear, currencies), the items
