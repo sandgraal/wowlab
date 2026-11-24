@@ -545,6 +545,10 @@ def test_the_explorer_runs_only_listed_read_commands(server: Any) -> None:
         # which writes only into wowlab's own game-table cache; that only
         # the home runs it, on a click, is graded in test_ui_home.py.
         ("names", "fetch"),
+        # M21-07: the Character tab's Download the talent tables runs `db2
+        # fetch`, which writes only into wowlab's own game-table cache, on a
+        # click; graded in test_ui_talents.py.
+        ("db2", "fetch"),
         # M18-06: a character kept only in a backup opens from the read
         # `char kept`; graded in test_ui_kept.py.
         ("char", "kept"),
