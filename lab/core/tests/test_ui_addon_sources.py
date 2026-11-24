@@ -35,6 +35,10 @@ BETA = hub_tab.BETA
 FOREVER = hub_tab.FOREVER
 LIST = ["addons", "list"]
 WOWUP = Path(__file__).resolve().parent / "fixtures" / "wowup" / "macos" / "addons.json"
+PREFERENCES = WOWUP.with_name("preferences.json")
+LOCATION = (
+    b"/Volumes/Labdisk/Games/World of Warcraft/_classic_beta_/World of Warcraft Classic Beta.app"
+)
 WRITTEN_NS = 1_790_000_000_000_000_000
 
 _VIEW = r"""
@@ -88,15 +92,32 @@ def _drive(folder: Path, scenario: dict[str, Any]) -> dict[str, Any]:
         hub_tab._harness = original
 
 
-def _wowup(body: bytes | None = None) -> None:
+def _folder() -> Path:
     folder = addonsource.wowup_folder()
+    tmp = Path(os.environ["HOME"]).parent
+    assert tmp in folder.parents, f"{folder} is not under this test's tmp_path"
     folder.mkdir(parents=True, exist_ok=True)
-    path = folder / "addons.json"
+    return folder
+
+
+def _wowup(body: bytes | None = None) -> None:
+    path = _folder() / "addons.json"
     if body is None:
         shutil.copyfile(WOWUP, path)
     else:
         path.write_bytes(body)
     os.utime(path, ns=(WRITTEN_NS, WRITTEN_NS))
+
+
+def _settings(flavor: Path | None = None) -> None:
+    """WowUp's settings: the real file, or with its one location moved into
+    `flavor` (`constructed`)."""
+    data = PREFERENCES.read_bytes()
+    if flavor is not None:
+        assert data.count(LOCATION) == 1
+        moved = json.dumps(str(flavor / "World of Warcraft Classic Beta.app"))[1:-1]
+        data = data.replace(LOCATION, moved.encode("utf-8"))
+    (_folder() / "preferences.json").write_bytes(data)
 
 
 def _scenario(server: Any, steps: list[dict[str, Any]]) -> dict[str, Any]:
@@ -161,7 +182,10 @@ def test_it_reads_each_flavor_once_when_the_addons_view_is_first_shown_construct
 def test_the_records_the_stale_ones_and_the_folders_no_one_claims_constructed(
     server: Any, both: Path, tmp_path: Path
 ) -> None:
+    # WowUp's one game folder moved to the beta's copy: the beta's folders
+    # are its own, the launch client's are another game folder's.
     _wowup()
+    _settings(both / BETA)
     scenario = _scenario(server, [{"sources_open": True}])
     out = _drive(tmp_path / "node", scenario)
     blocks = _blocks(out["steps"][0]["sources"])
@@ -178,25 +202,60 @@ def test_the_records_the_stale_ones_and_the_folders_no_one_claims_constructed(
         "date (not here: DBM-Core, DBM-GUI,"
     )
     assert dbm.endswith(" Folders: DBM-Brawlers.")
-    assert "the TOC now says" not in dungeons  # r264 agrees with DBM-Dungeons-r264
+    assert "the TOC" not in dungeons  # r264 agrees with DBM-Dungeons-r264
     assert dungeons.endswith(" Folders: DBM-Challenges.")
     assert [a.split(":")[0] for a in away] == ["RareScanner", "Pawn", "Baganator", "Syndicator"]
     assert beta["loose"] == []
     assert beta["notes"] == [
-        "Matched by folder name. An out-of-date record means the addon changed after WowUp "
-        "last wrote its list."
+        "An out-of-date record means the addon changed after WowUp last wrote its list, by "
+        "hand or by another app."
     ]
     forever = blocks[FOREVER]
+    assert forever["items"] == [] and forever["loose"] == [] and forever["notes"] == []
+    hinted = [
+        f
+        for f in json.loads(_list_run(scenario, FOREVER)["stdout"])["sources"]["folders"]
+        if f["same_name_as"]
+    ]
+    assert forever["clear"][0] == (
+        "WowUp does not manage this game folder; its list is for ~/Games/World of Warcraft/"
+        f"{BETA} (6 addons), and {len(hinted)} folder{'' if len(hinted) == 1 else 's'} here "
+        f"{'shares' if len(hinted) == 1 else 'share'} a name with one of them."
+    )
+
+
+def test_a_stale_record_and_folders_no_one_claims_constructed(
+    server: Any, both: Path, tmp_path: Path
+) -> None:
+    _wowup()
+    _settings(both / FOREVER)
+    scenario = _scenario(server, [{"sources_open": True}])
+    out = _drive(tmp_path / "node", scenario)
+    forever = _blocks(out["steps"][0]["sources"])[FOREVER]
     [baganator] = [i for i in forever["items"] if i.startswith("Baganator:")]
     assert baganator == (
         "Baganator: from Wago, WowUp installed 829, WowUp's record is out of date "
-        "(the TOC now says 850). Folders: Baganator."
+        "(the TOC here says 850). Folders: Baganator."
     )
     listed = json.loads(_list_run(scenario, FOREVER)["stdout"])["sources"]["folders"]
     loose = [f["folder"] for f in listed if f["unclaimed"] is True]
     assert "Auctionator" in loose and "BanterBlocker" in loose
-    assert forever["what"][-1] == f"In no addon manager's list ({len(loose)})"
+    assert forever["what"][-1] == (
+        f"Not in WowUp's list, the only addon manager's list wowlab reads ({len(loose)})"
+    )
     assert forever["loose"] == [", ".join(loose)]
+
+
+def test_without_settings_the_panel_says_it_matched_by_name_constructed(
+    server: Any, both: Path, tmp_path: Path
+) -> None:
+    _wowup()
+    out = _drive(tmp_path / "node", _scenario(server, [{"sources_open": True}]))
+    for block in out["steps"][0]["sources"]["blocks"]:
+        assert block["notes"][0] == (
+            "wowlab cannot tell which game folder WowUp's list is for (its settings file is "
+            "not there), so its records are matched to these addons by folder name."
+        )
 
 
 def test_with_no_wowup_list_the_panel_says_so_constructed(
@@ -239,6 +298,7 @@ def test_hostile_record_text_is_shown_not_applied_constructed(
     server: Any, both: Path, tmp_path: Path
 ) -> None:
     _wowup()
+    _settings(both / FOREVER)
     scenario = _scenario(server, [{"sources_open": True}])
     run = _list_run(scenario, FOREVER)
     report = json.loads(run["stdout"])

@@ -55,3 +55,14 @@ def redirect_user_dirs(
         monkeypatch.setenv(name, str(home / name.lower() if separate else home))
     for plain, override in WINDOWS_OVERRIDES.items():
         monkeypatch.setenv(override, str(home / plain.lower() if separate else home))
+
+
+def no_wowup_list(monkeypatch: pytest.MonkeyPatch, folder: Path) -> None:
+    """Make `folder` (inside the test's `tmp_path`, and empty) WowUp's
+    user-data folder, so `wowlab addons list` never reads the machine's own
+    WowUp list (M22-16). A test that moves the home folder with
+    `redirect_user_dirs` needs no more; one that leaves the home as it is
+    calls this."""
+    from wowlab_core import addonsource
+
+    monkeypatch.setattr(addonsource, "wowup_folder", lambda platform=None: folder)

@@ -482,7 +482,7 @@ if TYPE_CHECKING:
         _CHECK_OUT_OF_DATE as _CHECK_OUT_OF_DATE,
     )
     from wowlab_core.cli._cmd_addons import (
-        _SOURCES_BY_NAME as _SOURCES_BY_NAME,
+        _SOURCES_FOLDERS as _SOURCES_FOLDERS,
     )
     from wowlab_core.cli._cmd_addons import (
         _SOURCES_NOTES as _SOURCES_NOTES,
@@ -521,7 +521,13 @@ if TYPE_CHECKING:
         _record_words as _record_words,
     )
     from wowlab_core.cli._cmd_addons import (
+        _scope_lines as _scope_lines,
+    )
+    from wowlab_core.cli._cmd_addons import (
         _source_date as _source_date,
+    )
+    from wowlab_core.cli._cmd_addons import (
+        _toc_words as _toc_words,
     )
     from wowlab_core.cli._cmd_addons import (
         _TocRole as _TocRole,
