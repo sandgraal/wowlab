@@ -1078,9 +1078,10 @@ local function resolveNames()
     if type(time) == "function" then
         now = ns.Number(time())
     end
-    local seen, fresh, again, older = {}, {}, {}, {}
+    -- Each list holds keys (type-checked text), never the entries.
+    local seen, fresh, again, older, olderAt = {}, {}, {}, {}, {}
     local olderRoom = MAX_RESOLVES - backlogAsked
-    for _, entry in pairs(WowLabCrewDB.players) do
+    for key, entry in pairs(WowLabCrewDB.players) do
         local guid = nil
         if type(entry) == "table" and entry.resolved_name == nil then
             guid = ns.String(entry.guid)
@@ -1093,24 +1094,26 @@ local function resolveNames()
             end
             local tried = ns.Number(entry.resolve_tried_at)
             if due and resolveSeen[guid] == true then
-                seen[#seen + 1] = entry
+                seen[#seen + 1] = ns.String(key)
             elseif due and asked ~= nil then
-                again[#again + 1] = entry
+                again[#again + 1] = ns.String(key)
             elseif due and tried == nil then
-                fresh[#fresh + 1] = entry
-            elseif due and olderRoom > 0 then
+                fresh[#fresh + 1] = ns.String(key)
+            elseif due and olderRoom > 0 and type(key) == "string" then
                 -- Kept oldest first, at most olderRoom long.
-                local last = older[#older]
-                if #older < olderRoom or tried < (ns.Number(last.resolve_tried_at) or 0) then
+                if #older < olderRoom or tried < olderAt[#older] then
                     if #older >= olderRoom then
                         older[#older] = nil
+                        olderAt[#olderAt] = nil
                     end
                     local at = #older + 1
-                    while at > 1 and (ns.Number(older[at - 1].resolve_tried_at) or 0) > tried do
-                        older[at] = older[at - 1]
+                    while at > 1 and olderAt[at - 1] > tried do
+                        older[at] = ns.String(older[at - 1])
+                        olderAt[at] = ns.Number(olderAt[at - 1])
                         at = at - 1
                     end
-                    older[at] = entry
+                    older[at] = ns.String(key)
+                    olderAt[at] = ns.Number(tried)
                 end
             end
         end
@@ -1119,26 +1122,29 @@ local function resolveNames()
     -- asked again, 3 from an earlier session.
     local queue, kinds = {}, {}
     for i = 1, #seen do
-        queue[#queue + 1] = seen[i]
+        queue[#queue + 1] = ns.String(seen[i])
         kinds[#queue] = 1
     end
     for i = 1, #fresh do
-        queue[#queue + 1] = fresh[i]
+        queue[#queue + 1] = ns.String(fresh[i])
         kinds[#queue] = 2
     end
     for i = 1, #again do
-        queue[#queue + 1] = again[i]
+        queue[#queue + 1] = ns.String(again[i])
         kinds[#queue] = 2
     end
     for i = 1, #older do
-        queue[#queue + 1] = older[i]
+        queue[#queue + 1] = ns.String(older[i])
         kinds[#queue] = 3
     end
     local passRoom = MAX_RESOLVES
     for i = 1, #queue do
-        local entry = queue[i]
+        local entry = WowLabCrewDB.players[queue[i]]
         local kind = kinds[i]
-        local guid = ns.String(entry.guid)
+        local guid = nil
+        if type(entry) == "table" then
+            guid = ns.String(entry.guid)
+        end
         if guid ~= nil and (kind == 1 or passRoom > 0) then
             if kind ~= 1 then
                 passRoom = passRoom - 1

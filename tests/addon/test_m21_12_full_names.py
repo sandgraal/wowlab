@@ -66,54 +66,47 @@ READ_REGION = (
 )
 RESOLVE_NAMES = (
     f"function resolveNames ( ) {GATE} "
-    'if type ( GetPlayerInfoByGUID ) ~= "function" then return end '
-    'local now = nil if type ( time ) == "function" then now = ns . Number ( time ( ) ) end '
-    "local seen , fresh , again , older = { } , { } , { } , { } "
-    "local olderRoom = MAX_RESOLVES - backlogAsked "
-    "for _ , entry in pairs ( WowLabCrewDB . players ) do "
-    "local guid = nil "
-    'if type ( entry ) == "table" and entry . resolved_name == nil then '
-    "guid = ns . String ( entry . guid ) end "
-    'if guid ~= nil and string . find ( guid , "^Player%-" ) ~= nil then '
-    "local asked = resolveTried [ guid ] local due = asked == nil "
-    "if asked ~= nil and resolveRetried [ guid ] == nil and now ~= nil "
-    "and now - asked >= RETRY_SECONDS then due = true end "
-    "local tried = ns . Number ( entry . resolve_tried_at ) "
-    "if due and resolveSeen [ guid ] == true then seen [ # seen + 1 ] = entry "
-    "elseif due and asked ~= nil then again [ # again + 1 ] = entry "
-    "elseif due and tried == nil then fresh [ # fresh + 1 ] = entry "
-    "elseif due and olderRoom > 0 then local last = older [ # older ] "
-    "if # older < olderRoom or tried < ( ns . Number ( last . resolve_tried_at ) or 0 ) then "
-    "if # older >= olderRoom then older [ # older ] = nil end "
-    "local at = # older + 1 "
-    "while at > 1 and ( ns . Number ( older [ at - 1 ] . resolve_tried_at ) or 0 ) > tried do "
-    "older [ at ] = older [ at - 1 ] at = at - 1 end "
-    "older [ at ] = entry end end end end "
-    "local queue , kinds = { } , { } "
-    "for i = 1 , # seen do queue [ # queue + 1 ] = seen [ i ] kinds [ # queue ] = 1 end "
-    "for i = 1 , # fresh do queue [ # queue + 1 ] = fresh [ i ] kinds [ # queue ] = 2 end "
-    "for i = 1 , # again do queue [ # queue + 1 ] = again [ i ] kinds [ # queue ] = 2 end "
-    "for i = 1 , # older do queue [ # queue + 1 ] = older [ i ] kinds [ # queue ] = 3 end "
-    "local passRoom = MAX_RESOLVES "
-    "for i = 1 , # queue do local entry = queue [ i ] local kind = kinds [ i ] "
-    "local guid = ns . String ( entry . guid ) "
-    "if guid ~= nil and ( kind == 1 or passRoom > 0 ) then "
-    "if kind ~= 1 then passRoom = passRoom - 1 end "
-    "if kind == 3 then backlogAsked = backlogAsked + 1 end "
-    "if resolveTried [ guid ] == nil then resolveTried [ guid ] = now or 0 "
-    "else resolveRetried [ guid ] = true end "
-    "resolveAsked = resolveAsked + 1 "
-    "local _ , _ , _ , _ , _ , name , realm , eighth = GetPlayerInfoByGUID ( guid ) "
-    "if secret ( name ) or secret ( realm ) or secret ( eighth ) then addSkipped ( ) end "
-    "entry . resolve_tried_at = now "
-    'if not secret ( name ) and type ( name ) == "string" and name ~= "" '
-    "and name ~= UNKNOWNOBJECT then "
-    "entry . resolved_name = ns . String ( name ) entry . resolved_at = now "
-    "entry . resolve_tried_at = nil "
-    'if not secret ( realm ) and type ( realm ) == "string" then '
-    "entry . resolved_realm = ns . String ( realm ) end "
-    'if not secret ( eighth ) and type ( eighth ) == "number" then '
-    "entry . resolved_eighth = ns . Number ( eighth ) end end end end end"
+    'if type ( GetPlayerInfoByGUID ) ~= "function" then return end local now = nil '
+    'if type ( time ) == "function" then now = ns . Number ( time ( ) ) end local '
+    "seen , fresh , again , older , olderAt = { } , { } , { } , { } , { } local "
+    "olderRoom = MAX_RESOLVES - backlogAsked for key , entry in pairs ( "
+    'WowLabCrewDB . players ) do local guid = nil if type ( entry ) == "table" and '
+    "entry . resolved_name == nil then guid = ns . String ( entry . guid ) end if "
+    'guid ~= nil and string . find ( guid , "^Player%-" ) ~= nil then local asked = '
+    "resolveTried [ guid ] local due = asked == nil if asked ~= nil and "
+    "resolveRetried [ guid ] == nil and now ~= nil and now - asked >= RETRY_SECONDS "
+    "then due = true end local tried = ns . Number ( entry . resolve_tried_at ) if "
+    "due and resolveSeen [ guid ] == true then seen [ # seen + 1 ] = ns . String ( "
+    "key ) elseif due and asked ~= nil then again [ # again + 1 ] = ns . String ( "
+    "key ) elseif due and tried == nil then fresh [ # fresh + 1 ] = ns . String ( "
+    'key ) elseif due and olderRoom > 0 and type ( key ) == "string" then if # '
+    "older < olderRoom or tried < olderAt [ # older ] then if # older >= olderRoom "
+    "then older [ # older ] = nil olderAt [ # olderAt ] = nil end local at = # "
+    "older + 1 while at > 1 and olderAt [ at - 1 ] > tried do older [ at ] = ns . "
+    "String ( older [ at - 1 ] ) olderAt [ at ] = ns . Number ( olderAt [ at - 1 ] "
+    ") at = at - 1 end older [ at ] = ns . String ( key ) olderAt [ at ] = ns . "
+    "Number ( tried ) end end end end local queue , kinds = { } , { } for i = 1 , # "
+    "seen do queue [ # queue + 1 ] = ns . String ( seen [ i ] ) kinds [ # queue ] = "
+    "1 end for i = 1 , # fresh do queue [ # queue + 1 ] = ns . String ( fresh [ i ] "
+    ") kinds [ # queue ] = 2 end for i = 1 , # again do queue [ # queue + 1 ] = ns "
+    ". String ( again [ i ] ) kinds [ # queue ] = 2 end for i = 1 , # older do "
+    "queue [ # queue + 1 ] = ns . String ( older [ i ] ) kinds [ # queue ] = 3 end "
+    "local passRoom = MAX_RESOLVES for i = 1 , # queue do local entry = "
+    "WowLabCrewDB . players [ queue [ i ] ] local kind = kinds [ i ] local guid = "
+    'nil if type ( entry ) == "table" then guid = ns . String ( entry . guid ) end '
+    "if guid ~= nil and ( kind == 1 or passRoom > 0 ) then if kind ~= 1 then "
+    "passRoom = passRoom - 1 end if kind == 3 then backlogAsked = backlogAsked + 1 "
+    "end if resolveTried [ guid ] == nil then resolveTried [ guid ] = now or 0 else "
+    "resolveRetried [ guid ] = true end resolveAsked = resolveAsked + 1 local _ , _ "
+    ", _ , _ , _ , name , realm , eighth = GetPlayerInfoByGUID ( guid ) if secret ( "
+    "name ) or secret ( realm ) or secret ( eighth ) then addSkipped ( ) end entry "
+    '. resolve_tried_at = now if not secret ( name ) and type ( name ) == "string" '
+    'and name ~= "" and name ~= UNKNOWNOBJECT then entry . resolved_name = ns . '
+    "String ( name ) entry . resolved_at = now entry . resolve_tried_at = nil if "
+    'not secret ( realm ) and type ( realm ) == "string" then entry . '
+    "resolved_realm = ns . String ( realm ) end if not secret ( eighth ) and type ( "
+    'eighth ) == "number" then entry . resolved_eighth = ns . Number ( eighth ) end '
+    "end end end end"
 )
 PASS_TAIL = "pcall ( readRegion ) pcall ( resolveNames ) end"
 PVP_PASS_TAIL = "if pvpWon ( ) then pcall ( recordMatch ) pcall ( resolveNames ) end end"
@@ -382,12 +375,14 @@ def resolve_names(book: Book, c: Client, s: Session, now: int | None = 1_800_000
         return
     if not c.has_info:
         return
-    seen: list[dict[str, Any]] = []
-    fresh: list[dict[str, Any]] = []
-    again: list[dict[str, Any]] = []
-    older: list[dict[str, Any]] = []
+    # Each list holds keys, never the entries, as the Lua does.
+    seen: list[str] = []
+    fresh: list[str] = []
+    again: list[str] = []
+    older: list[str] = []
+    older_at: list[int | float] = []
     older_room = MAX_RESOLVES - s.backlog
-    for entry in book.players.values():
+    for key, entry in book.players.items():
         guid = None
         if isinstance(entry, dict) and entry.get("resolved_name") is None:
             got = entry.get("guid")
@@ -404,29 +399,32 @@ def resolve_names(book: Book, c: Client, s: Session, now: int | None = 1_800_000
                 due = True
             tried = _number(entry.get("resolve_tried_at"))
             if due and guid in s.seen:
-                seen.append(entry)
+                seen.append(key)
             elif due and asked is not None:
-                again.append(entry)
+                again.append(key)
             elif due and tried is None:
-                fresh.append(entry)
+                fresh.append(key)
             elif due and older_room > 0:
                 assert tried is not None
-                last = older[-1] if older else None
-                if len(older) < older_room or (
-                    last is not None and tried < (_number(last.get("resolve_tried_at")) or 0)
-                ):
+                if len(older) < older_room or tried < older_at[-1]:
                     if len(older) >= older_room:
                         older.pop()
+                        older_at.pop()
                     at = len(older)
-                    while at > 0 and (_number(older[at - 1].get("resolve_tried_at")) or 0) > tried:
+                    while at > 0 and older_at[at - 1] > tried:
                         at -= 1
-                    older.insert(at, entry)
-    queue = [(e, 1) for e in seen] + [(e, 2) for e in fresh + again] + [(e, 3) for e in older]
+                    older.insert(at, key)
+                    older_at.insert(at, tried)
+    queue = [(k, 1) for k in seen] + [(k, 2) for k in fresh + again] + [(k, 3) for k in older]
     pass_room = MAX_RESOLVES
-    for entry, kind in queue:
-        guid = entry.get("guid")
-        guid = guid if isinstance(guid, str) else None
+    for key, kind in queue:
+        entry = book.players.get(key)
+        guid = None
+        if isinstance(entry, dict):
+            got = entry.get("guid")
+            guid = got if isinstance(got, str) else None
         if guid is not None and (kind == 1 or pass_room > 0):
+            assert entry is not None
             if kind != 1:
                 pass_room -= 1
             if kind == 3:
