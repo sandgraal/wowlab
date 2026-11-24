@@ -238,7 +238,7 @@ def test_the_panel_reads_only_when_asked_and_draws_the_list(served: Any, tmp_pat
         "Seen by",
     ]
     # The standing notes, under the panel, as the command gives them.
-    assert view["notes"] == report["notes"] and len(view["notes"]) == 8
+    assert view["notes"] == report["notes"] and len(view["notes"]) == 9
     assert len(view["rows"]) == 24
     assert [r[0] for r in view["rows"]] == [p["key"] for p in report["players"]]
     first = view["rows"][0]

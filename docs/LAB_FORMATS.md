@@ -156,17 +156,23 @@ copied). Field names are Spy's.
     `race`, `level`, `guild` (absent when none), `faction`, `isEnemy`,
     `isGuess` (the level is a guess), `zone`, `subZone`, `mapID`, `mapX`,
     `mapY` (0 to 1, floored to two decimals) and `time` (Unix seconds).
-    Spy keeps hostile players only: it drops a row after 90 days, or once
-    it sees the player as friendly, unless the row holds `wins` or `loses`.
+    Spy keeps hostile players only: it drops a row not seen for 90 days
+    by default (Spy's purge option, `PurgeData`: 1, 5, 10, 30, 60 or 90
+    days), or once it sees the player as friendly, unless it counted a
+    killing blow or a death against them (and Spy is not set to purge those
+    too, `PurgeWinLossData`) or, unless `PurgeKoS` is on, they are on the
+    kill-on-sight list (`List.lua`, around line 777).
     - `isEnemy` is the game's answer (`UnitIsEnemy`) when Spy last looked:
       hostile to the recording character, not a faction. A duel, mind
       control or a free-for-all area can make the same faction hostile;
       marking a player kill on sight, or a shared row, sets it too.
     - The place is **where the recording character stood**, never the other
       player's position (`C_Map` for `"player"`), and it can be from a
-      different moment than `time` (`List.lua`, around line 339): `time`
-      is set on every sighting; outside an instance `zone`, `subZone` and
-      the map fields are set with it; inside one Spy writes the instance's
+      different moment than `time` (`List.lua`, around lines 339 to 357):
+      `time` is set at every sighting; outside an instance the place is
+      written only when Spy first notices the player after losing sight of
+      them, and not at all when the game gives no position (0,0); inside
+      one Spy writes the instance's
       name as `zone` and `""` as `subZone` and **leaves `mapID`, `mapX` and
       `mapY` as they were**, so the map position can be older than `time`
       (one row of the capture has an instance zone and no map fields,
@@ -198,7 +204,9 @@ copied). Field names are Spy's.
   player's `playerNotes` and `playerTags` (`[list][player]` to text, or to
   `"spare"` or `"rival"`), and Spy's settings (`profiles`, keyed by
   profile name, and `profileKeys`, character to profile name; a profile's
-  `UseData` says whether that character takes shared rows). The Forever
+  `UseData` says whether that character takes shared rows, and
+  `PurgeData`, `PurgeWinLossData` and `PurgeKoS` what it drops; an option
+  a profile does not set is Spy's default: `NinetyDays`, off, off, off). The Forever
   port adds `ForeverDebug`, a list of its own diagnostic lines. The list
   key is Spy's realm label: `Region <realm type>` when the client reports
   region-wide unique names (`Region RP-PvP` on the capture), else the

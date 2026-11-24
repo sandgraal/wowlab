@@ -47,11 +47,14 @@ _SPY_AS_OF = "as of your last logout or /reload"
 _SPY_NOTES = [
     "Spy saves its lists when you log out or type /reload, and the game overwrites a change "
     "made to them while it runs.",
-    "Spy keeps hostile players only, and drops a player after 90 days, or once it sees them "
-    "as friendly, unless it counted a killing blow or a death against them.",
+    "Spy keeps hostile players only, and drops a player not seen for 90 days by default "
+    "(Spy's purge option), or once it sees them as friendly, unless it counted a killing "
+    "blow or a death against them (and Spy is not set to purge those too) or they are on "
+    "the kill-on-sight list.",
     "Spy records your own character's position, not theirs. The time and the place can be "
-    "from different moments: inside an instance Spy writes the instance's name but leaves "
-    "the map position as it was, so that position can be older than the time.",
+    "from different moments: Spy records the place when it first notices a player, and not "
+    "when the game gives no position; and inside an instance it writes the instance's name "
+    "but leaves the map position as it was, so the place can be older than the time.",
     "Hostile means the game called them hostile to your character when Spy last looked, not "
     "their faction: a duel, mind control or a free-for-all area can make your own faction "
     "hostile, and marking a player kill on sight, or a row another Spy user shared, sets it "
@@ -351,6 +354,37 @@ def _spy_words(read: _SpyRead, characters: Sequence[spy.SpyCharacterData]) -> st
     return f"{held[0].upper()}{held[1:]}, {_SPY_AS_OF}{by}."
 
 
+def _spy_purge_words(found: spy.SpySettings) -> str:
+    """What a character's Spy profile drops, from its purge options."""
+    if found.purge_days is None:
+        when = f"by a purge setting wowlab does not know ({found.purge_setting})"
+    else:
+        when = f"when not seen for {_plural(found.purge_days, 'day')}"
+    also = [
+        "those it counted a killing blow or death against" if found.purge_counted else None,
+        "kill-on-sight players" if found.purge_kos else None,
+    ]
+    extra = " and ".join(a for a in also if a)
+    return f"drops players {when}" + (f", {extra} too" if extra else "")
+
+
+def _spy_notes(read: _SpyRead, sources: Sequence[spy.SpySource]) -> list[str]:
+    """The standing notes, then one naming the purge setting of each
+    character listed whose profile the account file holds."""
+    said: list[str] = []
+    seen: set[spy.SpySource] = set()
+    for source in sources:
+        if source in seen:
+            continue
+        seen.add(source)
+        found = spy.settings_for(read.accounts, source)
+        if found is not None:
+            said.append(f"{_spy_label(source.character)} {_spy_purge_words(found)}")
+    if not said:
+        return list(_SPY_NOTES)
+    return [*_SPY_NOTES, "Spy's purge setting for each character: " + "; ".join(said) + "."]
+
+
 def _spy_caveat(read: _SpyRead, players: Sequence[spy.SpyPlayer]) -> str | None:
     """The caveat when a character whose rows are shown takes the rows
     other Spy users share."""
@@ -457,7 +491,7 @@ def spy_list(
         warnings=read.warnings(),
         caveat=caveat,
         words=words,
-        notes=_SPY_NOTES,
+        notes=_spy_notes(read, [c.source for c in characters]),
     )
     if json_out:
         _spy_errors(read)
@@ -476,7 +510,7 @@ def spy_list(
             _say(f"Could not be read: {what} {u.key} ({whose}): {u.reason}")
         _spy_errors(read)
         if read.accounts or read.characters:
-            _say_notes(_SPY_NOTES, notes, caveat)
+            _say_notes(report.notes, notes, caveat)
     if read.errors:
         raise typer.Exit(EXIT_ERROR)
 
@@ -603,7 +637,7 @@ def spy_show(
         warnings=warnings,
         caveat=caveat,
         lines=lines,
-        notes=_SPY_NOTES,
+        notes=_spy_notes(read, sorted({p.source for p in players}, key=lambda x: x.file)),
     )
     if json_out:
         _spy_errors(read)
@@ -614,6 +648,6 @@ def spy_show(
         for line in lines:
             _say(line)
         _spy_errors(read)
-        _say_notes(_SPY_NOTES, notes, caveat)
+        _say_notes(report.notes, notes, caveat)
     if read.errors:
         raise typer.Exit(EXIT_ERROR)

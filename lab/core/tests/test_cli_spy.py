@@ -132,7 +132,7 @@ def test_list_reads_every_player_newest_first_with_who_saw_them(env: Env) -> Non
         "; place Spy last recorded: The Barrens: Ratchet (by Sandgraal-Rizzen)"
     )
     assert "; last seen 20" in lines[1]
-    assert len(lines) == 1 + 24 + 1 and lines[-1] == "8 notes: --notes shows them"
+    assert len(lines) == 1 + 24 + 1 and lines[-1] == "9 notes: --notes shows them"
     sonja = next(line for line in lines if line.startswith("Sonja-Frayle"))
     assert sonja.endswith("place Spy last recorded: Wailing Caverns (by Sandgraal-Rizzen)")
 
@@ -141,6 +141,11 @@ def test_list_json_carries_each_row_with_its_file_and_character(env: Env) -> Non
     report = env.json("spy", "list")
     assert report["total"] == 24 and report["distinct"] == 24 and len(report["players"]) == 24
     assert report["caveat"] is None
+    # The capture's profiles set no purge option: Spy's defaults, said.
+    assert report["notes"][-1] == (
+        "Spy's purge setting for each character: Sandgraal-Rizzen drops players when not "
+        "seen for 90 days; Tyrone-Hamberglar drops players when not seen for 90 days."
+    )
     assert report["warnings"] == [] and report["unread"] == []
     assert [(f["scope"], f["character"], f["players"]) for f in report["files"]] == [
         ("account", None, 0),
@@ -384,7 +389,12 @@ def test_constructed_a_character_that_takes_shared_rows_gets_the_caveat(env: Env
         "Spy takes the players other Spy users share for Sandgraal-Rizzen, so some places and "
         "times may come from other Spy users."
     )
-    assert env.json("spy", "list")["caveat"] == caveat
+    listed = env.json("spy", "list")
+    assert listed["caveat"] == caveat
+    assert listed["notes"][-1] == (
+        "Spy's purge setting for each character: Sandgraal-Rizzen drops players when not "
+        "seen for 90 days."
+    )
     assert env.json("spy", "show", "Goruthuz-Mugstout")["caveat"] == caveat
     out = env.run("spy", "list").stdout
     assert " ".join(out.split()).count(caveat) == 1

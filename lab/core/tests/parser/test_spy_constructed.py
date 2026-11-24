@@ -285,3 +285,41 @@ def test_constructed_the_characters_that_take_shared_rows_are_named() -> None:
     assert spy.uses_shared_data([got], SOURCE)
     other = SOURCE.model_copy(update={"character": "1/Other-Fakerealm"})
     assert not spy.uses_shared_data([got], other)
+
+
+@pytest.mark.parametrize(
+    ("purge", "days", "setting"),
+    [
+        (None, 90, None),
+        ('"ThirtyDays"', 30, None),
+        ('"OneDay"', 1, None),
+        ('"Weekly"', None, "Weekly"),
+    ],
+)
+def test_constructed_the_purge_options_are_read_with_spys_defaults(
+    purge: str | None, days: int | None, setting: str | None
+) -> None:
+    profile = ['["PurgeWinLossData"] = true,']
+    if purge is not None:
+        profile.append(f'["PurgeData"] = {purge},')
+    text = NL.join(
+        [
+            "",
+            "SpyDB = {",
+            '["profileKeys"] = {',
+            '["Mine Fakerealm"] = "Mine Fakerealm",',
+            "},",
+            '["profiles"] = {',
+            '["Mine Fakerealm"] = {',
+            *profile,
+            "},",
+            "},",
+            "}",
+            "",
+        ]
+    ).encode()
+    got = spy.parse_account(text, SOURCE.model_copy(update={"character": None}))
+    found = spy.settings_for([got], SOURCE)
+    assert found is not None
+    assert (found.purge_days, found.purge_setting) == (days, setting)
+    assert found.purge_counted and not found.purge_kos and not found.uses_shared_data

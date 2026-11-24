@@ -86,18 +86,22 @@ class SpySource(_Model):
 
 class SpyPlayer(_Model):
     """One `PlayerData` row: a player Spy still keeps. Spy keeps hostile
-    players only, and drops a row after 90 days or once the player is seen
-    as friendly, unless it holds wins or losses. `key` is the table key, as
+    players only, and drops a row not seen for 90 days by default (Spy's
+    purge option, `SpySettings.purge_days`) or once the player is seen as
+    friendly, unless it counted a killing blow or a death against them (and
+    Spy is not set to purge those too). `key` is the table key, as
     stored (`<First>-<Second>` on Forever); `name` is the row's own `name`
     field.
 
     `time` is when Spy last saw them (Unix seconds). The place is the one
     Spy last recorded, which can be from another moment: Spy records the
-    recording character's own position, never the other player's. `zone`
-    and `sub_zone` are updated with `time` outside an instance; inside one
-    Spy writes the instance's name as `zone` and "" as `sub_zone` and leaves
-    `map_id`, `map_x` and `map_y` as they were, so the map position can be
-    older than `time`. A row another Spy user shared (only when the
+    recording character's own position, never the other player's. `time`
+    is set at every sighting; outside an instance the place is written only
+    when Spy first notices the player after losing sight of them, and not at
+    all when the game gives no position (0,0); inside one Spy writes the
+    instance's name as `zone` and "" as `sub_zone` and leaves `map_id`,
+    `map_x` and `map_y` as they were, so the place can be older than
+    `time`. A row another Spy user shared (only when the
     character's Spy profile takes shared data, off by default) carries the
     sender's place, `is_enemy` True and the time it arrived.
 
@@ -251,17 +255,40 @@ class SpyCharacterData(_Model):
     other_keys: list[str] = Field(default_factory=list)
 
 
+class SpySettings(_Model):
+    """The Spy options of one character's profile that decide what its
+    list holds, each Spy's default when the profile does not set it (as Spy
+    itself reads them). `character` is the character as `profileKeys` names
+    it ("First Second"). `purge_days` is how long a player not seen is
+    kept (`PurgeData`: 1, 5, 10, 30, 60 or 90 days; 90 by default; None for
+    a value this reader does not know, kept in `purge_setting`).
+    `purge_counted` (`PurgeWinLossData`, off by default) drops players Spy
+    counted a killing blow or a death against too; `purge_kos` (`PurgeKoS`,
+    off by default) drops kill-on-sight players too; `uses_shared_data`
+    (`UseData`, off by default) takes the rows other Spy users share."""
+
+    character: str
+    purge_days: int | None = 90
+    purge_setting: str | None = None
+    purge_counted: bool = False
+    purge_kos: bool = False
+    uses_shared_data: bool = False
+
+
 class SpyAccountData(_Model):
     """The account's `SpyDB`: the shared kill-on-sight lists, the player's
     notes and tags. `present` is False when the file holds no `SpyDB`.
     `other_keys` names the top-level keys read only by name (Spy's
     settings and its own lists, such as `profiles` and `watchData`).
-    `uses_shared_data` names each character (as Spy names it, "First
-    Second") whose Spy profile takes the rows other Spy users share
-    (`UseData`, off by default): their rows' places may be other users'."""
+    `settings` holds, for each character `profileKeys` names, the Spy
+    options that decide what its list holds (`SpySettings`);
+    `uses_shared_data` names the ones whose profile takes the rows other
+    Spy users share (`UseData`, off by default): their rows' places may be
+    other users'."""
 
     source: SpySource
     present: bool
+    settings: list[SpySettings] = Field(default_factory=list)
     uses_shared_data: list[str] = Field(default_factory=list)
     shared_kos: list[SpySharedKos] = Field(default_factory=list)
     notes: list[SpyNote] = Field(default_factory=list)
@@ -592,39 +619,69 @@ def parse_character(data: bytes, source: SpySource) -> SpyCharacterData:
 _ACCOUNT_TABLES: Final = ("kosData", "playerNotes", "playerTags")
 
 
-def _uses_shared_data(value: dict[object, object]) -> list[str]:
-    """The characters (as `profileKeys` names them) whose Spy profile has
-    `UseData` set true: Spy takes the rows other Spy users share. Spy's
-    default is off, so a profile that does not set it does not take them."""
+# Spy's `PurgeData` choices, in days (`Spy.lua`, the options table).
+_PURGE_DAYS: Final[dict[str, int]] = {
+    "OneDay": 1,
+    "FiveDays": 5,
+    "TenDays": 10,
+    "ThirtyDays": 30,
+    "SixtyDays": 60,
+    "NinetyDays": 90,
+}
+
+
+def _settings(value: dict[object, object]) -> list[SpySettings]:
+    """Each character `profileKeys` names whose profile is in `profiles`,
+    with the options that decide what its list holds; a value of another
+    type than Spy writes counts as Spy's default, as Spy's own checks
+    treat it."""
     keys = value.get("profileKeys")
     profiles = value.get("profiles")
     if not isinstance(keys, dict) or not isinstance(profiles, dict):
         return []
-    out: list[str] = []
+    out: list[SpySettings] = []
     for character, profile_name in keys.items():
         profile = profiles.get(profile_name) if isinstance(profile_name, str) else None
-        if (
-            isinstance(character, str)
-            and isinstance(profile, dict)
-            and profile.get("UseData") is True
-        ):
-            out.append(character)
+        if not isinstance(character, str) or not isinstance(profile, dict):
+            continue
+        purge = profile.get("PurgeData")
+        days: int | None = 90
+        if isinstance(purge, str):
+            days = _PURGE_DAYS.get(purge)
+        out.append(
+            SpySettings(
+                character=character,
+                purge_days=days,
+                purge_setting=purge if isinstance(purge, str) and days is None else None,
+                purge_counted=profile.get("PurgeWinLossData") is True,
+                purge_kos=profile.get("PurgeKoS") is True,
+                uses_shared_data=profile.get("UseData") is True,
+            )
+        )
     return out
 
 
-def uses_shared_data(accounts: Sequence[SpyAccountData], source: SpySource) -> bool:
-    """Whether the character of `source` takes rows other Spy users share,
-    by its account's `SpyDB` (the character's folder name and Spy's name
-    for it compared folded, "First-Second" and "First Second" alike)."""
+def settings_for(accounts: Sequence[SpyAccountData], source: SpySource) -> SpySettings | None:
+    """The Spy options of the character of `source`, from its account's
+    `SpyDB` (the character's folder name and Spy's name for it compared
+    folded, "First-Second" and "First Second" alike); None when the account
+    file names no profile for it."""
     if source.character is None:
-        return False
+        return None
     label = fold(source.character.rsplit("/", 1)[-1])
-    return any(
-        a.source.account == source.account
-        and a.source.flavor_folder == source.flavor_folder
-        and any(fold(c) == label for c in a.uses_shared_data)
-        for a in accounts
-    )
+    for a in accounts:
+        if a.source.account != source.account or a.source.flavor_folder != source.flavor_folder:
+            continue
+        for s in a.settings:
+            if fold(s.character) == label:
+                return s
+    return None
+
+
+def uses_shared_data(accounts: Sequence[SpyAccountData], source: SpySource) -> bool:
+    """Whether the character of `source` takes rows other Spy users share."""
+    found = settings_for(accounts, source)
+    return found is not None and found.uses_shared_data
 
 
 def load_account(value: object, source: SpySource) -> SpyAccountData:
@@ -699,10 +756,12 @@ def load_account(value: object, source: SpySource) -> SpyAccountData:
                             reason="not text",
                         )
                     )
+    settings = _settings(value)
     return SpyAccountData(
         source=source,
         present=True,
-        uses_shared_data=_uses_shared_data(value),
+        settings=settings,
+        uses_shared_data=[s.character for s in settings if s.uses_shared_data],
         shared_kos=shared,
         notes=notes,
         tags=tags,
