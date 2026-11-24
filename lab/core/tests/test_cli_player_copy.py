@@ -464,9 +464,9 @@ def read_commands(root: Path, tmp_path: Path) -> list[list[str]]:
         ["crew", "scan-log"],
         ["crew", "list", "--world"],
         ["crew", "matches", "--world", "--notes"],
-        # M22-01: these captures hold no Spy file, so list says so and show
-        # ends in its one error line; test_cli_spy.py runs both on the Spy
-        # capture.
+        # M22-01: the sandbox (macos/ and its overlays) holds no Spy file,
+        # so list says so and show ends in its one error line;
+        # test_cli_spy.py runs both on the Spy files of macos-71037/.
         ["spy", "list"],
         ["spy", "list", "--notes"],
         ["spy", "show", "Inventeda-Fakerealm"],

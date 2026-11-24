@@ -4,7 +4,7 @@ The panel lists what the Spy addon saved from `spy list --json`, with its
 search, filter and order as that command's own options; a row opens what
 `spy show --json` prints. Both only read. The install is a copy of the
 captured `fixtures/macos-70888/` in `tmp_path` with the real Spy capture
-(`fixtures/macos-71037/`) dropped in; tests named `constructed` add a file
+(`fixtures/macos-71037/`, its `WTF/Account` only) dropped in; tests named `constructed` add a file
 built in the test, with invented names.
 
 The page is driven under Node with the harness of `test_ui_crew.py` (the
@@ -135,7 +135,9 @@ def served(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[Any]:
         shutil.copy2(capture / ".build.info", root / ".build.info")
         shutil.copytree(capture / "forever", root / FLAVOR)
         shutil.copytree(
-            FIXTURES / "macos-71037" / "forever" / "WTF", root / FLAVOR / "WTF", dirs_exist_ok=True
+            FIXTURES / "macos-71037" / "forever" / "WTF" / "Account",
+            root / FLAVOR / "WTF" / "Account",
+            dirs_exist_ok=True,
         )
         for rel, data in (extra or {}).items():
             (root / FLAVOR / rel).write_bytes(data)

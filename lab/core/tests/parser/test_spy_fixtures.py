@@ -134,8 +134,11 @@ def test_survey_reads_every_spy_file_of_a_copied_install(tmp_path: Path) -> None
     capture = FIXTURES / "macos-70888"
     shutil.copy2(capture / ".build.info", root / ".build.info")
     shutil.copytree(capture / "forever", root / "_forever_")
+    # Only the account tree: the run's Config.wtf stays out of the copy.
     shutil.copytree(
-        FIXTURES / RUN / "forever" / "WTF", root / "_forever_" / "WTF", dirs_exist_ok=True
+        FIXTURES / RUN / "forever" / "WTF" / "Account",
+        root / "_forever_" / "WTF" / "Account",
+        dirs_exist_ok=True,
     )
     bak = root / "_forever_" / "WTF/Account/LABACCOUNTA/1/Sandgraal-Rizzen/SavedVariables"
     (bak / "Spy.lua.bak").write_bytes(b"\r\nSpyPerCharDB = function() end\r\n")

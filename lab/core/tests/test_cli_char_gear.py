@@ -186,6 +186,13 @@ def test_char_gear_json_keys_are_the_plans(tmp_path: Path, monkeypatch: pytest.M
         "slots",
         "empty_slots",
         "notes",
+        # M21-02: the names and the region, as `char list --summary` gives them.
+        "first_name",
+        "second_name",
+        "folder_name",
+        "game_name",
+        "region",
+        "region_absent",
         "flavor_folder",  # M16-114: as the other `char` reports carry it
         "dressing",
     ]

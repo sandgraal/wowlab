@@ -1,8 +1,11 @@
 """`wowlab spy list` and `spy show` (M22-01).
 
-The real Spy capture (`fixtures/macos-71037/`, three `Spy.lua` files)
-dropped into a copy of the captured install `fixtures/macos-70888/` in
-`tmp_path`. Tests named `constructed` replace or add a file built in the
+The real Spy capture (the three `Spy.lua` files under
+`fixtures/macos-71037/forever/WTF/Account/`) dropped into a copy of the
+captured install `fixtures/macos-70888/` in `tmp_path`. Only `WTF/Account`
+is copied from `macos-71037/`, a whole run since M21-02, so its
+`Config.wtf` never replaces the root's and the install stays
+`macos-70888`'s. Tests named `constructed` replace or add a file built in the
 test (invented names) to reach what the capture does not hold: a kill-on-
 sight entry, a fight, a note and tag, an unknown version, a file that is not
 data. No test reads a real install; each checks that the copy is unchanged
@@ -75,8 +78,11 @@ def env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[Env]:
     capture = FIXTURES / "macos-70888"
     shutil.copy2(capture / ".build.info", root / ".build.info")
     shutil.copytree(capture / "forever", root / FLAVOR)
+    # Only the Spy files' account tree (M22-01), never macos-71037's Config.wtf.
     shutil.copytree(
-        FIXTURES / "macos-71037" / "forever" / "WTF", root / FLAVOR / "WTF", dirs_exist_ok=True
+        FIXTURES / "macos-71037" / "forever" / "WTF" / "Account",
+        root / FLAVOR / "WTF" / "Account",
+        dirs_exist_ok=True,
     )
     made = Env(root)
     yield made

@@ -213,20 +213,31 @@ the client:
   ("email address", 54 matches inside one encoded price-database string) and
   is not committed; two holes in a row are graded on a constructed input
   until a capture of it passes the scrub.
-  The M22-01 capture (build 71037, 2026-11-23) is a ninth run, kept in
-  `macos-71037/` (files-only, laid out as `macos-70425/` and declared in
-  `FILES_ONLY_RUNS`, borrowing `macos-70888/`'s root). Only the Spy addon's
-  three files are committed: the account `Spy.lua` (`SpyDB`) and two
-  characters' (`SpyPerCharDB`), taken in two runs of the tool (one per
-  character, `--sv Spy.lua --confirm-free-text Spy.lua`), whose account
-  files were byte-identical. Spy is a notes addon, so the tool asked for the
-  confirmation; every string was read first: other players' names, guilds,
-  races, classes, zones and sub-zones, the owner's own character names, and
-  the Forever port's own diagnostic lines (`ForeverDebug`). Names are kept
-  under ADR-0036's note of 2026-11-23. Each run's other files and its newest
+  The M21-02 capture (build 71037, 2026-11-23) is a ninth run, kept in
+  `macos-71037/` with its own `.build.info` and `.flavor.info`. Only those,
+  `WTF/Config.wtf` (`SET portal "US"`) and the first 120 lines of one
+  launch-client combat log are committed. The log names every other player
+  in four parts, `"<First>-<Second>-<Realm>-<Region>"`; the capture tool
+  has no mode that keeps other players' names and pseudonymises only their
+  GUIDs, so `--pseudonymise-other-players` replaced each first name
+  (`Labothera`, `Labotherb`, ...) and kept the second name, realm and
+  region as written. At 200 or 300 lines the tool refused the log (a real
+  first name also appeared outside a unit field), so the slice is 120 lines.
+  The M22-01 capture (build 71037, 2026-11-23) is a tenth run, on the same
+  build as M21-02's and kept in the same `macos-71037/` tree, beside its
+  files (not files-only). Only the Spy addon's three files are committed:
+  the account `Spy.lua` (`SpyDB`) and two characters' (`SpyPerCharDB`),
+  taken in two runs of the tool (one per character, `--sv Spy.lua
+  --confirm-free-text Spy.lua`), whose account files were byte-identical.
+  Spy is a notes addon, so the tool asked for the confirmation; every
+  string was read first: other players' names, guilds, races, classes,
+  zones and sub-zones, the owner's own character names, and the Forever
+  port's own diagnostic lines (`ForeverDebug`). Names are kept under
+  ADR-0036's note of 2026-11-23. Each run's other files and its newest
   combat log (refused: unmapped player GUIDs) are not committed. The
-  account folder and the digits folder are the tool's pseudonyms, as in
-  every run; the character folders are the real ones.
+  account folder (`LABACCOUNTA`) and the digits folder (`1`) are the
+  tool's pseudonyms, as in every run; the character folders are the real
+  ones.
 - Combat logs from part 3 on are captured with shifted timestamps (M10-02
   follow-up 5, `timestamps-shifted`): every stamp and the file name moved by
   one secret offset per log, format kept, so neither the date nor the time
@@ -378,6 +389,10 @@ the client:
 | `macos-70888/forever/Interface/AddOns/BanterBlocker/BanterBlocker_Mainline.toc` | toc | _forever_ | 1.60.1.70888 | macos | owner | owner | none | multi-TOC addon (2 TOC files); CRLF; M16-05 run of 2026-11-12, recaptured the same day |
 | `macos-70938/forever/WTF/Account/LABACCOUNTA/1/Sandgraal-Rizzen/SavedVariables/Blizzard_AuctionHouseUI.lua` | savedvariables | _forever_ | 1.60.1.70938 | macos | owner | owner | identity-rewritten: path only | requested with --sv; M18-01T capture run of 2026-11-14 (agent on the owner's install, `--kind _forever_=forever`, `--own-guid`); the game's own per-character file, 208 bytes, 21 lines, nesting depth 2; first positional `nil` hole in the corpus (`docs/LAB_FORMATS.md` §4.1, amendment of 2026-11-14): `g_auctionHouseFilters["filters"]` holds 12 positional entries, `false` ×4, `nil` (line 10, column 1, index 5), `true` ×7; a second variable `g_activeBidAuctionIDs` is an empty table written over two lines; no `-- [n]`, no comments, no indentation, ASCII only; byte-identical to the install's file (0 edits); CRLF; leading blank line |
 | `macos-70938/forever/WTF/Account/LABACCOUNTA/SavedVariables/Blizzard_CombatLog.lua` | savedvariables | _forever_ | 1.60.1.70938 | macos | owner | owner | identity-rewritten: path only | requested with --sv; chat-log, mail or notes addon (free text), confirmed with --confirm-free-text after reading every string (all are the game's default filter names, tooltips and event names); same M18-01T run; the game's own account file, 9543 bytes, 501 lines, nesting depth 6; two positional `nil` holes (lines 28 and 272, column 1), each index 3 of a `["schoolColoring"]` table (`Blizzard_CombatLog_Filters["filters"][1]["colors"]["schoolColoring"]` and `[2]`), between two colour tables (indices 2 and 4) and followed by number keys `[0]`, `[8]`, …; a second variable `Blizzard_CombatLog_Filter_Version = 4.3`; no `-- [n]`, no comments, no indentation, ASCII only; byte-identical to the install's file (0 edits); CRLF; leading blank line |
+| `macos-71037/.build.info` | build-info | (install root) | 1.60.1.71037 | macos | owner | owner | geoip-country-replaced: 2; acct-country-replaced: 2 | LF; M21-02 capture run of 2026-11-23 (agent on the owner's install, `--kind _forever_=forever`, `--pseudonymise-other-players`, `--combat-log WoWCombatLog-112326_112119.txt --log-lines 120`); only these four files of the run are committed |
+| `macos-71037/forever/.flavor.info` | flavor-info | _forever_ | 1.60.1.71037 | macos | owner | owner | none | LF; product `wowf`; M21-02 capture run of 2026-11-23 (agent on the owner's install, `--kind _forever_=forever`, `--pseudonymise-other-players`, `--combat-log WoWCombatLog-112326_112119.txt --log-lines 120`); only these four files of the run are committed |
+| `macos-71037/forever/WTF/Config.wtf` | config-wtf | _forever_ | 1.60.1.71037 | macos | owner | owner | cvars-blanked: 1 | LF; `SET portal "US"` (the region, M21-02); M21-02 capture run of 2026-11-23 (agent on the owner's install, `--kind _forever_=forever`, `--pseudonymise-other-players`, `--combat-log WoWCombatLog-112326_112119.txt --log-lines 120`); only these four files of the run are committed |
+| `macos-71037/forever/Logs/WoWCombatLog-010926_073444.txt` | combatlog | _forever_ | 1.60.1.71037 | macos | owner | owner | unit-guids-rewritten: 3; other-players-pseudonymised: 41; timestamps-shifted | first 120 lines of the launch client's log, CRLF; Orgrimmar, 41 other players, every player unit name in four parts `"<First>-<Second>-<Realm>-<Region>"` (`"Labothera-Crazywater-Roleplay PvP-US"`): the tool replaced each first name with a `Labother…` pseudonym and each GUID with `Player-9998-…`, and kept the second name, the realm (with its space) and the region as written; M21-02 capture run of 2026-11-23 (agent on the owner's install, `--kind _forever_=forever`, `--pseudonymise-other-players`, `--combat-log WoWCombatLog-112326_112119.txt --log-lines 120`); only these four files of the run are committed |
 | `macos-71037/forever/WTF/Account/LABACCOUNTA/SavedVariables/Spy.lua` | savedvariables | _forever_ | 1.60.1.71037 | macos | agent (M22-01) on the owner's install | owner | identity-rewritten: path only | requested with --sv; chat-log, mail or notes addon (free text), confirmed with --confirm-free-text after reading every string; M22-01 run of 2026-11-23 (the Spy addon, a Forever port of Spy 1.3.8, its own debug lines say); `SpyDB`, 3716 bytes, 128 lines; CRLF; leading blank line; `kosData` with one empty list per character (keys "First Second", with a space), empty `playerNotes`, `playerTags`, `watchData`, `removeKOSData` and `guildWatch`, all under the one key `Region RP-PvP`; `profiles`, `profileKeys` and `ForeverDebug` (the port's diagnostic lines) |
 | `macos-71037/forever/WTF/Account/LABACCOUNTA/1/Sandgraal-Rizzen/SavedVariables/Spy.lua` | savedvariables | _forever_ | 1.60.1.71037 | macos | agent (M22-01) on the owner's install | owner | identity-rewritten: path only | requested with --sv; confirmed with --confirm-free-text after reading every string; same M22-01 run; `SpyPerCharDB` version "1.1", 8702 bytes, 388 lines; CRLF; leading blank line; 24 `PlayerData` rows keyed `<First>-<Second>`, each with `name`, `class`, `race`, `level`, `faction`, `isEnemy`, `isGuess`, `zone`, `subZone` and `time`, most with `guild` and `mapID`/`mapX`/`mapY` (two decimals); one row (an instance) with no map fields and an empty `subZone`; one name with a non-ASCII letter (`Tala-Kattéa`); no `wins`, `loses` or `reason` field yet; `KOSData`, `IgnoreData` and `Encounters` empty |
 | `macos-71037/forever/WTF/Account/LABACCOUNTA/1/Tyrone-Hamberglar/SavedVariables/Spy.lua` | savedvariables | _forever_ | 1.60.1.71037 | macos | agent (M22-01) on the owner's install | owner | identity-rewritten: path only | requested with --sv; confirmed with --confirm-free-text; second M22-01 run of 2026-11-23; `SpyPerCharDB` version "1.1" with every table empty, 138 bytes, 12 lines; CRLF; leading blank line |

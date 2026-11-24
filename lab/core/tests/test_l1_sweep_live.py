@@ -98,7 +98,9 @@ FIXTURES = Path(__file__).resolve().parent / "fixtures"
 CAPTURE = FIXTURES / "macos-70888"  # a whole captured flavor, with its .build.info
 LOG_CAPTURE = FIXTURES / "macos" / "forever" / "Logs"
 # The Spy addon's captured files (M22-01), dropped into the copied install.
-SPY_CAPTURE = FIXTURES / "macos-71037" / "forever" / "WTF"
+# Only its account tree: macos-71037's Config.wtf (M21-02) must not
+# replace the copied install's.
+SPY_CAPTURE = FIXTURES / "macos-71037" / "forever" / "WTF" / "Account"
 WAGO = FIXTURES / "wago"
 FLAVOR = "_forever_"  # the provenance row's flavor folder; tests may name it (L6)
 ACCOUNT = "LABACCOUNTA"
@@ -1266,7 +1268,7 @@ def _copy_install(tmp_path: Path) -> Path:
     shutil.copy2(CAPTURE / ".build.info", root / ".build.info")
     shutil.copytree(CAPTURE / "forever", root / FLAVOR)
     shutil.copytree(LOG_CAPTURE, root / FLAVOR / "Logs")
-    shutil.copytree(SPY_CAPTURE, root / FLAVOR / "WTF", dirs_exist_ok=True)
+    shutil.copytree(SPY_CAPTURE, root / FLAVOR / "WTF" / "Account", dirs_exist_ok=True)
     app = root / FLAVOR / "World of Warcraft.app" / "Contents" / "MacOS"
     app.mkdir(parents=True)
     (app / "World of Warcraft").write_bytes(b"constructed")
