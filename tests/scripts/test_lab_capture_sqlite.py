@@ -8,9 +8,8 @@ journal's header, with one fixed reason that quotes nothing; the refusal
 line names the file.
 
 CONSTRUCTED INPUT. Every database and journal is built at run time by the
-standard library's `sqlite3` in `tmp_path`, holding the invented keys of
-`tests/repo/test_crew_book_out_of_repo.py` (`CONSTRUCTED_KEYS`) only. No test
-needs or touches a real install (ADR-0012).
+standard library's `sqlite3` in `tmp_path`, holding invented keys only. No
+test needs or touches a real install (ADR-0012).
 """
 
 from __future__ import annotations

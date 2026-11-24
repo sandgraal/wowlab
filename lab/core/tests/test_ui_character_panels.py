@@ -967,7 +967,8 @@ def _character_section() -> str:
 def test_the_tab_offers_no_edit_control_and_says_so() -> None:
     section = _character_section()
     # The four controls: the picker, the text filter and the two checkboxes;
-    # and, since M18-05, the button back to All characters, which edits nothing.
+    # and, since M18-05, the button back to All characters, which edits nothing;
+    # and, since M21-08, Copy for WoWSims, which runs the read `char sim-export`.
     controls = re.findall(r"<(input|select|textarea|button)\b([^>]*)>", section)
     named = []
     for tag, attrs in controls:
@@ -978,6 +979,7 @@ def test_the_tab_offers_no_edit_control_and_says_so() -> None:
     named.sort()
     assert named == [
         ("button", "char-back", "button"),
+        ("button", "char-sim-button", "button"),
         ("input", "char-keys-disagree", "checkbox"),
         ("input", "char-keys-filter", "search"),
         ("input", "char-macros-findings", "checkbox"),

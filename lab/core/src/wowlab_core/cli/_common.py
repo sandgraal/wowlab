@@ -50,11 +50,13 @@ from wowlab_core import (
     luadata,
     process,
     profiles,
+    region,
     snapshot,
     svmerge,
     wtfconfig,
 )
 from wowlab_core.errors import WowlabError
+from wowlab_core.region import Region
 
 EXIT_OK = 0
 EXIT_ERROR = 1
@@ -2205,6 +2207,24 @@ def _crew_state_words(carried: crewcount.CrewBookCarried) -> str:
     if carried.on:
         return f"on, {_plural(carried.players, 'player')}"
     return f"turned off, {_plural(carried.players, 'player')} kept"
+
+
+def _region_fields(reading: region.RegionReading | None) -> tuple[Region | None, str | None]:
+    """A report's `region` and `region_absent` from a flavor's region
+    reading (M21-02); both None without one."""
+    if reading is None:
+        return None, None
+    return reading.region, reading.absent
+
+
+def _region_text(found: Region | None, absent: str | None, source: str = "") -> str:
+    """The one text line that names a region (M21-02), as every command
+    prints it: `Region: US`, with `source` in brackets when given, or
+    `Region: not known: <why>`. The same facts as the report's `region`
+    and `region_absent`."""
+    if found is not None:
+        return f"Region: {found.upper()}" + (f" ({source})" if source else "")
+    return f"Region: not known: {absent or 'not read'}"
 
 
 def _crew_unread_words(carried: crewcount.CrewBookCarried) -> str:

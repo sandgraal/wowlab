@@ -80,7 +80,6 @@ SERIAL_FILES: frozenset[str] = frozenset(
 SERIAL_TESTS: frozenset[str] = frozenset(
     {
         # CPU-time budgets (tests/parser/_cpu_clock.py, or process_time directly).
-        "tests/repo/test_crew_book_out_of_repo.py::test_constructed_the_scan_is_linear_in_the_input",
         "lab/core/tests/parser/test_combatlog_constructed.py"
         "::test_an_unclosed_quote_over_a_megabyte_is_refused_in_linear_time_constructed",
         "lab/core/tests/parser/test_db2lake_constructed.py"
@@ -145,6 +144,14 @@ TIMEOUT_OVERRIDES: dict[str, int] = {
     # The owner's `@live` L1 sweep (M16-38): it hashes a whole install and
     # runs every read command; never collected by `make test` or CI.
     "lab/core/tests/test_l1_sweep_live.py::test_live_l1_sweep_changes_nothing_in_the_install": 3600,
+    # M20-13's lab-addon mutation probe: each case re-tokenizes the grown
+    # addon, about 150 s alone on the owner's Mac (2026-11-23) and over the
+    # 300 s guard on a loaded CI worker (PR #689: three crashed runs; main
+    # timed out locally too). Measured, not a hang.
+    "lab/core/tests/review/test_m20_13_kept_rules_miss_a_new_gather_path_and_an_own_value_outside_identity.py"
+    "::test_positive_control_is_rejected": 900,
+    "lab/core/tests/review/test_m20_13_kept_rules_miss_a_new_gather_path_and_an_own_value_outside_identity.py"
+    "::test_a_kept_rule_rejects_the_edit": 900,
 }
 
 # The lab-addon grader mutation probes (M15-21): review probes that copy
