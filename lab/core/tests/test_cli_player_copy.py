@@ -485,6 +485,14 @@ def read_commands(root: Path, tmp_path: Path) -> list[list[str]]:
             ["looks", "import-char", f"char{i}", "--character", c, "--build", TABLE_BUILD]
             for i, c in enumerate(chars)
         ],
+        # M22-11: the sandbox keeps no Blizzard API client, so each says how to
+        # add one and asks Blizzard nothing (test_cli_blizzard.py runs them
+        # on constructed replies); login, given no input, saves nothing.
+        ["blizzard", "status"],
+        ["blizzard", "show", "Sandgraal-Rizzen", "--region", "us"],
+        ["blizzard", "fetch", "Sandgraal-Rizzen", "--region", "us"],
+        ["blizzard", "login"],
+        ["blizzard", "logout"],
         ["snap", "diff", "{A}", "{B}"],
         # M16-04: the archive is written outside the install, then read back
         # (the store already holds it, so the import adds nothing).
