@@ -61,7 +61,7 @@ CHECKOUT = "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1"
 UPLOAD = "actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9"
 DOWNLOAD = "actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333"
 PATHS_FILTER = "dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d"
-SETUP_UV = "astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2"  # v10.3.3
+SETUP_UV = "astral-sh/setup-uv@1db35dd8eee11c5894872e0b383ae6c406cf738d"  # v10.4.0
 TRIVY = "aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25"
 ATTEST = "actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8"
 PYPI_PUBLISH = "pypa/gh-action-pypi-publish@7245906fb61fa33a13554f9d5fb856fe61758086"  # v1.14.3
@@ -72,6 +72,12 @@ PYPI_PUBLISH = "pypa/gh-action-pypi-publish@7245906fb61fa33a13554f9d5fb856fe6175
 # - setup-uv: `enable-cache` defaults to `auto` (on, on hosted runners).
 #   Re-read 2026-11-05 at v10.3.3 (dependabot #373): action.yml is byte-
 #   identical to v10.3.0's, so only the pin moved.
+#   Re-read 2026-11-24 at v10.4.0 (1db35dd, dependabot #695): still a node24
+#   action (dist/setup main, dist/save-cache post) that nests no action.
+#   action.yml adds one input, `require-checksums` (default false: checksum
+#   checking, no cache), and rewords the python-cache-hit output; every cache
+#   input keeps its default (enable-cache auto, cache-python false), so
+#   `enable-cache: false` still turns its cache off and only the pin moved.
 # - actionlint (raven-actions/actionlint, until M13-65): `cache` defaulted
 #   to true and restored the actionlint binary with a nested actions/cache
 #   step. ci.yml now downloads the binary itself at a pinned, checksummed
