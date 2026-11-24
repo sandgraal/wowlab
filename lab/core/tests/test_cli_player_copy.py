@@ -473,6 +473,12 @@ def read_commands(root: Path, tmp_path: Path) -> list[list[str]]:
         # constructed QuestieDB slice and lints that text too.
         ["lookup", "claw"],
         ["lookup", "claw", "--notes"],
+        # M22-01: the sandbox (macos/ and its overlays) holds no Spy file,
+        # so list says so and show ends in its one error line;
+        # test_cli_spy.py runs both on the Spy files of macos-71037/.
+        ["spy", "list"],
+        ["spy", "list", "--notes"],
+        ["spy", "show", "Inventeda-Fakerealm"],
         ["db2", "builds"],
         ["db2", "fetch", "ChrClasses", "--build", TABLE_BUILD],
         ["db2", "head", "ChrClasses", "--build", TABLE_BUILD],
