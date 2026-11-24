@@ -194,29 +194,31 @@ def test_every_recording_loads_and_all_empty_columns_are_text(
                 assert _as_csv_cell(row[name], kind) == cell, name
 
 
-def test_the_recordings_hold_thirty_two_all_empty_columns_in_fourteen() -> None:
+def test_the_recordings_hold_thirty_six_all_empty_columns_in_fifteen() -> None:
     """The count the ruling was made on (2026-09-30), so a new recording
     that changes it is noticed. M18-02 added `ChrClasses` and `ChrRaces` for
     1.60.1.70058, byte-identical to their 1.60.1.70009 recordings: seven more
     columns, in two more recordings, of the same tables. M22-06 added the
     `ItemSparse` subset of 1.60.1.70888, whose three alternative display
     name columns are empty in every kept row: three more, in one more
-    recording. M21-07 added the classic `Talent` and `TalentTab` of
-    1.60.1.70888, whose `Description_lang` is empty in every row: two more,
-    in two more recordings."""
+    recording. M22-08 added the `ItemSparse` subset for 1.60.1.71037, whose
+    five items have no description and no second, third or fourth name: four
+    more columns, in one more recording. M21-07 added the classic `Talent` and
+    `TalentTab` of 1.60.1.70888, whose `Description_lang` is empty in every
+    row: two more, in two more recordings."""
     columns = {}
     for table, build in _every_recording():
         header, records = _csv(_recording(table, build))
         for i, name in enumerate(header):
             if all(not record[i] for record in records):
                 columns[(table, build, name)] = True
-    assert len(columns) == 32
-    assert len({(t, b) for t, b, _ in columns}) == 14, "recordings"
+    assert len(columns) == 36
+    assert len({(t, b) for t, b, _ in columns}) == 15, "recordings"
     assert {t for t, _, _ in columns} == {
         "ChrClasses",
         "ChrRaces",
-        "ItemSparse",
         "ChrSpecialization",
+        "ItemSparse",
         "SkillLine",
         "Talent",
         "TalentTab",
