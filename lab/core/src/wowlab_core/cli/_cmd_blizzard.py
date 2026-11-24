@@ -1,7 +1,7 @@
 """`wowlab blizzard` (M22-11, ADR-0040 (2)): public profiles from Blizzard's API.
 
 `login` keeps the player's own API client (made at develop.battle.net) in
-wowlab's data folder; the secret is asked for, hidden, never taken as an
+wowlab's settings folder (the user config directory); the secret is asked for, hidden, never taken as an
 option, so it is in no shell history and no process list. `logout`
 forgets it. `status` says whether one is kept and how to add one. `fetch`
 asks Blizzard for one character's profile, gear, portrait address and
@@ -255,7 +255,7 @@ def blizzard_login(
     json_out: JsonOpt = False,
 ) -> None:
     """Keep the ID and secret of the API client you created at
-    develop.battle.net, in wowlab's own data folder, readable by you only,
+    develop.battle.net, in wowlab's own settings folder, readable by you only,
     never in the game folder. The secret is asked for and not shown as you
     type it; it is never taken as an option, so it stays out of your shell
     history. It is never printed, logged or sent anywhere but to
@@ -281,7 +281,7 @@ def blizzard_login(
 @blizzard_app.command("logout", short_help="Forget the kept Blizzard API client.")
 @_handled
 def blizzard_logout(json_out: JsonOpt = False) -> None:
-    """Remove the kept API client's ID and secret from wowlab's data folder.
+    """Remove the kept API client's ID and secret from wowlab's settings folder.
     Saved profiles stay. Asks Blizzard nothing.
 
     \f
@@ -308,9 +308,10 @@ def blizzard_fetch(
     """Ask Blizzard's API, with your own API client, for one character's
     public profile (level, race, class, item level), gear, guild and
     portrait address, save the answers in wowlab's data folder and print
-    them, each part with the time it was fetched. A request names the
-    region and the character's names, and nothing else; nothing from your
-    game folder is sent. A character below level 10 has no profile, and a
+    them, each part with the time it was fetched. A request names your
+    region, the game and the character's names; the client ID and secret go
+    only to Blizzard's sign-in address; nothing else from your game folder
+    is sent. A character below level 10 has no profile, and a
     portrait often appears hours after the character does: an earlier
     fetch's is shown then. Without an API client, nothing is asked and
     wowlab says how to add one.

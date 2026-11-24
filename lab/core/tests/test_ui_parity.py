@@ -89,6 +89,8 @@ EXCLUDED: Mapping[tuple[str, ...], str] = {
     # M22-11: the API client's secret is typed in a terminal, hidden; a form
     # would put it in a child's input from the page.
     ("blizzard", "login"): "the API client's secret is typed in a terminal, not into a page",
+    # M22-11: it removes the kept client with one run and no confirm step.
+    ("blizzard", "logout"): "removing the API client is offered on the command line only",
 }
 """Leaves excluded for a reason other than `--yes`. A new entry needs its
 reason written here and in the server, and nothing else."""

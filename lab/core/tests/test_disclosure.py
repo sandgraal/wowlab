@@ -67,7 +67,9 @@ def test_the_block_has_the_four_rows() -> None:
     for said in (
         "only when you run it or press it",
         "develop.battle.net",
-        "nothing from your install is sent",
+        "names your region, the game and the character's names",
+        "the client ID and secret go only to Blizzard's sign-in address",
+        "nothing else from your install is sent",
         "Without an API client nothing is asked",
     ):
         assert said in blizzard, said

@@ -12,7 +12,7 @@ Two sources, read-only (L1) and local:
    (ADR-0022): `ItemSparse` (item names, item level, required level,
    quality) and `AreaTable` (zone names). This module only reads the cache
    (`gamedata.cached_rows`); `wowlab lookup --fetch` downloads a missing
-   table through `gamedata`, the only network client.
+   table through `gamedata`, the client of game tables.
 
 `LookupIndex.search` matches names (ASCII case folded, Unicode case
 folded): an exact name first, then a name that starts with the query, then

@@ -45,9 +45,9 @@ ROWS: tuple[str, ...] = (
     "`wowlab blizzard fetch`, and the Blizzard profile panel's Fetch button, ask Blizzard's "
     "own API for one character's public profile, gear, guild and portrait address, only when "
     "you run it or press it, and only with the API client you created at develop.battle.net "
-    "and gave to `wowlab blizzard login`: the request names your region and the character's "
-    "names, and its secret goes only to Blizzard's sign-in address; nothing from your install "
-    "is sent. Without an API client nothing is asked.",
+    "and gave to `wowlab blizzard login`: the request names your region, the game and the "
+    "character's names; the client ID and secret go only to Blizzard's sign-in address; "
+    "nothing else from your install is sent. Without an API client nothing is asked.",
     "A link to another site, such as a dressing room or a character's profile, opens in "
     "your own browser, and only when you click it, carrying what that page needs: a "
     "character's name, realm, region and guild, and game ids such as race, body type, "

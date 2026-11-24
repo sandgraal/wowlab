@@ -332,6 +332,9 @@ def sandbox(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, overlay: str) -> Pa
         shutil.copytree(FIXTURES / overlay / "forever", root / FLAVOR, dirs_exist_ok=True)
     user = tmp_path / "userdata" / "wowlab"
     monkeypatch.setattr(platformdirs, "user_data_path", lambda *a, **k: user)
+    # M22-11: `blizzard logout` and `login` reach the config folder.
+    config = tmp_path / "userconfig" / "wowlab"
+    monkeypatch.setattr(platformdirs, "user_config_path", lambda *a, **k: config)
     process = _NoClient(str(tmp_path / "elsewhere" / "python3"))
     monkeypatch.setattr(psutil, "process_iter", lambda *a, **k: iter([process]))
 

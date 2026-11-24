@@ -12,6 +12,7 @@ from pydantic import Field
 
 from wowlab_core import (
     addoninstall,
+    bnet,
     charhistory,
     charkept,
     charname,
@@ -449,6 +450,30 @@ def _guild_of(record: labaddon.CharDB | None) -> tuple[str | None, str]:
     return None, section.guild_absent or section.guild_set_aside or "not recorded"
 
 
+def _saved_ruleset(
+    first: str, second: str | None, region_found: str | None, version: str | None
+) -> str | None:
+    """The ruleset slug (`normal`, `pvp`, `roleplay`, `roleplay-pvp`) of
+    this character's saved Blizzard profile (M22-11), the key Raider.IO's
+    link takes; read from wowlab's data folder only, never asked of
+    Blizzard. None when no profile was fetched, it holds no slug, or it
+    cannot be read."""
+    if region_found is None or second is None:
+        return None
+    try:
+        game = bnet.game_for_version(version)
+        if game is None:
+            return None
+        saved, _ = bnet.load_profile(
+            game.label, bnet.check_region(region_found), bnet.Name(first, second)
+        )
+    except (bnet.BnetError, OSError, ValueError):
+        return None
+    if saved is None or saved.character is None:
+        return None
+    return saved.character.ruleset_slug
+
+
 def _profile_links(
     first: str,
     second: str | None,
@@ -461,7 +486,7 @@ def _profile_links(
     region, the client's version (it picks the sites' pages) and its record
     (the guild). Never raises: a link that cannot be made is a `NoLink`
     saying why."""
-    ruleset: str | None = None  # no report gives it yet (M22-11)
+    ruleset = _saved_ruleset(first, second, region_found, version)
     made = links.profiles(first, second, region_found, version=version, ruleset=ruleset)
     shown = [m for m in made if ruleset is not None or m.link != "raiderio"]
     guild, absent = _guild_of(record)

@@ -390,8 +390,9 @@ _SYNC_CVARS = ("synchronizeBindings", "synchronizeMacros", "synchronizeConfig")
 
 @contextmanager
 def _open_gamedata() -> Iterator[gamedata.GameData]:
-    """The game-data client (the only network client, ADR-0022). Tests replace
-    this with one that replays recordings."""
+    """The game-data client (ADR-0022; the only other network client is
+    `bnet`, Blizzard's profile API, ADR-0040 (2)). Tests replace this with one
+    that replays recordings."""
     source = gamedata.WagoSource()
     try:
         yield gamedata.GameData(source)

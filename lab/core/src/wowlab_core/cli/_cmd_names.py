@@ -3,8 +3,8 @@
 The names of races, classes, specs and professions are read from four game
 tables cached for the client's exact version (`gamedata.NAME_TABLES`). This
 command downloads whichever of them are missing for each installed
-flavor's version, through `gamedata` (the only network client, ADR-0019,
-ADR-0022): one request per missing table, keyed by the full build string,
+flavor's version, through `gamedata` (the game-table client, ADR-0019,
+ADR-0022; `bnet`, Blizzard's profile API, is the only other): one request per missing table, keyed by the full build string,
 and never a table that is already cached (L5). Nothing else fetches them:
 the readers that show names (`char list --summary`, `char gear`, the UI)
 only read the cache, and `doctor` and `char list --summary` name this

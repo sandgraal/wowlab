@@ -37,8 +37,11 @@ runner = CliRunner()
 
 @pytest.fixture(autouse=True)
 def user_data(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """The user data and config directories, both under `tmp_path`."""
     redirected = tmp_path / "userdata" / "wowlab"
     monkeypatch.setattr(platformdirs, "user_data_path", lambda *a, **k: redirected)
+    config = tmp_path / "userconfig" / "wowlab"
+    monkeypatch.setattr(platformdirs, "user_config_path", lambda *a, **k: config)
     return redirected
 
 
@@ -60,6 +63,11 @@ def blizzard(monkeypatch: pytest.MonkeyPatch) -> recorded.Recorded:
     send = recorded.Recorded(recorded.answers())
     monkeypatch.setattr(bnet, "urllib_send", send)
     return send
+
+
+def _config(user_data: Path) -> Path:
+    """The redirected user config directory beside the data directory."""
+    return user_data.parent.parent / "userconfig" / "wowlab"
 
 
 def run(*args: str, stdin: str | None = None) -> Any:
@@ -125,7 +133,7 @@ def test_login_keeps_the_client_and_never_prints_the_secret(user_data: Path) -> 
     report = json.loads(done.stdout)
     assert report == {
         "saved": True,
-        "credentials_path": str(user_data / "blizzard" / "client.json"),
+        "credentials_path": str(_config(user_data) / "blizzard" / "client.json"),
     }
     assert CLIENT_ID not in done.stdout
     status = json.loads(run("status", "--json").stdout)
@@ -155,14 +163,14 @@ def test_a_secret_of_another_shape_is_refused_and_not_quoted(secret: str, user_d
     assert done.exit_code == 1
     if secret:
         assert secret not in done.stderr
-    assert not (user_data / "blizzard" / "client.json").exists()
+    assert not (_config(user_data) / "blizzard" / "client.json").exists()
 
 
 def test_no_secret_given_saves_nothing(user_data: Path) -> None:
     done = run("login", "--client-id", CLIENT_ID, stdin="")
     assert done.exit_code == 1
     assert "nothing was saved" in done.stderr
-    assert not (user_data / "blizzard" / "client.json").exists()
+    assert not (_config(user_data) / "blizzard" / "client.json").exists()
 
 
 def test_logout_forgets_the_client() -> None:
@@ -175,7 +183,7 @@ def test_logout_forgets_the_client() -> None:
 # ─── fetch and show ──────────────────────────────────────────────────────────
 
 
-def test_fetch_asks_once_per_part_and_shows_each_with_its_time(
+def test_fetch_asks_once_per_part_and_shows_each_with_its_time_constructed(
     blizzard: recorded.Recorded, user_data: Path
 ) -> None:
     login()
@@ -217,7 +225,9 @@ def test_fetch_asks_once_per_part_and_shows_each_with_its_time(
     assert len(blizzard.requests) == 5
 
 
-def test_show_reads_the_saved_fetch_and_asks_nothing(blizzard: recorded.Recorded) -> None:
+def test_show_reads_the_saved_fetch_and_asks_nothing_constructed(
+    blizzard: recorded.Recorded,
+) -> None:
     login()
     assert run("fetch", NAME).exit_code == 0
     blizzard.requests.clear()
@@ -230,7 +240,7 @@ def test_show_reads_the_saved_fetch_and_asks_nothing(blizzard: recorded.Recorded
     assert other["region"] == "eu" and other["profile"] is None
 
 
-def test_a_region_given_is_the_one_asked(blizzard: recorded.Recorded) -> None:
+def test_a_region_given_is_the_one_asked_constructed(blizzard: recorded.Recorded) -> None:
     login()
     run("fetch", NAME, "--region", "eu")
     assert blizzard.requests[1].url.startswith("https://eu.api.blizzard.com/")
@@ -308,7 +318,25 @@ def test_no_region_in_the_settings_asks_for_one_constructed(
     assert len(blizzard.requests) == 5
 
 
-def test_the_install_is_never_written(blizzard: recorded.Recorded, root: Path) -> None:
+def test_a_saved_profile_gives_the_raider_io_link_constructed(
+    blizzard: recorded.Recorded, user_data: Path
+) -> None:
+    """The ruleset of a saved profile (`ruleset.slug`, read from wowlab's
+    data folder, never asked) fills Raider.IO's link on `char gear`."""
+    before = json.loads(runner.invoke(cli.app, ["char", "gear", "--json"]).stdout)
+    assert "raiderio" not in [p["link"] for p in before["links"]["profiles"]]
+    login()
+    assert run("fetch", NAME).exit_code == 0
+    blizzard.requests.clear()
+    gear = runner.invoke(cli.app, ["char", "gear", "--json"])
+    assert gear.exit_code == 0, gear.output
+    assert blizzard.requests == [], "char gear asks Blizzard nothing"
+    made = {p["link"]: p for p in json.loads(gear.stdout)["links"]["profiles"]}
+    assert "raiderio" in made, made
+    assert "/us/pvp/" in made["raiderio"]["url"] and "Sandgraal" in made["raiderio"]["url"]
+
+
+def test_the_install_is_never_written_constructed(blizzard: recorded.Recorded, root: Path) -> None:
     before = sorted((p, p.stat().st_mtime_ns) for p in root.rglob("*"))
     login()
     run("fetch", NAME)

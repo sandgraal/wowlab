@@ -43,6 +43,18 @@ def is_timing_probe(path: Path) -> bool:
     return path.parent == HERE and path.name.endswith(TIMING_PROBE_SUFFIX)
 
 
+@pytest.fixture(autouse=True)
+def _config_in_tmp(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """No probe reaches the real user config directory (M22-11): the
+    Blizzard API client lives there, and a probe that saves or removes one
+    must do it in its own `tmp_path`. A probe that redirects the folder
+    itself overrides this."""
+    import platformdirs
+
+    config = tmp_path / "probe-userconfig" / "wowlab"
+    monkeypatch.setattr(platformdirs, "user_config_path", lambda *a, **k: config)
+
+
 def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
     if sys.platform != "win32":
         return

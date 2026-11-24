@@ -4,7 +4,7 @@ sells it, and where an NPC, object or quest is.
 It searches the flavor's own QuestieDB addon, read as data (`questiedb`,
 L1, L3), and the item and zone tables cached for the flavor's version
 (`lookup.LOOKUP_TABLES`, ADR-0022). `--fetch` downloads a table not cached
-yet through `gamedata`, the only network client, one request each and never
+yet through `gamedata`, the client of game tables, one request each and never
 one already cached (L5); without it nothing is fetched.
 """
 

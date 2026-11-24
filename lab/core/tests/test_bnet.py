@@ -201,8 +201,11 @@ def no_network(monkeypatch: pytest.MonkeyPatch) -> list[object]:
 
 @pytest.fixture(autouse=True)
 def user_data(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """The user data and config directories, both under `tmp_path`."""
     redirected = tmp_path / "userdata" / "wowlab"
     monkeypatch.setattr(platformdirs, "user_data_path", lambda *a, **k: redirected)
+    config = tmp_path / "userconfig" / "wowlab"
+    monkeypatch.setattr(platformdirs, "user_config_path", lambda *a, **k: config)
     return redirected
 
 
@@ -456,8 +459,13 @@ def test_a_profile_with_no_guild_asks_for_none_constructed(game: bnet.Game) -> N
         "https://eu.api.blizzard.com/data/wow/guild/the-crew",
         "https://user:pw@us.api.blizzard.com/data/wow/guild/the-crew",
         "https://us.api.blizzard.com:8443/data/wow/guild/the-crew",
+        "https://us.api.blizzard.com/data/wow/guild/..",
+        "https://us.api.blizzard.com/data/wow/guild/the-crew/.",
+        "https://us.api.blizzard.com/data/wow/guild/%2e%2e/oauth",
+        "https://us.api.blizzard.com/data/wow/guild/the%2Fcrew",
+        "https://us.api.blizzard.com/data/wow/guild/the%5Ccrew",
     ],
-    ids=lambda h: "constructed: " + h[:40],
+    ids=lambda h: "constructed: " + h[25:75],
 )
 def test_a_guild_address_elsewhere_is_not_asked_constructed(game: bnet.Game, href: str) -> None:
     body = {**PROFILE_BODY, "guild": {"key": {"href": href}, "name": "The Crew"}}
@@ -547,12 +555,16 @@ def test_an_answer_of_another_shape_is_read_as_far_as_it_goes_constructed(game: 
         bnet.Reply(200, b"\xff\xfe"),
         bnet.Reply(200, b"[" * 100000),
         bnet.Reply(200, b"{}", too_large=True),
+        bnet.Reply(200, b'{"name": "\\ud800x"}'),
+        bnet.Reply(200, b'{"a": ' + b"[" * 900 + b"]" * 900 + b"}"),
     ],
     ids=[
         "constructed: html",
         "constructed: not utf-8",
         "constructed: deep",
         "constructed: too large",
+        "constructed: a lone surrogate",
+        "constructed: nested 900 deep",
     ],
 )
 def test_an_unreadable_part_is_an_error_not_a_crash_constructed(
@@ -645,7 +657,9 @@ def test_credentials_hide_the_secret_and_refuse_odd_values() -> None:
 def test_the_secret_is_kept_owner_only_and_read_back(user_data: Path) -> None:
     assert bnet.read_credentials() is None
     path = bnet.save_credentials(creds())
-    assert path == user_data / "blizzard" / "client.json"
+    # ADR-0040 (2): the user config directory, not the data folder.
+    assert path == user_data.parent.parent / "userconfig" / "wowlab" / "blizzard" / "client.json"
+    assert not (user_data / "blizzard").exists()
     got = bnet.read_credentials()
     assert got is not None and (got.client_id, got.secret()) == (CLIENT_ID, SECRET)
     if os.name == "posix":
@@ -715,10 +729,103 @@ def test_nothing_is_kept_inside_a_game_install_constructed(
     install = tmp_path / "World of Warcraft"
     install.mkdir()
     (install / ".build.info").write_bytes(b"constructed\n")
-    monkeypatch.setattr(platformdirs, "user_data_path", lambda *a, **k: install / "wowlab")
+    monkeypatch.setattr(platformdirs, "user_config_path", lambda *a, **k: install / "wowlab")
     with pytest.raises(bnet.BnetError, match="inside a game install"):
         bnet.save_credentials(creds())
     assert sorted(p.name for p in install.iterdir()) == [".build.info"]
+    # The remover refuses the same place, before it removes anything.
+    planted = install / "wowlab" / "blizzard"
+    planted.mkdir(parents=True)
+    (planted / "client.json").write_bytes(b"the install's own file\n")
+    with pytest.raises(bnet.BnetError, match="inside a game install"):
+        bnet.clear_credentials()
+    with pytest.raises(bnet.BnetError, match="inside a game install"):
+        bnet.read_credentials()
+    assert (planted / "client.json").read_bytes() == b"the install's own file\n"
+
+
+def test_the_first_builds_copy_in_the_data_folder_is_moved_once(user_data: Path) -> None:
+    old = user_data / "blizzard" / "client.json"
+    old.parent.mkdir(parents=True)
+    old.write_text(json.dumps({"client_id": CLIENT_ID, "client_secret": SECRET}), encoding="utf-8")
+    old.chmod(0o600)
+    got = bnet.read_credentials()
+    assert got is not None and got.secret() == SECRET
+    assert not old.exists() and bnet.credentials_path().is_file()
+    if os.name == "posix":
+        assert stat.S_IMODE(bnet.credentials_path().stat().st_mode) == 0o600
+    # A copy found again later never replaces the one in the config folder.
+    old.write_text(
+        json.dumps({"client_id": CLIENT_ID, "client_secret": SECRET[::-1]}),
+        encoding="utf-8",
+    )
+    old.chmod(0o600)
+    again = bnet.read_credentials()
+    assert again is not None and again.secret() == SECRET and not old.exists()
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="symlinks need privileges on Windows")
+def test_a_linked_old_data_folder_is_refused_before_anything_constructed(
+    user_data: Path, tmp_path: Path
+) -> None:
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    (elsewhere / "client.json").write_bytes(b"left alone\n")
+    user_data.mkdir(parents=True)
+    (user_data / "blizzard").symlink_to(elsewhere, target_is_directory=True)
+    for call in (
+        bnet.read_credentials,
+        bnet.clear_credentials,
+        lambda: bnet.save_credentials(creds()),
+    ):
+        with pytest.raises(bnet.BnetError, match="is a link"):
+            call()
+    assert (elsewhere / "client.json").read_bytes() == b"left alone\n"
+    assert not bnet.credentials_path().exists()
+
+
+@pytest.mark.skipif(not hasattr(os, "mkfifo"), reason="named pipes are POSIX")
+def test_a_pipe_in_place_of_the_file_is_refused_not_waited_on_constructed() -> None:
+    folder = bnet.credentials_path().parent
+    folder.mkdir(parents=True, mode=0o700)
+    os.mkfifo(bnet.credentials_path(), 0o600)
+    with pytest.raises(bnet.BnetError, match="not a plain file"):
+        bnet.read_credentials()
+
+
+def test_credentials_and_requests_are_never_serialized() -> None:
+    import copy
+    import dataclasses
+    import pickle
+
+    request = bnet.Request("POST", "https://oauth.battle.net/token", {"Authorization": SECRET})
+    for value in (creds(), request):
+        with pytest.raises(TypeError):
+            pickle.dumps(value)
+        with pytest.raises(TypeError):
+            copy.copy(value)
+    assert not dataclasses.is_dataclass(request)
+    with pytest.raises(TypeError):
+        dataclasses.asdict(request)  # type: ignore[call-overload]
+
+
+def test_a_name_with_combining_accents_is_the_same_name() -> None:
+    composed = bnet.parse_name("\u00c6r\u00f8sk\u00f8bing-\u00d1and\u00fa")
+    decomposed = bnet.parse_name("\u00c6r\u00f8sk\u00f8bing-N\u0303andu\u0301")
+    assert decomposed == composed
+
+
+def test_a_hostile_raw_answer_is_dropped_and_the_fetch_still_saved_constructed(
+    game: bnet.Game,
+) -> None:
+    profile, raw = bnet.fetch_profile(creds(), game, "us", NAME, send=Recorded(answers()))
+    hostile = {**raw, "character": {"name": "\ud800x"}, "equipment": {"x": "y" * (7 * 1024 * 1024)}}
+    path = bnet.save_profile(profile, hostile)
+    saved = json.loads(path.read_text(encoding="utf-8"))
+    assert set(saved["raw"]) == {"portrait", "guild"}
+    assert path.stat().st_size <= bnet._MAX_SAVED_BYTES
+    shown, kept = bnet.load_profile("forever", "us", NAME)
+    assert kept == 1 and shown is not None and shown.character == profile.character
 
 
 def test_the_secret_and_token_reach_no_log_file_or_report_constructed(
@@ -772,7 +879,9 @@ def test_show_fills_a_part_the_last_fetch_missed_from_an_earlier_one_constructed
     assert bnet.load_profile("forever", "us", bnet.Name("SANDGRAAL", "rizzen"))[1] == 2
 
 
-def test_only_the_newest_fetches_are_kept_and_a_bad_file_is_passed_over(game: bnet.Game) -> None:
+def test_only_the_newest_fetches_are_kept_and_a_bad_file_is_passed_over_constructed(
+    game: bnet.Game,
+) -> None:
     profile, raw = bnet.fetch_profile(creds(), game, "us", NAME, send=Recorded(answers()))
     for n in range(bnet.KEEP_FETCHES + 3):
         path = bnet.save_profile(profile, raw, at=T0 + timedelta(minutes=n))
@@ -819,6 +928,8 @@ def _redirect(old: str, new: str) -> urllib.request.Request | None:
         "https://us.api.blizzard.com:8443/profile",
         "ftp://us.api.blizzard.com/profile",
         "file:///etc/passwd",
+        "https://x@us.api.blizzard.com/profile",
+        "https://x:y@us.api.blizzard.com/profile",
     ],
     ids=lambda u: "constructed: " + u,
 )

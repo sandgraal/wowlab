@@ -391,15 +391,18 @@ def test_the_csp_is_unchanged_by_the_panels(server: Any) -> None:
     assert "connect-src 'self'" in csp and "default-src 'none'" in csp
 
 
-def test_login_is_not_offered_from_the_page(server: Any) -> None:
+def test_login_and_logout_are_not_offered_from_the_page(server: Any) -> None:
     listed = {tuple(c["path"]): c for c in crew_tab._commands(server)}
     assert listed[("blizzard", "login")]["excluded"] == (
         "the API client's secret is typed in a terminal, not into a page"
+    )
+    # Logout removes the kept client in one run, with no confirm step.
+    assert listed[("blizzard", "logout")]["excluded"] == (
+        "removing the API client is offered on the command line only"
     )
     for leaf in (
         ("blizzard", "show"),
         ("blizzard", "fetch"),
         ("blizzard", "status"),
-        ("blizzard", "logout"),
     ):
         assert listed[leaf]["excluded"] is None, leaf

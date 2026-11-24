@@ -12,8 +12,10 @@ The rules this module exists to hold:
   that is, or resolves through a symlink to, somewhere inside an install is
   refused, at construction and again before every directory creation and
   write.
-- **ADR-0012.** This is the only network client in the library and no test
-  exercises it live; tests inject a transport that replays recordings.
+- **ADR-0012.** This is the library's client of game tables, and no test
+  exercises it live; tests inject a transport that replays recordings. (The
+  one other network client is `bnet`, Blizzard's profile API, asked only on a
+  command or a click with the player's own API client, ADR-0040 (2).)
 
 Downloads stream into a temp name in the cache directory and are published
 under the final name only when complete, so an interrupted download never

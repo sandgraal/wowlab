@@ -169,17 +169,20 @@ _SIM_FILE = (
 )
 _BNET = "lab/core/src/wowlab_core/bnet.py"
 _BNET_FILES = (
-    "Blizzard profiles (M22-11, ADR-0040 (2)): only <user data>/wowlab/blizzard/client.json "
-    "(the player's API client, 0600) and <user data>/wowlab/blizzard/profiles/<32 hex>/"
-    "<stamp>-<8 hex>.json (saved fetches); the folder is refused before and after it is made "
-    "when it or any folder above it holds .build.info or .flavor.info, and when it is a link; "
-    "the file is refused when it is a link or not a regular file"
+    "Blizzard profiles (M22-11, ADR-0040 (2)): only <user config>/wowlab/blizzard/client.json "
+    "(the player's API client, 0600), the first build's copy of it at <user data>/wowlab/"
+    "blizzard/client.json (moved, then removed), and <user data>/wowlab/blizzard/profiles/"
+    "<32 hex>/<stamp>-<8 hex>.json (saved fetches); every folder is refused before and after "
+    "it is made, and before anything in it is removed, when it or any folder above it holds "
+    ".build.info or .flavor.info, and when it is a link; the file is refused when it is a link "
+    "or not a regular file"
 )
 ALLOWED: dict[tuple[str, str], str] = {
     (_BNET, "from wowlab_core.snapshot import make_private_dirs"): _BNET_FILES
     + "; imports the folder maker for the blizzard folder only",
-    (_BNET, "make_private_dirs(folder)  # 0700 under the user data directory (M16-78)"): (
-        _BNET_FILES + "; the blizzard folders and their missing parents (0700)"
+    (_BNET, "make_private_dirs(folder, outside=outside)  # 0700 (M16-78)"): (
+        _BNET_FILES + "; the blizzard folders and their missing parents (0700, the config "
+        "folder's too)"
     ),
     (
         _BNET,
@@ -188,10 +191,12 @@ ALLOWED: dict[tuple[str, str], str] = {
     (_BNET, 'with os.fdopen(fd, "wb") as handle:'): _BNET_FILES + "; that temp file",
     (_BNET, "tmp.replace(path)"): _BNET_FILES + "; the temp file onto the file, whole",
     (_BNET, "tmp.unlink(missing_ok=True)"): _BNET_FILES + "; its own temp file",
-    (_BNET, "fd = os.open(path, os.O_RDONLY | _O_NOFOLLOW | _O_BINARY)"): (
-        _BNET_FILES
-        + "; this opens a file read-only (O_RDONLY, no link followed) and writes nothing"
+    (_BNET, "fd = os.open(path, os.O_RDONLY | _O_NOFOLLOW | _O_BINARY | _O_NONBLOCK)"): (
+        _BNET_FILES + "; this opens a file read-only (O_RDONLY, no link followed, no wait on a "
+        "pipe) and writes nothing"
     ),
+    (_BNET, "old.unlink()"): _BNET_FILES
+    + "; the first build's client.json in the data folder, once moved to the config folder",
     (_BNET, "path.unlink()"): _BNET_FILES + "; `blizzard logout`: client.json only",
     (_BNET, "old.unlink(missing_ok=True)"): _BNET_FILES
     + "; a saved fetch older than the newest KEEP_FETCHES of its character",
