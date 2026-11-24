@@ -172,8 +172,9 @@ def test_the_links_are_static_markup_with_no_href() -> None:
     assert script.count("link.href = checked;") == 1
     # The one sink's helper: its definition and its calls, each given an
     # address `outsideAddress` returned for that link's own site (the
-    # dressing room, the three saved links, the planner, the Wowhead link).
-    assert script.count("pointLink(") == 5
+    # dressing room, the three saved links, the planner, the Wowhead link,
+    # and since M21-06 See my look, graded in test_ui_purist.py).
+    assert script.count("pointLink(") == 6
     assert script.count("function pointLink(link, checked) {") == 1
     for call, checked in (
         ("pointLink(link, checked);", "const checked = dressingAddress(dressing.url);"),
