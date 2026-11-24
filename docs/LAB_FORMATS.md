@@ -1072,7 +1072,7 @@ throughout.
   the Lab steps over them by their size and never looks at their bytes
   (ADR-0033 and its note of 2026-11-23).
 
-## 16. The CurseForge app's `AddonGameInstance.json` (outside the install; M22-25)
+## 17. The CurseForge app's `AddonGameInstance.json` (outside the install; M22-25)
 
 The CurseForge desktop app's list of the addons it installed, one file for
 every game folder it manages. Not an install file: it lives in the app's
@@ -2044,12 +2044,12 @@ Dated entries, newest last. Each names the fixture that prompted it.
   string at this build. A key bound straight to a spell, item or macro
   (`SPELL …`, `ITEM …`, `MACRO …`) or to a frame's button (`CLICK …`) is
   the client's own binding kind, not an addon's command.
-- **2026-11-24, §15 and §16, `curseforge/macos/AddonGameInstance.json`
+- **2026-11-24, §15 and §17, `curseforge/macos/AddonGameInstance.json`
   (M22-25).** §15 said the capture tool cannot take a file outside an
-  install; it now can (`scripts/lab_capture.py --file`), and §16's fixture
+  install; it now can (`scripts/lab_capture.py --file`), and §17's fixture
   went through it, so the WowUp hand copy stays the one exception. The
   CurseForge app's records, **[verify]** in §15's first reading, are
-  resolved on macOS (§16); the Windows folder stays **[verify]**. Unlike
+  resolved on macOS (§17); the Windows folder stays **[verify]**. Unlike
   WowUp's, its list names each game folder by the flavor folder itself
   (one game folder seen), not the client inside it, and records no
   version, only file names.

@@ -60,7 +60,7 @@ manages, `agent/GameInstances/AddonGameInstance.json` under its own
 user-data folder (on macOS `~/Library/Application Support/CurseForge/`,
 seen 2026-11-24; on Windows `%APPDATA%\\CurseForge\\`, Electron's rule,
 **[verify]**, for the standalone app and the older Overwolf-hosted one alike;
-on Linux the same rule, **[verify]**), `docs/LAB_FORMATS.md` §16. It is opened with the same rules,
+on Linux the same rule, **[verify]**), `docs/LAB_FORMATS.md` §17. It is opened with the same rules,
 and the two folders between are refused when they are links; nothing else
 there is opened (its cookies, local storage and `app.db` never are). The
 file is a list of game instances, each with its `guid` and `installPath`

@@ -161,7 +161,7 @@ marked `@pytest.mark.live`.
   is never opened, and nothing is fetched from the sites they name.
 - **CurseForge** (M22-25, 2026-11-24): the CurseForge app's
   `agent/GameInstances/AddonGameInstance.json` in its user-data folder,
-  outside the install (`docs/LAB_FORMATS.md` §16): its game instances
+  outside the install (`docs/LAB_FORMATS.md` §17): its game instances
   (`guid`, `installPath`) and the addons it installed into each. Read only,
   offline, by `wowlab addons list`, beside WowUp's; the app's cookies,
   local storage and `app.db` are never opened. On Windows its folder is
