@@ -166,8 +166,12 @@ def test_the_link_is_static_markup_with_no_href(server: Any) -> None:
         "char-twink-planner",
         "char-twink-wowhead",
     ]
+    # M21-06 added See my look beside the dressing-room link, graded in
+    # test_ui_purist.py.
     assert anchors == [
         '<a id="char-dressing-link" class="dressing-link" target="_blank" '
+        'rel="noopener noreferrer" hidden>',
+        '<a id="char-purist-link" class="dressing-link" target="_blank" '
         'rel="noopener noreferrer" hidden>',
         *(
             f'<a id="{i}" class="dressing-link" target="_blank" rel="noopener noreferrer" hidden>'
@@ -175,7 +179,7 @@ def test_the_link_is_static_markup_with_no_href(server: Any) -> None:
         ),
     ]
     body = _page(server).body.decode("utf-8")
-    assert body.count('target="_blank" rel="noopener noreferrer"') == 7
+    assert body.count('target="_blank" rel="noopener noreferrer"') == 8
     assert "See it dressed</a>" in body
 
 

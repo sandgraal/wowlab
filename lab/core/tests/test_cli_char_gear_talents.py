@@ -80,7 +80,11 @@ def test_the_json_carries_the_address(user_data: Path) -> None:
     assert talents.download == [] and talents.download_build is None
     data = json.loads(out)
     # `dressing` stays the report's last field (M16-114).
-    assert list(data)[-1] == "dressing" and list(data)[-3:-1] == ["talents", "flavor_folder"]
+    assert list(data)[-1] == "dressing" and list(data)[-4:-1] == [
+        "talents",
+        "purist",
+        "flavor_folder",
+    ]
 
 
 def test_the_text_prints_the_address(user_data: Path) -> None:

@@ -322,6 +322,13 @@
     "download": [],
     "download_build": null
   },
+  "purist": {
+    "link": "purist_look",
+    "site": "purist",
+    "site_name": "Purist",
+    "label": "Purist",
+    "why": "the record does not name the character's race, body type and class"
+  },
   "flavor_folder": "_classic_beta_",
   "dressing": {
     "items": [

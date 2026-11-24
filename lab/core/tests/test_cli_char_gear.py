@@ -195,6 +195,7 @@ def test_char_gear_json_keys_are_the_plans(tmp_path: Path, monkeypatch: pytest.M
         "region_absent",
         "saved_links",  # M21-03: the addresses `char link set` kept for it
         "talents",  # M21-07: Open my talents, or no link and why
+        "purist",  # M21-06: the character's look on Purist, or why there is none
         "flavor_folder",  # M16-114: as the other `char` reports carry it
         "dressing",
     ]

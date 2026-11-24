@@ -33,6 +33,12 @@ bounds gives `NoLink` with the reason in the player's words, never a
 malformed address. Every address is checked once more before it is
 returned: https, the site's origin exactly, no user name or password, and
 only the characters a URL parser leaves as they are.
+
+One link is not a template: Purist's look (`purist_look`, M21-06), whose
+address carries the character's race, body type, class, barber-shop
+choices and item ids in its `#` part, in the format of the site's own
+script. Its fields are `[look]` in the same file, each with the line of
+the site's script it was read from.
 """
 
 from __future__ import annotations
@@ -42,7 +48,7 @@ import re
 import tomllib
 import unicodedata
 import urllib.parse
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from importlib import resources
 from typing import Any, Literal
 
@@ -58,6 +64,9 @@ __all__ = [
     "LinkError",
     "LinkSites",
     "LinkSitesError",
+    "Look",
+    "LookExample",
+    "LookLink",
     "NoLink",
     "PastedLink",
     "armory_character",
@@ -70,6 +79,7 @@ __all__ = [
     "origins",
     "parse_link_sites",
     "profiles",
+    "purist_look",
     "raiderio",
     "room_of",
     "talents",
@@ -94,6 +104,8 @@ _PLACEHOLDER = re.compile(r"\{([a-z_]{1,16})\}")
 # back as it is, so the page's round-trip check holds for any built address.
 _TAIL = re.compile(r"(?:[A-Za-z0-9._~/?=&-]|%[0-9A-F]{2})*")
 _TEMPLATE_TEXT = re.compile(r"(?:[A-Za-z0-9._~/?=&-]|%[0-9A-F]{2})*")
+_GAME = re.compile(r"[a-z]{1,16}")
+_PETS = re.compile(r"[0-9]{1,9}\.[0-9]{1,9}\.[0-9]{1,9}")
 _MAX_PASTED = 512
 # Placeholders the builder fills itself, never from a slug rule: `class`
 # and `race` from `[talents]`'s ids (M21-07), `ranks` a talent code checked
@@ -137,6 +149,19 @@ class NoLink(_Model):
     site_name: str
     label: str
     why: str
+
+
+class LookLink(_Model):
+    """The address of a character's look on an outfit site (M21-06): as
+    `Link`, plus what the address leaves out of the record, each in the
+    player's words (empty when nothing is)."""
+
+    link: str
+    site: str
+    site_name: str
+    label: str
+    url: str
+    left_out: list[str]
 
 
 class PastedLink(_Model):
@@ -252,6 +277,40 @@ class Limits(_Model):
     id: int = Field(ge=1)
 
 
+class LookExample(_Model):
+    """One look the tests rebuild: what `purist_look` is given and the
+    address it must return, byte for byte."""
+
+    recorded: str
+    version: str
+    name: str | None = None
+    race_id: int
+    sex: int
+    class_id: int
+    choices: list[list[int]] = []  # [option, choice], as the record lists them
+    items: list[list[int]] = []  # [inventory slot, item id], as the record lists them
+    address: str
+
+
+class Look(_Model):
+    """`[look]`: an outfit site's share link (M21-06). The address is the
+    origin, `path`, `#` and the hash `<format>|<name>|<race>.<sex>.<classic>.
+    <sheathed>.<class>.<game>|<pets>|<option>:<choice>,…|<item>,…`."""
+
+    site: str
+    label: str = Field(min_length=1, max_length=64)
+    path: str
+    format: int = Field(ge=1, le=99)
+    rooms: dict[str, str]  # room → the site's key for the game
+    classic: Literal[0, 1]
+    sheathed: Literal[0, 1, 2]
+    pets: str
+    name: str  # a [slugs] rule
+    slots: dict[str, int]  # the client's inventory slot → the site's display slot
+    max_choices: int = Field(ge=1, le=256)
+    example: list[LookExample] = Field(min_length=1)
+
+
 class LinkSites(_Model):
     limits: Limits
     sites: dict[str, Site]
@@ -261,7 +320,27 @@ class LinkSites(_Model):
     links: dict[str, Template]
     pasted: dict[str, Pasted]
     talents: Talents | None = None
+    look: Look
     example: list[Example]
+
+    @model_validator(mode="after")
+    def _look(self) -> LinkSites:
+        look = self.look
+        if look.site not in self.sites or look.name not in self.slugs:
+            raise ValueError("look: its site or its name rule is not listed")
+        if not look.path.startswith("/") or not _TEMPLATE_TEXT.fullmatch(look.path):
+            raise ValueError(f"look: {look.path!r} is not a path a URL parser keeps")
+        for room, game in look.rooms.items():
+            if not _ROOM.fullmatch(room) or not _GAME.fullmatch(game):
+                raise ValueError(f"look: room {room!r} or game {game!r}")
+        if not _PETS.fullmatch(look.pets):
+            raise ValueError(f"look: pets {look.pets!r}")
+        for slot, shown in look.slots.items():
+            if not re.fullmatch(r"[1-9][0-9]?", slot) or not 1 <= shown <= 99:
+                raise ValueError(f"look: slot {slot!r} → {shown}")
+        if len(set(look.slots.values())) != len(look.slots):
+            raise ValueError("look: two slots share a display slot")
+        return self
 
     @model_validator(mode="after")
     def _consistent(self) -> LinkSites:
@@ -699,6 +778,203 @@ def profiles(
         journey(first, second, region, version=version),
         raiderio(first, second, region, ruleset, version=version),
     ]
+
+
+# ─── a character's look (M21-06) ─────────────────────────────────────────────
+
+# What a built hash may hold: the format, a name of letters and percent
+# escapes, the model part, the pets, the option:choice pairs and the item
+# ids. Every character is one the URL parser leaves as it is in a fragment,
+# so the page's round-trip check holds.
+_LOOK_HASH = re.compile(
+    r"[0-9]{1,2}\|(?:[A-Za-z]|%[0-9A-F]{2}){0,256}"
+    r"\|[0-9]{1,10}\.[01]\.[01]\.[012]\.[0-9]{1,10}\.[a-z]{1,16}"
+    r"\|[0-9]{1,9}\.[0-9]{1,9}\.[0-9]{1,9}"
+    r"\|(?:[0-9]{1,10}:[0-9]{1,10}(?:,[0-9]{1,10}:[0-9]{1,10}){0,255})?"
+    r"\|(?:[0-9]{1,10}(?:,[0-9]{1,10}){0,98})?"
+)
+
+
+def _an_id(value: object, limit: int) -> bool:
+    return type(value) is int and 1 <= value <= limit
+
+
+_MAX_PAIRS = 256  # more than any barber shop's options or any client's slots
+
+
+def _listed(value: object) -> list[object] | None:
+    """`value` as a list when it is a list or tuple of at most `_MAX_PAIRS`
+    entries, else None."""
+    if not isinstance(value, (list, tuple)) or len(value) > _MAX_PAIRS:
+        return None
+    return list(value)
+
+
+def _pairs(value: object) -> list[tuple[object, object]] | None:
+    """`value` as (first, second) pairs when it is a list or tuple of
+    two-entry lists or tuples, else None."""
+    listed = _listed(value)
+    if listed is None:
+        return None
+    out: list[tuple[object, object]] = []
+    for pair in listed:
+        if not isinstance(pair, (list, tuple)) or len(pair) != 2:
+            return None
+        out.append((pair[0], pair[1]))
+    return out
+
+
+def _listed_names(value: object) -> dict[int, str]:
+    """The slot names given, those that are an int slot and plain text."""
+    if not isinstance(value, Mapping):
+        return {}
+    return {
+        k: v
+        for k, v in value.items()
+        if type(k) is int and isinstance(v, str) and 0 < len(v) <= 64 and v.isprintable()
+    }
+
+
+def purist_look(
+    name: str | None,
+    race_id: int | None,
+    sex: int | None,
+    class_id: int | None,
+    choices: Sequence[tuple[int, int]],
+    items: Sequence[tuple[int, int | None]],
+    *,
+    version: str | None,
+    slot_names: Mapping[int, str] | None = None,
+    left_out: Sequence[str] = (),
+    sites: LinkSites | None = None,
+) -> LookLink | NoLink:
+    """The address of a character's look on Purist, or why there is none.
+    Never raises: `choices` or `items` that are not a list of pairs are
+    left out with a reason, as a value that is not an id is.
+
+    `name` is the character's name as the game shows it; `race_id`, `sex`
+    (`Enum.UnitSex`, 0 or 1) and `class_id` are the record's identity;
+    `choices` are the barber-shop record's (option id, choice id) pairs and
+    `items` the equipped (inventory slot, item id) pairs, each as the record
+    lists them; `version` is the client's (it picks the room, and the room
+    the site's game key). `slot_names` gives a slot's name for what is left
+    out ("slot 5 Chest"). `left_out` is what the caller already left out,
+    in the player's words; it heads the result's own list.
+
+    The hash is Purist's format 2 as its `/lib/look.js` writes it (`encode`,
+    read 2026-11-24; `link_sites.toml`'s `[look]` cites each line): the name
+    with each space as `%20`; race, sex, classic models, sheathed, class and
+    game; no pets; the pairs in ascending option order (the order a
+    JavaScript object gives integer keys, so the address is the one Purist
+    itself writes); the item ids in the site's display-slot order, the
+    jewellery left out (it has no look on the site). A name the site's rule
+    refuses, or none, leaves the name part empty (Purist then names the
+    look itself); pairs that are not ids, or an option listed twice, leave
+    the whole customization part empty; both are listed in `left_out`."""
+    if sites is None:
+        try:
+            sites = load_link_sites()
+        except LinkSitesError:
+            return NoLink(link="purist_look", site="", site_name="", label="", why=_UNUSABLE)
+    look = sites.look
+    site = sites.sites[look.site]
+    limit = sites.limits.id
+
+    def none(why: str) -> NoLink:
+        return NoLink(
+            link="purist_look", site=look.site, site_name=site.name, label=look.label, why=why
+        )
+
+    room = room_of(version)
+    game = look.rooms.get(room) if room is not None else None
+    if game is None:
+        return none(f"{site.name} has no looks wowlab knows for this game version")
+    if race_id is None or sex is None or class_id is None:
+        return none("the record does not name the character's race, body type and class")
+    if (
+        not _an_id(race_id, limit)
+        or not _an_id(class_id, limit)
+        or type(sex) is not int
+        or sex not in (0, 1)
+    ):
+        return none("the record's race, body type or class is not one the game uses")
+    out: list[str] = [w for w in _listed(left_out) or () if isinstance(w, str)]
+    label = ""
+    if name is None:
+        out.append("the character's name, because it is not known")
+    else:
+        try:
+            label = _slug(name, sites.slugs[look.name], "name")
+        except _RefusedError as exc:
+            out.append(f"the character's name, because {exc}")
+    pairs: dict[int, int] = {}
+    given = _pairs(choices)
+    if given is None:
+        out.append("the face and hair: the barber-shop record is not a list of choices")
+        given = []
+    for option, choice in given:
+        if (
+            not isinstance(option, int)
+            or not isinstance(choice, int)
+            or not _an_id(option, limit)
+            or not _an_id(choice, limit)
+        ):
+            out.append("the face and hair: the barber-shop record holds a value that is not an id")
+            pairs = {}
+            break
+        if option in pairs:
+            out.append(f"the face and hair: the barber-shop record lists option {option} twice")
+            pairs = {}
+            break
+        pairs[option] = choice
+    if len(pairs) > look.max_choices:
+        out.append(f"the face and hair: more than {look.max_choices} barber-shop choices")
+        pairs = {}
+    shown: dict[int, int] = {}
+    worn = _pairs(items)
+    if worn is None:
+        out.append("the gear: the record's gear is not a list of slots")
+        worn = []
+    names = _listed_names(slot_names)
+    for slot, item in worn:
+        where = look.slots.get(str(slot)) if type(slot) is int else None
+        if where is None or where in shown:
+            continue  # the jewellery has no look; a slot listed twice keeps its first item
+        words = f"slot {slot} {names[slot]}" if slot in names else f"slot {slot}"
+        if item is None:
+            out.append(f"the item in {words}: its link has no item id")
+        elif not isinstance(item, int) or not _an_id(item, limit):
+            out.append(f"the item in {words}: its id is not one the game uses")
+        else:
+            shown[where] = item
+    model = f"{race_id}.{sex}.{look.classic}.{look.sheathed}.{class_id}.{game}"
+    text = "|".join(
+        [
+            str(look.format),
+            label,
+            model,
+            look.pets,
+            ",".join(f"{o}:{pairs[o]}" for o in sorted(pairs)),
+            ",".join(str(shown[d]) for d in sorted(shown)),
+        ]
+    )
+    url = f"{site.origin}{look.path}#{text}"
+    parts = urllib.parse.urlsplit(url)
+    if (
+        not _LOOK_HASH.fullmatch(text)
+        or not _checked(site.origin + look.path, site.origin)
+        or parts.fragment != text
+        or f"{parts.scheme}://{parts.netloc}" != site.origin
+    ):
+        return none("its address did not check out")
+    return LookLink(
+        link="purist_look",
+        site=look.site,
+        site_name=site.name,
+        label=look.label,
+        url=url,
+        left_out=out,
+    )
 
 
 # ─── pasted addresses ────────────────────────────────────────────────────────
