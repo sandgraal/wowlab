@@ -1,0 +1,126 @@
+# The field layouts `hotfix` decodes the hotfix cache's rows with (M22-23).
+#
+# A row in the client's hotfix cache (Cache/ADB/<locale>/DBCache.bin) is not
+# bit-packed: its fields are byte-aligned little-endian values in the table's
+# field order, at their declared widths, strings inline and ending in a zero
+# byte, and the row's ID is not in it (the record header carries it). The
+# order and widths below were read by hand from WoWDBDefs
+# (https://github.com/wowdev/WoWDBDefs, `definitions/Item.dbd` layout
+# 9A2A4834 and `definitions/ItemSparse.dbd` layout 6FCC3191, 2026-11-23);
+# wowsims/forever (MIT) `tools/db2tool/wdc/hotfix.go` decodes the same way.
+#
+# No build is named here (L6). A layout is used for a build only when the
+# names, in order, are exactly the columns of that build's own copy of the
+# table after `ID` (arrays as <name>_0, <name>_1, ...), and only when every
+# row decodes to its record's exact length; otherwise the overlay is refused
+# with the reason.
+#
+# A field is "<name>:<type>" or "<name>:<type>:<count>" for an array. Types:
+# i8 u8 i16 u16 i32 u32 f32 (little-endian), str (UTF-8, ends in a zero byte).
+# A table whose ID is inline (WoWDBDefs `$id$` without `noninline`) lists
+# "ID:i32" first: the row's data then holds its ID, which must be the
+# record's row id.
+
+[tables.Item]
+fields = [
+  "ClassID:i32",
+  "SubclassID:u8",
+  "Material:u8",
+  "InventoryType:i8",
+  "SheatheType:u8",
+  "ItemPetFoodID:i32",
+  "Sound_override_subclassID:i8",
+  "IconFileDataID:i32",
+  "ItemGroupSoundsID:u32",
+  "ContentTuningID:i32",
+  "ModifiedCraftingReagentItemID:i32",
+  "AmmunitionType:u8",
+  "CraftingQualityID:i32",
+  "ItemSquishEraID:i32",
+  "RecraftReagentCountPercentage:f32",
+  "OrderSource:u8",
+]
+
+[tables.ItemSparse]
+fields = [
+  "Description_lang:str",
+  "Display3_lang:str",
+  "Display2_lang:str",
+  "Display1_lang:str",
+  "Display_lang:str",
+  "ExpansionID:i32",
+  "DmgVariance:f32",
+  "LimitCategory:i32",
+  "DurationInInventory:u32",
+  "QualityModifier:f32",
+  "BagFamily:u32",
+  "StartQuestID:i32",
+  "LanguageID:i32",
+  "ItemRange:f32",
+  "StatPercentageOfSocket:f32:10",
+  "StatPercentEditor:i32:10",
+  "StatModifier_bonusStat:i32:10",
+  "Stackable:i32",
+  "MaxCount:i32",
+  "MinReputation:i32",
+  "RequiredAbility:u32",
+  "AllowableRace:i32:2",
+  "SellPrice:u32",
+  "BuyPrice:u32",
+  "VendorStackCount:u32",
+  "PriceVariance:f32",
+  "PriceRandomValue:f32",
+  "Flags:i32:5",
+  "OppositeFactionItemID:i32",
+  "ModifiedCraftingReagentItemID:i32",
+  "ContentTuningID:i32",
+  "PlayerLevelToItemLevelCurveID:i32",
+  "ItemLevelOffsetCurveID:i32",
+  "ItemLevelOffsetItemLevel:i32",
+  "ItemSquishEraID:i32",
+  "ItemNameDescriptionID:u16",
+  "RequiredTransmogHoliday:u16",
+  "RequiredHoliday:u16",
+  "Gem_properties:u16",
+  "Socket_match_enchantment_ID:u16",
+  "TotemCategoryID:u16",
+  "InstanceBound:u16",
+  "ZoneBound:u16:2",
+  "ItemSet:u16",
+  "LockID:u16",
+  "PageID:u16",
+  "ItemDelay:u16",
+  "MinFactionID:u16",
+  "RequiredSkillRank:u16",
+  "RequiredSkill:u16",
+  "ItemLevel:u16",
+  "AllowableClass:i16",
+  "ArtifactID:u8",
+  "SpellWeight:u8",
+  "SpellWeightCategory:u8",
+  "SocketType:u8:3",
+  "SheatheType:u8",
+  "Material:u8",
+  "PageMaterialID:u8",
+  "Bonding:u8",
+  "DamageType:u8",
+  "ContainerSlots:u8",
+  "RequiredPVPMedal:u8",
+  "RequiredPVPRank:i8",
+  "RequiredLevel:i8",
+  "InventoryType:i8",
+  "OverallQualityID:i8",
+  "AmmunitionType:u8",
+]
+
+# WoWDBDefs `definitions/TraitNodeEntry.dbd`, the layout Forever's builds
+# use (read 2026-11-24); its ID is inline. `char sim-export`
+# reads this table.
+[tables.TraitNodeEntry]
+fields = [
+  "ID:i32",
+  "TraitDefinitionID:i32",
+  "MaxRanks:i32",
+  "NodeEntryType:u8",
+  "TraitSubTreeID:i32",
+]

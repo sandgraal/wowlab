@@ -508,7 +508,14 @@ return `Classified` or `Unclassified`. (3) **`Layout.inventory()` returns
 `Inventory`**, which holds everything the listing methods return plus
 symlinks, OS-metadata files, read errors and `truncated`. Bounds are set
 with `Limits` (`max_depth`, `max_entries`, `max_toc_bytes`). (4) A TOC over
-`max_toc_bytes` is reported with an error and not read. (5) OS-metadata files
+`max_toc_bytes` is reported with an error and not read. *(Amended
+2026-11-23, M22-21: it is read in part instead, its header only, the lines
+before its first file line within `max_toc_bytes`, as a read-only summary
+marked `partial` that refuses to serialize (`toc.PartialTocError`), never a
+document of the file; `addons list`, `addons check`, `tree` and the Addons
+page say so, and say each absence as "before its file list",
+and `sv list --orphans` does not judge a folder whose partial header
+declares no saved data. The limit stays 1 MiB.)* (5) OS-metadata files
 (the file map's `os-metadata` row: `.DS_Store`, `._*`, `Thumbs.db`,
 `desktop.ini`) met by the walk (the flavor root, everything under `WTF/`,
 the area folders and their contents, `Interface/` outside `AddOns/`,
@@ -2077,6 +2084,15 @@ yet, and a fixture produced by the thing under test proves nothing).
   A Windows or macOS regression is now found after merge, by the nightly run
   or by an on-demand run on the branch before it.
 
+  *Amended 2026-11-24 (owner decision, ADR-0031 amendment of 2026-11-24,
+  M22-24):* Windows is paused. `windows.yml` has no nightly trigger and
+  `windows-app.yml` no pull-request trigger; both run only when started by
+  hand, and `release.yml` builds no Windows app (its three Windows jobs
+  carry `if: false`). A Windows regression is not looked for until Windows
+  resumes; the library keeps its Windows paths and `skipif` tests, and what
+  the paused suite last found is in `docs/DATA_SOURCES.md`, "The paused
+  Windows suite".
+
   *Amended 2026-11-18 (owner decisions, M15-21; the measurements are in
   `docs/handoffs/test-time-2026-11.md`):* what runs when.
   - A pull request and a push to `main` run `ci.yml`. Its "Lint,
@@ -2102,7 +2118,8 @@ yet, and a fixture produced by the thing under test proves nothing).
   - Every night at 09:17 UTC, off-hours for the owner, `nightly.yml` runs
     the whole Linux suite, both passes with the mutation probes, and
     `windows.yml` and `macos.yml` run the Lab suite on those platforms
-    (no longer after each merge); `perf-nightly.yml` runs at 08:47 UTC.
+    (no longer after each merge; `windows.yml` paused since 2026-11-24, see
+    the amendment of that date below); `perf-nightly.yml` runs at 08:47 UTC.
     The desktop suites and the nightly one also run on demand for a branch.
   - A release tag runs everything in `release.yml`, unchanged.
   - Locally, `make test` runs both passes with the probes, `make test-fast`
@@ -4650,6 +4667,8 @@ bodies and item names are player text and are never interpreted as markup.
 
 *Amended 2026-11-23 (M22-06, the Twink panel):* `wowlab char twink [--bracket N] [--weights NAME] [--top N]` and the Character tab's **Twink** panel show, for one character and one battleground level bracket, each equipment slot (the shirt and tabard left out) with its worn item, the best items the character could wear there at the bracket's top level, and the gap between the two scores. The brackets (19, 29, 39, 49, 59), each class's armour and weapon types, the stat names, the weight sets (warlock first, affliction its first set; a set is named for a talent build, since Forever's client reports one spec per class), the planner's words and the filters are the shipped `twink.toml`, which a `twink.toml` in the user config folder overrides value by value (a weight set as a whole). The default bracket is the first at or above the record's level. Candidates are items of `Item` with an `ItemSparse` row, of a type the class can use, admitted by the item's class and race masks, with a required level at or below the bracket's top level, uncommon to epic, not a test or retired item by name, not needing standing with a faction the character's race starts at Hated with (`Faction`), and not an item with no required level (0 or 1) more than `no_level_margin` (5) item levels above the bracket (mostly quest rewards, whose quest's level is the real gate; M22-08 gives the quest). An armour type a class learns later (`armor_from`: mail for hunters and shamans and plate for warriors and paladins at 40, **[verify]**) is left out below that level, judged at the bracket's top level; a one-handed weapon also fills the off hand from a class's `dual_wield_from` (rogues 10, warriors and hunters 20, **[verify]**), and an off-hand weapon fills nothing for a class that does not dual wield. A candidate with `Bonding` 1 is marked "binds when picked up". The notes count each kind left out, name where the player's own `twink.toml` goes, and say that items only the other side's quests or vendors give are not yet left out and that a crafted bind-on-pickup item needs its profession (both wait for M22-08's sources). Stat amounts are each stat's budget share (`StatPercentEditor`) of `RandPropPoints` at the item's level, quality and slot type, rounded half away from zero, plus a caster weapon's spell power (`Flags_4`), WoWSims' Forever sim's rules, **[verify]** against tooltips. A random suffix is a bonus list of the item's bonus tree (GLOSSARY, "Random suffix"); an item is scored with each, the best shown and the others listed. A worn item is scored the same way, with the link's bonus id that is a suffix list; one without an `ItemSparse` row (11231 of 19079 at 70888, among them most of the owner's random-suffix items) is listed as not scored: the server sends these items as hotfixes, which wago.tools' copy lacks; wowlab will read them from the client's hotfix cache (M22-23; GLOSSARY, "Hotfix cache"). Each item has a Wowhead address (the room of `dressing_sites.toml`, `/item=<id>`; `?bonus=<suffix>` only once `links.WOWHEAD_BONUS` is turned on after the owner's check, M21-O2; since M21-03 the address is built by `links.wowhead_item`), and the bracket has a planner address, `https://forevertwinking.com/planner?class=<class>&race=<race>&bracket=l<cap>` (the owner's history; the class and race words **[verify]**). Where an item comes from is M22-08's index; until then `twink.item_sources` knows none and the panel says "not known yet". The eight game tables are those of the installed client's version, downloaded once through `gamedata` (ADR-0022); nothing else is fetched. On the page the panel runs `char twink` only on **Show the gaps** or a change of either picker; the planner link and one Wowhead link (for the candidate the reader opens) are static links of `page.html`, given an address only when it parses, is https: and has exactly the origin of its site (since M21-03: the `link_origins` allowlist the server sends from `link_sites.toml`, `forevertwinking` and `wowhead`), through the page's one URL sink; a planner origin in the player's own `twink.toml` that is not `link_sites.toml`'s ForeverTwinking gets no link ("<origin> is not a site wowlab links to"); the CSP is unchanged. A kept character has no Twink panel. Set bonuses, weapon damage and armour are not scored.
 
+*Amended 2026-11-24 (M22-23, the hotfix cache; ADR-0033 note of 2026-11-23):* `wowlab_core.hotfix` reads the flavor folder's `Cache/ADB/<locale>/DBCache.bin` (the locale of the game's `textLocale` setting when it has one, **[verify]**, else the newest; no linked `Cache`, `ADB` or locale folder is followed) read-only, from the install root one component at a time, within 32 MiB and 200,000 kept records (`docs/LAB_FORMATS.md` §16), keeps only the records of the tables a caller asks for among those `hotfix_layouts.toml` describes (`Item`, `ItemSparse` and `TraitNodeEntry`, matched by SStrHash of the name), and decodes each row with that file's field layout (read by hand from WoWDBDefs; it names no build). `gamedata.overlay_hotfixes` lays the rows over the cached tables of one build only when the cache's header names that build (the last part of the full build string) and each layout's columns are exactly the cached table's columns; records apply in file order, a later record of a row winning (**[verify]**; wowsims and DBCD sort by push id, which on the owner's file keeps an older copy of 15 rows), status 1 with data adds or replaces a row, 2 and 3 remove one and anything else is left alone (their meanings **[verify]**), a table with more than 50,000 records refuses the overlay, and every row read from the cache carries a source marker. The cache holds the rows the server has sent this game, at login or when it first showed an item, as the game last saved them; an item the game has never shown may be missing. Otherwise nothing is laid over the tables and the reason is kept (another build; a table not cached; columns that differ; a row that does not decode to its exact length; a file that cannot be read). The Twink panel uses it: each candidate and worn item says whether its stats came from the game tables or the hotfix cache (`stats_from` in `--json`, "stats from the hotfix cache" in the text and on the page), a note counts the items read from the cache or says why it was not read, and `hotfix_cache` in `--json` is the overlay's report. `doctor` prints one line per flavor with a cache: its build and how many rows it adds, replaces and removes, or why it is not used (`hotfix_cache` in `--json`), from wowlab's cached tables alone. `char sim-export` lays the cache over its `TraitNodeEntry` table the same way (33 rows in the owner's file at 71037), says ", with your game's hotfix cache's rows over it" beside the table it read the talents with only when the cache changed a row of it (at 71037 its 33 rows equal the table's), prints the reason when a cache is there and not used, and carries the report as `hotfix_cache` in `--json`. No key is read and nothing is decrypted.
+
 ### 16.4 What is known, and what is [verify]
 
 - **Item links.** `docs/LAB_FORMATS.md` §4.2 and its amendments: the
@@ -6041,6 +6060,12 @@ filter):
   `unloadable_dependencies`);
 - "Could not be checked": no TOC named after the folder, a TOC that could
   not be read (with its error), or no `## Interface:` line;
+- "TOC files read in part" (added 2026-11-23, M22-21): an addon one of
+  whose counted TOCs `addons check` read in part (`partial`, a TOC larger
+  than wowlab reads whole), judged by the lines before its file list; it
+  still counts as current when that header's interface matches, and a
+  header with no `## Interface:` line is "has no Interface line in the part
+  of its TOC file wowlab read";
 - "Saved data no installed addon declares": each orphan with its size and
   why (no addon of that name is installed, or it is installed and declares
   no saved data at the file's scope; names matched with ASCII letters
@@ -6048,8 +6073,10 @@ filter):
   then the CLI's sentence that deleting such a file loses those settings.
 
 `sv list --orphans --json` does not mark its own caveat, so the page
-shows none from it; the folders it leaves out (no TOC, TOC not read) are on
-the "Could not be checked" list. No command reports SavedVariables files
+shows none from it; the folders it leaves out are on the "Could not be
+checked" list (no TOC, TOC not read) or on the "TOC files read in part"
+list (a TOC read in part whose header declares no saved data; amended
+2026-11-23, M22-21). No command reports SavedVariables files
 that fail to parse, so the card's last list is the orphans, as the
 ticket's acceptance names them. Each line's name opens the Explorer on the
 file (the TOC, the addon folder, or the SavedVariables file), once the

@@ -479,6 +479,9 @@ if TYPE_CHECKING:
         addon_remove as addon_remove,
     )
     from wowlab_core.cli._cmd_addons import (
+        _BEFORE_FILES as _BEFORE_FILES,
+    )
+    from wowlab_core.cli._cmd_addons import (
         _CHECK_BLIZZARD as _CHECK_BLIZZARD,
     )
     from wowlab_core.cli._cmd_addons import (
@@ -489,6 +492,9 @@ if TYPE_CHECKING:
     )
     from wowlab_core.cli._cmd_addons import (
         _CHECK_OUT_OF_DATE as _CHECK_OUT_OF_DATE,
+    )
+    from wowlab_core.cli._cmd_addons import (
+        _PARTIAL as _PARTIAL,
     )
     from wowlab_core.cli._cmd_addons import (
         _SOURCES_FOLDERS as _SOURCES_FOLDERS,
@@ -725,6 +731,9 @@ if TYPE_CHECKING:
         _NAME_TABLES as _NAME_TABLES,
     )
     from wowlab_core.cli._cmd_char import (
+        _NO_GUILD_FIELD as _NO_GUILD_FIELD,
+    )
+    from wowlab_core.cli._cmd_char import (
         _OWN_TIME_SCHEMA as _OWN_TIME_SCHEMA,
     )
     from wowlab_core.cli._cmd_char import (
@@ -747,6 +756,9 @@ if TYPE_CHECKING:
     )
     from wowlab_core.cli._cmd_char import (
         CharHistoryReport as CharHistoryReport,
+    )
+    from wowlab_core.cli._cmd_char import (
+        CharItemLink as CharItemLink,
     )
     from wowlab_core.cli._cmd_char import (
         CharKeptReport as CharKeptReport,
@@ -774,6 +786,9 @@ if TYPE_CHECKING:
     )
     from wowlab_core.cli._cmd_char import (
         CharNames as CharNames,
+    )
+    from wowlab_core.cli._cmd_char import (
+        CharProfileLinks as CharProfileLinks,
     )
     from wowlab_core.cli._cmd_char import (
         CharShowReport as CharShowReport,
@@ -821,6 +836,9 @@ if TYPE_CHECKING:
         _char_binds_file as _char_binds_file,
     )
     from wowlab_core.cli._cmd_char import (
+        _char_links_field as _char_links_field,
+    )
+    from wowlab_core.cli._cmd_char import (
         _char_list_flavor as _char_list_flavor,
     )
     from wowlab_core.cli._cmd_char import (
@@ -855,6 +873,9 @@ if TYPE_CHECKING:
     )
     from wowlab_core.cli._cmd_char import (
         _gear_table_note as _gear_table_note,
+    )
+    from wowlab_core.cli._cmd_char import (
+        _guild_of as _guild_of,
     )
     from wowlab_core.cli._cmd_char import (
         _header_lines as _header_lines,
@@ -921,6 +942,12 @@ if TYPE_CHECKING:
     )
     from wowlab_core.cli._cmd_char import (
         _profession_words as _profession_words,
+    )
+    from wowlab_core.cli._cmd_char import (
+        _profile_link_lines as _profile_link_lines,
+    )
+    from wowlab_core.cli._cmd_char import (
+        _profile_links as _profile_links,
     )
     from wowlab_core.cli._cmd_char import (
         _record_values as _record_values,
@@ -1473,6 +1500,12 @@ if TYPE_CHECKING:
     )
     from wowlab_core.cli._cmd_doctor import (
         _hash_now as _hash_now,
+    )
+    from wowlab_core.cli._cmd_doctor import (
+        _hotfix_cache as _hotfix_cache,
+    )
+    from wowlab_core.cli._cmd_doctor import (
+        _hotfix_line as _hotfix_line,
     )
     from wowlab_core.cli._cmd_doctor import (
         _install_step as _install_step,
