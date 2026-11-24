@@ -153,6 +153,83 @@ def test_an_item_without_an_id_is_left_out_and_said_constructed() -> None:
     assert made.left_out == ["the item in slot 5: its link has no item id"]
 
 
+def test_what_is_left_out_names_the_slot_constructed() -> None:
+    """As the dressing room says it: the slot's number and its name."""
+    made = links.purist_look(
+        "Tay Soulrend",
+        7,
+        1,
+        4,
+        [],
+        [(5, None), (7, -3)],
+        version=FOREVER,
+        slot_names={5: "Chest", 7: "Legs"},
+    )
+    assert isinstance(made, links.LookLink) and made.url.endswith("||")
+    assert made.left_out == [
+        "the item in slot 5 Chest: its link has no item id",
+        "the item in slot 7 Legs: its id is not one the game uses",
+    ]
+
+
+@pytest.mark.parametrize(
+    ("choices", "items"),
+    [
+        ([(58,)], [(5, 2578)]),
+        ([(58, 918, 1)], [(5, 2578)]),
+        ([58], [(5, 2578)]),
+        (None, [(5, 2578)]),
+        ("58:918", [(5, 2578)]),
+        ([(58, "918")], [(5, 2578)]),
+        ([(58, 918)], [(5,)]),
+        ([(58, 918)], None),
+        ([(58, 918)], [5, 2578]),
+        ([(58, 918)], [(5, 2578.0)]),
+        ([(58, 918)], [(5, 1)] * 300),
+    ],
+    ids=lambda v: f"constructed: {v!r}"[:60],
+)
+def test_arguments_that_are_not_pairs_never_raise_constructed(choices: Any, items: Any) -> None:
+    made = links.purist_look("Tay Soulrend", 7, 1, 4, choices, items, version=FOREVER)
+    assert isinstance(made, links.LookLink)
+    assert made.left_out and _hash(made.url)[2] == "7.1.1.1.4.forever"
+
+
+@pytest.mark.parametrize(
+    "value",
+    [None, 5, "x", [None], [(1, 2)], {"x": 1}],
+    ids=lambda v: f"constructed: {v!r}",
+)
+def test_slot_names_and_left_out_that_are_not_text_never_raise_constructed(value: Any) -> None:
+    made = links.purist_look(
+        "Tay Soulrend",
+        7,
+        1,
+        4,
+        [],
+        [(5, None)],
+        version=FOREVER,
+        slot_names=value,
+        left_out=value,
+    )
+    assert isinstance(made, links.LookLink)
+    assert made.left_out[-1] == "the item in slot 5: its link has no item id"
+
+
+def test_the_owners_bookmark_prefix_is_rebuilt() -> None:
+    """The part of the owner's bookmark the ticket quotes (`#2|Nymbil%20
+    Stinkfinger|7.0.1.1.4.forever|0.0.0|9430:78207,…|49,2108,…`), rebuilt
+    from its first pair and first two items: a gnome (7) male (0) rogue (4),
+    shirt (slot 4) then chest (slot 5)."""
+    made = links.purist_look(
+        "Nymbil Stinkfinger", 7, 0, 4, [(9430, 78207)], [(4, 49), (5, 2108)], version=FOREVER
+    )
+    assert isinstance(made, links.LookLink)
+    assert made.url == (
+        "https://purist.pages.dev/#2|Nymbil%20Stinkfinger|7.0.1.1.4.forever|0.0.0|9430:78207|49,2108"
+    )
+
+
 @pytest.mark.parametrize(
     "choices",
     [

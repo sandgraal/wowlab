@@ -666,6 +666,42 @@ def _an_id(value: object, limit: int) -> bool:
     return type(value) is int and 1 <= value <= limit
 
 
+_MAX_PAIRS = 256  # more than any barber shop's options or any client's slots
+
+
+def _listed(value: object) -> list[object] | None:
+    """`value` as a list when it is a list or tuple of at most `_MAX_PAIRS`
+    entries, else None."""
+    if not isinstance(value, (list, tuple)) or len(value) > _MAX_PAIRS:
+        return None
+    return list(value)
+
+
+def _pairs(value: object) -> list[tuple[object, object]] | None:
+    """`value` as (first, second) pairs when it is a list or tuple of
+    two-entry lists or tuples, else None."""
+    listed = _listed(value)
+    if listed is None:
+        return None
+    out: list[tuple[object, object]] = []
+    for pair in listed:
+        if not isinstance(pair, (list, tuple)) or len(pair) != 2:
+            return None
+        out.append((pair[0], pair[1]))
+    return out
+
+
+def _listed_names(value: object) -> dict[int, str]:
+    """The slot names given, those that are an int slot and plain text."""
+    if not isinstance(value, Mapping):
+        return {}
+    return {
+        k: v
+        for k, v in value.items()
+        if type(k) is int and isinstance(v, str) and 0 < len(v) <= 64 and v.isprintable()
+    }
+
+
 def purist_look(
     name: str | None,
     race_id: int | None,
@@ -675,18 +711,21 @@ def purist_look(
     items: Sequence[tuple[int, int | None]],
     *,
     version: str | None,
+    slot_names: Mapping[int, str] | None = None,
     left_out: Sequence[str] = (),
     sites: LinkSites | None = None,
 ) -> LookLink | NoLink:
     """The address of a character's look on Purist, or why there is none.
-    Never raises.
+    Never raises: `choices` or `items` that are not a list of pairs are
+    left out with a reason, as a value that is not an id is.
 
     `name` is the character's name as the game shows it; `race_id`, `sex`
     (`Enum.UnitSex`, 0 or 1) and `class_id` are the record's identity;
     `choices` are the barber-shop record's (option id, choice id) pairs and
     `items` the equipped (inventory slot, item id) pairs, each as the record
     lists them; `version` is the client's (it picks the room, and the room
-    the site's game key). `left_out` is what the caller already left out,
+    the site's game key). `slot_names` gives a slot's name for what is left
+    out ("slot 5 Chest"). `left_out` is what the caller already left out,
     in the player's words; it heads the result's own list.
 
     The hash is Purist's format 2 as its `/lib/look.js` writes it (`encode`,
@@ -726,7 +765,7 @@ def purist_look(
         or sex not in (0, 1)
     ):
         return none("the record's race, body type or class is not one the game uses")
-    out: list[str] = [str(w) for w in left_out]
+    out: list[str] = [w for w in _listed(left_out) or () if isinstance(w, str)]
     label = ""
     if name is None:
         out.append("the character's name, because it is not known")
@@ -736,9 +775,17 @@ def purist_look(
         except _RefusedError as exc:
             out.append(f"the character's name, because {exc}")
     pairs: dict[int, int] = {}
-    for pair in choices:
-        option, choice = (pair[0], pair[1]) if len(pair) == 2 else (0, 0)
-        if not _an_id(option, limit) or not _an_id(choice, limit):
+    given = _pairs(choices)
+    if given is None:
+        out.append("the face and hair: the barber-shop record is not a list of choices")
+        given = []
+    for option, choice in given:
+        if (
+            not isinstance(option, int)
+            or not isinstance(choice, int)
+            or not _an_id(option, limit)
+            or not _an_id(choice, limit)
+        ):
             out.append("the face and hair: the barber-shop record holds a value that is not an id")
             pairs = {}
             break
@@ -751,14 +798,20 @@ def purist_look(
         out.append(f"the face and hair: more than {look.max_choices} barber-shop choices")
         pairs = {}
     shown: dict[int, int] = {}
-    for slot, item in items:
+    worn = _pairs(items)
+    if worn is None:
+        out.append("the gear: the record's gear is not a list of slots")
+        worn = []
+    names = _listed_names(slot_names)
+    for slot, item in worn:
         where = look.slots.get(str(slot)) if type(slot) is int else None
         if where is None or where in shown:
             continue  # the jewellery has no look; a slot listed twice keeps its first item
+        words = f"slot {slot} {names[slot]}" if slot in names else f"slot {slot}"
         if item is None:
-            out.append(f"the item in slot {slot}: its link has no item id")
-        elif not _an_id(item, limit):
-            out.append(f"the item in slot {slot}: its id is not one the game uses")
+            out.append(f"the item in {words}: its link has no item id")
+        elif not isinstance(item, int) or not _an_id(item, limit):
+            out.append(f"the item in {words}: its id is not one the game uses")
         else:
             shown[where] = item
     model = f"{race_id}.{sex}.{look.classic}.{look.sheathed}.{class_id}.{game}"

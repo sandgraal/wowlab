@@ -1692,6 +1692,7 @@ def _purist_look(
         choices,
         [(s.slot, s.item_id) for s in filled],
         version=version,
+        slot_names={s.slot: s.slot_name for s in filled if s.slot_name},
         left_out=left_out,
     )
 
