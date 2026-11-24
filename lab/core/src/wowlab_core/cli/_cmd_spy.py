@@ -16,9 +16,10 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import Annotated, Literal
 
+import pydantic
 import typer
 
-from wowlab_core import install, layout, spy
+from wowlab_core import charname, install, layout, links, region, spy
 from wowlab_core.cli._common import (
     EXIT_ERROR,
     EXIT_USAGE,
@@ -40,6 +41,8 @@ from wowlab_core.cli._common import (
     _select_flavor,
     spy_app,
 )
+from wowlab_core.links import Link, NoLink
+from wowlab_core.region import Region
 
 # ─── spy ─────────────────────────────────────────────────────────────────────
 
@@ -122,6 +125,24 @@ class SpyFileRow(_Out):
     encounters: int = 0
 
 
+class SpyRow(spy.SpyPlayer):
+    """One row of `spy list` and `spy show` (`spy.SpyPlayer`) with its links
+    out (M21-05): the names in its key (`first_name`, `second_name`; Spy
+    keys a Forever player `<First>-<Second>`, and on a flavor whose
+    characters have no second names the key's second part is a realm, so
+    `second_name` is None), the region the links use (`region`: Spy saves
+    none, so it is the region the game's settings name for the flavor
+    folder the row came from, and wowlab assumes every player is in your
+    region, not yet confirmed), and the profile links: the armory, the
+    Journey Companion and Raider.IO, each an address or why there is none
+    (`crewdb.CrewRow.links`). No second name or no region: no armory link."""
+
+    first_name: str = ""
+    second_name: str | None = None
+    region: Region | None = None
+    links: list[Link | NoLink] = pydantic.Field(default_factory=list)
+
+
 class SpyListReport(_Out):
     """`wowlab spy list --json`: the players Spy saw, as of the last logout
     or /reload. `files` lists every `Spy.lua` looked at; `total` counts
@@ -147,7 +168,7 @@ class SpyListReport(_Out):
     character: str | None
     kos_only: bool
     enemies: bool
-    players: list[spy.SpyPlayer]
+    players: list[SpyRow]
     kos: list[spy.SpyKos]
     ignored: list[spy.SpyIgnored]
     shared_kos: list[spy.SpySharedKos]
@@ -171,7 +192,7 @@ class SpyShowReport(_Out):
 
     typed: str
     files: list[SpyFileRow]
-    players: list[spy.SpyPlayer]
+    players: list[SpyRow]
     kos: list[spy.SpyKos]
     ignored: list[spy.SpyIgnored]
     encounters: list[spy.SpyEncounter]
@@ -184,11 +205,28 @@ class SpyShowReport(_Out):
     notes: list[str]
 
 
+class _SpyFlavor:
+    """What a profile link of a row needs from the flavor folder it came
+    from (M21-05): the game version, the region its settings name, and
+    whether its characters have second names."""
+
+    def __init__(self, version: str | None, found: Region | None, second_names: bool) -> None:
+        self.version = version
+        self.region = found
+        self.second_names = second_names
+
+
 class _SpyRead:
     """Every Spy file in reach, read."""
 
-    def __init__(self, folders: list[str], surveys: list[spy.SpySurvey]) -> None:
+    def __init__(
+        self,
+        folders: list[str],
+        surveys: list[spy.SpySurvey],
+        flavors: dict[str, _SpyFlavor] | None = None,
+    ) -> None:
         self.folders = folders
+        self.flavors = flavors or {}
         self.accounts = [a for s in surveys for a in s.accounts]
         self.characters = [c for s in surveys for c in s.characters]
         self.errors = [e for s in surveys for e in s.errors]
@@ -267,8 +305,44 @@ def _spy_flavors(inst: install.Install, flavor: str | None) -> list[install.Flav
 def _spy_read(root: Path | None, flavor: str | None, account: str | None) -> _SpyRead:
     inst, _ = _discover(root)
     flavors = _spy_flavors(inst, flavor)
-    surveys = [spy.survey(layout.Layout.for_flavor(f, inst.root), account=account) for f in flavors]
-    return _SpyRead([f.folder for f in flavors], surveys)
+    lays = [layout.Layout.for_flavor(f, inst.root) for f in flavors]
+    surveys = [spy.survey(lay, account=account) for lay in lays]
+    context = {
+        f.folder: _SpyFlavor(
+            f.version,
+            region.read(lay.flavor_path, root=lay.install_root).region,
+            layout.has_second_names(lay),
+        )
+        for f, lay in zip(flavors, lays, strict=True)
+    }
+    return _SpyRead([f.folder for f in flavors], surveys, context)
+
+
+def _spy_linked(read: _SpyRead, rows: Sequence[spy.SpyPlayer]) -> list[SpyRow]:
+    """Each row with its names, region and profile links (M21-05), built
+    for the flavor folder the row came from."""
+    out: list[SpyRow] = []
+    for p in rows:
+        where = read.flavors.get(p.source.flavor_folder or "")
+        name, _, other = p.key.partition("-")
+        names = charname.key_names(
+            name, other, second_names=where.second_names if where is not None else False
+        )
+        found = where.region if where is not None else None
+        version = where.version if where is not None else None
+        made = links.profiles(names.first_name or None, names.second_name, found, version=version)
+        out.append(
+            SpyRow.model_validate(
+                {
+                    **dict(p),
+                    "first_name": names.first_name,
+                    "second_name": names.second_name,
+                    "region": found,
+                    "links": made,
+                }
+            )
+        )
+    return out
 
 
 def _spy_label(character: str | None) -> str:
@@ -490,7 +564,7 @@ def spy_list(
         character=character,
         kos_only=kos_only,
         enemies=enemies,
-        players=shown,
+        players=_spy_linked(read, shown),
         kos=[k for c in characters for k in c.kos],
         ignored=[i for c in characters for i in c.ignored],
         shared_kos=[k for a in read.accounts for k in a.shared_kos],
@@ -636,7 +710,7 @@ def spy_show(
     report = SpyShowReport(
         typed=name,
         files=read.files(),
-        players=players,
+        players=_spy_linked(read, players),
         kos=kos,
         ignored=ignored,
         encounters=encounters,

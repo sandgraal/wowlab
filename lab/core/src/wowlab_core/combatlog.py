@@ -860,7 +860,8 @@ TYPE_PLAYER = 0x00000400
 
 # The format-22 cast layout, after the event name: source GUID, name, flags,
 # raid flags; destination GUID, name, flags, raid flags; spell id, spell name,
-# school; then the advanced block when advanced logging is on.
+# school; then the advanced block, which the real logs carry whatever the
+# header's ADVANCED_LOG_ENABLED says (docs/LAB_FORMATS.md, 2026-11-23, M22-22).
 _SOURCE_GUID, _SOURCE_NAME, _SOURCE_FLAGS, _SPELL_ID, _SPELL_NAME = 0, 1, 2, 8, 9
 _CAST_FIELDS = 11
 _FLAGS = re.compile(r"0x[0-9A-Fa-f]{1,8}")

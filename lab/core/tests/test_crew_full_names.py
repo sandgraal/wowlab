@@ -39,7 +39,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _crew_build import ACCOUNT, KEY_A, KEY_B, T1, book, match, player
 from _world_lines import log, you_hit
 from test_crew_world import _scan, _write_log, owner  # noqa: F401 - the fixture
-from test_crewdb import Env, make  # noqa: F401 - the fixture
+from test_crewdb import Env, before_schema_7, make  # noqa: F401 - the fixture
 
 TAY = "Tay-Soulrend"
 TAY_GUID = "Player-9998-0000000E"
@@ -356,24 +356,23 @@ def test_crew_show_says_where_the_names_and_region_came_from_constructed(
     ) in text.stdout.splitlines()
 
 
-def test_a_schema_5_database_gains_the_columns_after_a_copy_constructed(make: Any) -> None:
+def test_a_schema_6_database_gains_the_columns_after_a_copy_constructed(make: Any) -> None:
     env = make(_book3({TAY: _tay()}))
     env.sync()
     conn = sqlite3.connect(env.db(), isolation_level=None)
     try:
-        for column in ("resolved_name", "resolved_realm", "resolved_eighth", "resolved_at"):
-            conn.execute(f"ALTER TABLE players DROP COLUMN {column}")
+        before_schema_7(conn)
         conn.execute("DELETE FROM meta WHERE name = 'book_region'")
-        conn.execute("PRAGMA user_version = 5")
+        conn.execute("PRAGMA user_version = 6")
     finally:
         conn.close()
     env.save(_book3({TAY: _tay(met=5)}))
     rows = env.rows()  # opened and migrated
-    copy = env.db().with_name(env.db().name + ".before-schema-5")
+    copy = env.db().with_name(env.db().name + ".before-schema-6")
     assert copy.exists()
     conn = sqlite3.connect(env.db())
     try:
-        assert conn.execute("PRAGMA user_version").fetchone()[0] == crewdb.SCHEMA == 6
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == crewdb.SCHEMA == 7
         columns = {r[1] for r in conn.execute("PRAGMA table_info(players)")}
     finally:
         conn.close()

@@ -23,7 +23,7 @@ from collections.abc import Callable, Iterable, Iterator, MutableMapping, Sequen
 from contextlib import contextmanager
 from pathlib import Path
 from types import TracebackType
-from typing import Annotated, Any, Literal, NoReturn, override
+from typing import TYPE_CHECKING, Annotated, Any, Literal, NoReturn, override
 
 import typer
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
@@ -58,6 +58,9 @@ from wowlab_core import (
 )
 from wowlab_core.errors import WowlabError
 from wowlab_core.region import Region
+
+if TYPE_CHECKING:
+    from wowlab_core import maptable
 
 EXIT_OK = 0
 EXIT_ERROR = 1
@@ -2239,6 +2242,49 @@ _BLOCKED_PLACE = {
 
 def _plural(n: int, noun: str) -> str:
     return f"{n} {noun}" if n == 1 else f"{n} {noun}s"
+
+
+# ─── the game's map table, for the open-world rule (M22-22) ──────────────────
+
+
+def _map_table(version: str | None) -> "maptable.MapTable":
+    """The game's map table cached for `version`, read (`maptable.load`),
+    for `crew scan-log` and `live recap` alike. Imported here, not at the
+    top: `maptable` loads the game-data client, which a command that does
+    not read the table never needs."""
+    from wowlab_core import maptable as loaded
+
+    return loaded.load(version)
+
+
+_MAP_COUNTED = (
+    "fights in a dungeon, raid or battleground whose zone line looks like the open world's "
+    "may be counted"
+)
+
+
+def _map_table_line(table: "maptable.MapTable", flavor_folder: str) -> str | None:
+    """What a reader of the open world says about the game's map table: why
+    it was not used, or None when it was read. A table that is cached but
+    cannot be read is said as such, never as not downloaded: wowlab never
+    replaces a downloaded table, so downloading it again changes nothing."""
+    if table.state == "read":
+        return None
+    if table.state == "missing":
+        return (
+            f"The game's map table for {table.version} is not downloaded, so {_MAP_COUNTED}: "
+            f"wowlab db2 fetch Map --flavor {flavor_folder} downloads it from wago.tools, "
+            "and the next read removes what it shows was in an instance."
+        )
+    if table.state == "unreadable":
+        why = f" ({table.detail})" if table.detail else ""
+        where = f" The file is {table.path}." if table.path else ""
+        return (
+            f"The game's map table for {table.version} is downloaded but cannot be read{why}, "
+            f"so {_MAP_COUNTED}. Downloading it again does not replace it: wowlab never "
+            f"replaces a downloaded table.{where}"
+        )
+    return f"wowlab cannot tell this game's version, so {_MAP_COUNTED}."
 
 
 # ─── the crew book in exports and plans (§20.3, §20.5 term 4; M19-11) ───────

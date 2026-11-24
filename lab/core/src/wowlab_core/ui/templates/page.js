@@ -1564,6 +1564,7 @@
     clearPurist();
     clearSim();
     clearSaved();
+    clearTalents();
     clearProfiles();
     character.params = null;
     clearTwink();
@@ -1609,6 +1610,7 @@
     drawPurist(report.purist);
     byId("char-sim-button").hidden = false;
     drawSaved(report.saved_links, params);
+    drawTalents(report.talents, params);
     drawProfiles(report.links, report.saved_links);
   }
 
@@ -2531,6 +2533,118 @@
     loadSim();
   });
 
+  // ─── Open my talents (M21-07) ───
+  // `char gear --json`'s `talents`: WoW Forever Builds' talent calculator
+  // with the talents of the spec active when the character last saved. Its
+  // address becomes the static link's href only when `outsideAddress`
+  // passes it for WoW Forever Builds (`TALENTS_SITE`, whatever site the
+  // report names); else the report's reason is shown as text. When the
+  // reason is that the game's talent tables are not downloaded
+  // (`download`, for `download_build`), a button runs `wowlab db2 fetch`
+  // for each of them that is one of `TALENT_TABLES`, then `char gear`
+  // again, and draws its `talents`. Nothing is fetched
+  // from the site: the player's browser opens it on a click.
+  const talentsView = { params: null, seq: 0, fetching: false, download: [], build: null };
+  // The only site this link goes to, and the only game tables its button
+  // downloads (the talent layout tables `char gear` names); anything else a
+  // report names is not offered.
+  const TALENTS_SITE = "wowforeverbuilds";
+  const TALENT_TABLES = ["TraitNode", "TraitNodeGroup", "TraitNodeGroupXTraitNode"];
+  const GAME_BUILD = /^[0-9]{1,9}(\.[0-9]{1,9}){3}$/;
+
+  function talentsSay(text) {
+    byId("char-talents-why").textContent = text;
+  }
+
+  function clearTalents() {
+    talentsView.seq += 1;
+    talentsView.params = null;
+    talentsView.download = [];
+    talentsView.build = null;
+    const link = byId("char-talents-link");
+    link.removeAttribute("href");
+    link.hidden = true;
+    link.title = "";
+    byId("char-talents-fetch").hidden = true;
+    byId("char-talents-fetch").disabled = false;
+    talentsSay("");
+    byId("char-talents").hidden = true;
+  }
+
+  // `params` is the pick's (character, account, flavor), for the second read.
+  function drawTalents(talents, params) {
+    clearTalents();
+    talentsView.params = params && typeof params === "object" ? Object.assign({}, params) : null;
+    if (!talents || typeof talents !== "object") return;
+    const made = charObj(talents.link);
+    byId("char-talents").hidden = false;
+    const site = typeof made.site_name === "string" && made.site_name ? visible(made.site_name) : "the talent calculator";
+    if (typeof made.url === "string") {
+      const checked = outsideAddress(made.url, TALENTS_SITE);
+      if (checked === null) {
+        talentsSay("The talents address in the report is not one this page links to, so no link is shown.");
+        return;
+      }
+      const link = byId("char-talents-link");
+      pointLink(link, checked);
+      link.title = "Opens " + site + " in a new tab: the talents of the spec active when the character last saved; wowlab sends nothing";
+      link.textContent = "Open my talents";
+      link.hidden = false;
+      return;
+    }
+    talentsSay("No talents link: " + (typeof made.why === "string" ? visible(made.why) : "the report says no more") + ".");
+    // A list naming any other table is not offered at all.
+    const named = Array.isArray(talents.download) ? talents.download : [];
+    const tables = named.every((t) => TALENT_TABLES.includes(t)) ? named.slice() : [];
+    const build = typeof talents.download_build === "string" && GAME_BUILD.test(talents.download_build) ? talents.download_build : null;
+    if (tables.length && build && talentsView.params) {
+      talentsView.download = tables;
+      talentsView.build = build;
+      byId("char-talents-fetch").hidden = false;
+    }
+  }
+
+  async function fetchTalentTables() {
+    if (talentsView.fetching || !talentsView.download.length || !talentsView.build || !talentsView.params) return;
+    const seq = talentsView.seq;
+    const tables = talentsView.download.slice();
+    const build = talentsView.build;
+    const params = Object.assign({}, talentsView.params);
+    talentsView.fetching = true;
+    byId("char-talents-fetch").disabled = true;
+    talentsSay("Downloading the talent tables…");
+    let failed = "";
+    try {
+      for (const table of tables) {
+        const reply = await runJson(["db2", "fetch"], { table: table, build: build }, false, true);
+        if (reply.error) {
+          failed = shown(reply.error);
+          break;
+        }
+      }
+    } finally {
+      talentsView.fetching = false;
+    }
+    if (seq !== talentsView.seq) return;
+    if (failed) {
+      byId("char-talents-fetch").disabled = false;
+      talentsSay("The talent tables could not all be downloaded: " + failed);
+      return;
+    }
+    talentsSay("Talent tables downloaded; reading the character again…");
+    const reply = await runJson(["char", "gear"], params);
+    if (seq !== talentsView.seq) return;
+    const report = reply.data;
+    if (reply.error || !report || typeof report !== "object") {
+      byId("char-talents-fetch").disabled = false;
+      talentsSay(reply.error ? shown(reply.error) : "wowlab char gear printed something this page does not know.");
+      return;
+    }
+    drawTalents(report.talents, params);
+  }
+
+  byId("char-talents-fetch").addEventListener("click", () => fetchTalentTables());
+
   // ─── the Twink panel (M22-06) ───
   // Laid out from `char twink --json`, run only when the reader presses Show
   // the gaps or picks a bracket or a weight set: the first run of a game
@@ -2675,6 +2789,8 @@
       wornText = "Worn: " + visible(String(worn.name)) + (worn.suffix && typeof worn.suffix.name === "string" && !String(worn.name).endsWith(worn.suffix.name) ? " " + visible(worn.suffix.name) : "");
       wornText += typeof worn.score === "number" ? " · score " + twinkScore(worn.score) : " · not scored: " + visible(String(worn.unscored || ""));
       if (worn.above_cap === true) wornText += " · above this bracket's level";
+      // Where the worn item's stats came from (M22-23).
+      if (worn.stats_from === "hotfix cache") wornText += " · stats from the hotfix cache";
     }
     const wornLine = make("span", wornText);
     wornLine.className = "twink-worn";
@@ -2706,7 +2822,8 @@
     // A required level of 1 asks nothing more than 0 does (the CLI's words).
     const level = typeof c.required_level === "number" && c.required_level > 1 ? "requires level " + c.required_level : "no level required";
     const binds = c.binds_on_pickup === true ? " · binds when picked up" : "";
-    const facts = make("span", "score " + twinkScore(c.score) + " · " + level + binds + (c.worn === true ? " · worn" : ""));
+    const cached = c.stats_from === "hotfix cache" ? " · stats from the hotfix cache" : "";
+    const facts = make("span", "score " + twinkScore(c.score) + " · " + level + binds + cached + (c.worn === true ? " · worn" : ""));
     facts.className = "twink-facts";
     main.append(button, facts);
     li.appendChild(main);
@@ -2717,6 +2834,8 @@
     const fact = (term, value) => list.append(make("dt", term), make("dd", value));
     fact("Stats", twinkStats(c.stats));
     fact("Item level", typeof c.item_level === "number" ? String(c.item_level) : "not known");
+    // Where its name, level and stats were read (M22-23).
+    fact("Stats from", c.stats_from === "hotfix cache" ? "your game's hotfix cache (item rows the server has sent your game, at login or when it first showed the item)" : "the game tables wowlab downloads");
     if (c.two_hand === true) fact("Wielded", "with both hands, so it also takes the off hand");
     for (const other of objects(c.other_suffixes)) {
       fact("Also rolls", visible(String(other.name || "suffix " + other.id)) + ": score " + twinkScore(other.score) + " (" + twinkStats(other.stats) + ")");
@@ -4271,6 +4390,61 @@
     byId("tab-account").focus();
   });
 
+  // ─── other players' profile links (M21-05) ───
+  // The Crew tab's player panel and the Spy panel's player show the profile
+  // links Python built for the player (`links` of a `crew show --json`
+  // player or a `spy show --json` row): the armory, the Journey Companion
+  // and Raider.IO. Each goes into its own static link of page.html (each
+  // opens in a new tab, `rel="noopener noreferrer"`) only when
+  // `outsideAddress` passes it for the site that link is for; the site the
+  // report names is never trusted. A link with no address, or one that does
+  // not pass, is a line of text saying why, through `visible()`. The page
+  // builds no address and requests nothing from any of the sites.
+  const PLAYER_PROFILE_SLOTS = [
+    { link: "armory_character", site: "blizzard", slot: "armory", label: "Armory" },
+    { link: "journey", site: "journey", slot: "journey", label: "Journey Companion" },
+    { link: "raiderio", site: "raiderio", slot: "raiderio", label: "Raider.IO" },
+  ];
+
+  // `panel` is "crew" or "spy": the prefix of the panel's static ids.
+  function clearPlayerProfiles(panel) {
+    for (const slot of PLAYER_PROFILE_SLOTS) {
+      const link = byId(panel + "-profile-" + slot.slot);
+      link.removeAttribute("href");
+      link.hidden = true;
+    }
+    byId(panel + "-profiles").hidden = true;
+    byId(panel + "-profiles-why").replaceChildren();
+    byId(panel + "-profiles-why").hidden = true;
+  }
+
+  function drawPlayerProfiles(panel, given) {
+    clearPlayerProfiles(panel);
+    const made = Array.isArray(given) ? given.filter((l) => l && typeof l === "object") : [];
+    if (made.length === 0) return;
+    const why = [];
+    let any = false;
+    for (const slot of PLAYER_PROFILE_SLOTS) {
+      const one = made.find((l) => l.link === slot.link);
+      if (!one) continue;
+      const checked = typeof one.url === "string" ? outsideAddress(one.url, slot.site) : null;
+      if (checked !== null) {
+        const profile = byId(panel + "-profile-" + slot.slot);
+        pointLink(profile, checked);
+        profile.hidden = false;
+        any = true;
+      } else if (typeof one.url === "string") {
+        why.push(slot.label + ": no link: its address is not one this page links to");
+      } else {
+        why.push(slot.label + ": no link: " + visible(typeof one.why === "string" ? one.why : "not said"));
+      }
+    }
+    byId(panel + "-profiles").hidden = !any;
+    const list = byId(panel + "-profiles-why");
+    list.replaceChildren(...why.map((line) => make("li", line)));
+    list.hidden = why.length === 0;
+  }
+
   // ─── Seen by Spy (M22-01) ───
 
   // What the Spy addon saved, from `spy list --json`: its search, filters
@@ -4279,7 +4453,8 @@
   // sent the row's key as an argument. Read only: nothing here writes.
   // Every name, guild and place is other people's text: it reaches the page
   // only as text, through `visible()`, never in an attribute, a class or an
-  // id, and no link or address is built from it.
+  // id, and the page builds no link or address from it. A player's profile
+  // links are addresses Python built (M21-05), drawn by `drawPlayerProfiles`.
   const spySeen = { listSeq: 0, showSeq: 0, searchTimer: null, read: false };
   const SPY_FILTER = [["", "Everyone"], ["enemies", "Enemies"], ["kos", "Kill on sight"]];
   const SPY_SORT = [["last", "Last seen, newest first"], ["name", "By name"], ["level", "Highest level first"]];
@@ -4419,6 +4594,7 @@
     const seq = ++spySeen.showSeq;
     byId("spy-player").hidden = false;
     byId("spy-player-title").textContent = visible(key);
+    clearPlayerProfiles("spy");
     const lines = byId("spy-player-lines");
     lines.replaceChildren(make("li", "Reading…"));
     const reply = await runJson(["spy", "show"], { name: key }, true);
@@ -4430,7 +4606,16 @@
       return;
     }
     lines.replaceChildren(...said.map((line) => make("li", visible(line.trim()))));
+    drawPlayerProfiles("spy", spyProfileLinks(report));
     byId("spy-player-title").focus();
+  }
+
+  // The profile links of the player `spy show` read (M21-05): those of its
+  // first row (each row is one character's sighting of the same player, so
+  // every row carries the same links); none when Spy kept no row of theirs.
+  function spyProfileLinks(report) {
+    const rows = Array.isArray(report.players) ? report.players.filter((p) => p && typeof p === "object") : [];
+    return rows.length > 0 ? rows[0].links : null;
   }
 
   function spyAgain() {
@@ -4492,7 +4677,10 @@
       parts.push("last save " + new Date(saved.newest_ns / 1e6).toLocaleString());
     }
     parts.push("checked " + new Date().toLocaleTimeString() + " in " + Math.max(1, Math.round(watch.cost_us / 1000)) + " ms");
-    return parts.join(" · ") + ".";
+    // M22-22: when the game's map table was not read, the open world is told
+    // by the zone line alone; the server says so in its own words.
+    const mapWords = typeof watch.map_words === "string" && watch.map_words ? " " + visible(watch.map_words) : "";
+    return parts.join(" · ") + "." + mapWords;
   }
 
   async function liveRecap() {
@@ -4590,7 +4778,9 @@
   // argument, which the server puts after `--`. Every name, realm, guild,
   // note and instance name is other people's text: it reaches the page
   // only as text, through `visible()`, never in an attribute, a class or
-  // an id, and no link or address is built from it.
+  // an id, and the page builds no link or address from it. A player's
+  // profile links are addresses Python built (M21-05), drawn by
+  // `drawPlayerProfiles`; a player a match or fight names opens their panel.
 
   const crew = {
     report: null, // the CrewReport the table was drawn from
@@ -4600,6 +4790,7 @@
     matchSeq: 0, // the latest match history read
     world: false, // whether the history on show is the open-world fights (M20-18)
     scanSeq: 0, // the latest combat-log read (M20-18)
+    mapsFlavor: "", // the flavor whose map table a read said is missing (M22-22)
     key: null, // the stored key of the player shown
     pending: null, // the plan Confirm would run: { command, params, token }
     searchTimer: null,
@@ -4827,7 +5018,10 @@
   async function loadCrew() {
     const seq = ++crew.listSeq;
     crewSay("Reading the crew book…", false);
-    const reply = await runJson(["crew", "list"], crewFilters());
+    // `no_links` (M21-05): the list draws no profile link, so it asks for
+    // none, which keeps a long list's report small; the player opened
+    // gets theirs from crew show.
+    const reply = await runJson(["crew", "list"], Object.assign(crewFilters(), { no_links: true }));
     if (seq !== crew.listSeq) return;
     const report = reply.data;
     if (!report || typeof report !== "object" || typeof report.state !== "string") {
@@ -4879,7 +5073,8 @@
   // it is. Each line is the command's own text, shown through `visible()`.
   // With `world`, `crew matches --world` (M20-18): the open-world fights.
   async function readCrewMatches(key, world) {
-    const extra = key === null ? {} : { name: key };
+    // No profile links (M21-05): a player listed here opens their own panel.
+    const extra = key === null ? { no_links: true } : { name: key, no_links: true };
     if (world) extra.world = true;
     const reply = await runJson(["crew", "matches"], crewParams(extra));
     const report = reply.data;
@@ -4887,7 +5082,34 @@
     if (!lines || typeof report.words !== "string") {
       return { error: reply.error ? shown(reply.error) : "The match history came back in a shape this page does not know." };
     }
-    return { words: visible(report.words), lines: lines.map((line) => make("li", visible(line.trim()))) };
+    return {
+      words: visible(report.words),
+      lines: lines.map((line) => make("li", visible(line.trim()))),
+      people: crewPeople(report.profiles),
+    };
+  }
+
+  // The players the listed matches or fights name (M21-05), from the
+  // report's `profiles`: a button each, by stored key, that opens their
+  // panel with their profile links.
+  function crewPeople(profiles) {
+    const keys = Array.isArray(profiles) ? profiles.filter((p) => p && typeof p.key === "string").map((p) => p.key) : [];
+    return keys.map((key) => {
+      const item = make("li");
+      const open = make("button", visible(key));
+      open.type = "button";
+      open.className = "hub-open";
+      open.addEventListener("click", () => openCrewPlayer(key));
+      item.appendChild(open);
+      return item;
+    });
+  }
+
+  function drawCrewPeople(people) {
+    const list = byId("crew-matches-people");
+    list.replaceChildren(...(people || []));
+    list.hidden = list.children.length === 0;
+    byId("crew-matches-people-words").hidden = list.hidden;
   }
 
   async function showCrewMatches(focus, world) {
@@ -4898,10 +5120,12 @@
     byId("crew-matches-title").textContent = crew.world ? "Open-world fights" : "Match history";
     byId("crew-matches-words").textContent = crew.world ? "Reading the open-world fights…" : "Reading the match history…";
     byId("crew-matches-lines").replaceChildren();
+    drawCrewPeople(null);
     const got = await readCrewMatches(null, crew.world);
     if (seq !== crew.matchSeq) return;
     byId("crew-matches-words").textContent = got.error || got.words;
     byId("crew-matches-lines").replaceChildren(...(got.lines || []));
+    drawCrewPeople(got.people);
     if (focus) byId("crew-matches-title").focus();
   }
 
@@ -4949,9 +5173,47 @@
       return;
     }
     await loadCrew();
-    crewSay(visible(report.words), false);
+    // M22-22: the map table's lines (why it was not used, what the re-check
+    // of earlier reads removed) follow the read's own sentence.
+    const mapLines = Array.isArray(report.map_lines) ? report.map_lines.filter((l) => typeof l === "string") : [];
+    crewSay([report.words, ...mapLines].map((l) => visible(l)).join(" "), false);
+    drawMapsOffer(report);
   }
   byId("crew-scan-log").addEventListener("click", () => scanCrewLog());
+
+  // M22-22: the open world is told from dungeons, raids and battlegrounds
+  // by the game's map table, one download per game version. When a read
+  // says it is not downloaded, one button downloads it (`db2 fetch Map`, for
+  // the read's flavor) and reads again, which checks what earlier reads
+  // kept against it.
+  function drawMapsOffer(report) {
+    const button = byId("crew-maps-fetch");
+    // Only a table not downloaded: one that is downloaded but cannot be read
+    // is never replaced by a download, so none is offered for it.
+    const missing = report && report.map_table_state === "missing" && hubStr(report.map_version) && hubStr(report.flavor_folder);
+    crew.mapsFlavor = missing ? report.flavor_folder : "";
+    button.hidden = !missing;
+    byId("crew-maps-note").hidden = !missing;
+  }
+
+  async function fetchMapTable() {
+    const flavor = crew.mapsFlavor;
+    if (!flavor) return;
+    const button = byId("crew-maps-fetch");
+    button.disabled = true;
+    crewSay("Downloading the game's map table…", false);
+    const reply = await runJson(["db2", "fetch"], { table: "Map", flavor: flavor }, false, true);
+    button.disabled = false;
+    if (reply.error) {
+      crewSay("The map table could not be downloaded: " + shown(reply.error), true);
+      return;
+    }
+    button.hidden = true;
+    byId("crew-maps-note").hidden = true;
+    crew.mapsFlavor = "";
+    await scanCrewLog();
+  }
+  byId("crew-maps-fetch").addEventListener("click", () => fetchMapTable());
   byId("crew-player-matches-show").addEventListener("click", () => showPlayerMatches());
 
   function clearCrewConfirm() {
@@ -4977,6 +5239,7 @@
     crewActSay("", false);
     byId("crew-player").hidden = true;
     byId("crew-player-lines").replaceChildren();
+    clearPlayerProfiles("crew");
     clearPlayerMatches();
   }
 
@@ -4999,6 +5262,7 @@
     byId("crew-actions").hidden = true;
     byId("crew-note-codes").hidden = true;
     clearPlayerMatches();
+    clearPlayerProfiles("crew");
     byId("crew-player-title").textContent = visible(key);
     const lines = byId("crew-player-lines");
     lines.replaceChildren(make("li", "Reading…"));
@@ -5013,6 +5277,7 @@
     }
     lines.replaceChildren(...said.map((line) => make("li", visible(line.trim()))));
     const player = report.player && typeof report.player === "object" ? report.player : null;
+    if (player) drawPlayerProfiles("crew", player.links);
     if (player) {
       byId("crew-rate-value").value = hubStr(player.rating) || "none";
       // The note as it is shown: a control character in it is shown as its

@@ -120,6 +120,11 @@
 <ul id="char-sim-left" class="sim-left" hidden></ul>
 <p id="char-sim-note" class="sim-note"></p>
 </div>
+<p id="char-talents" class="char-talents" hidden>
+<a id="char-talents-link" class="dressing-link" target="_blank" rel="noopener noreferrer" hidden>Open my talents</a>
+<span id="char-talents-why" class="talents-why"></span>
+<button id="char-talents-fetch" class="link-button" type="button" hidden>Download the talent tables</button>
+</p>
 <div id="char-saved" class="char-saved" hidden>
 <p class="char-saved-links"><span class="saved-title">Your links:</span>
 <span id="char-saved-ft-profile-box" class="saved-link" hidden><a id="char-saved-ft-profile" class="dressing-link" target="_blank" rel="noopener noreferrer" hidden>ForeverTwinking</a><span id="char-saved-ft-profile-text" class="saved-text"></span> <button id="char-saved-ft-profile-forget" class="link-button" type="button">Forget</button></span>
@@ -223,7 +228,7 @@
 </section>
 </div>
 <details class="about"><summary>About this data</summary>
-<p class="intro">One character as the lab-addon last saved it: the file it wrote at logout or <code>/reload</code>, never the session in progress, beside the key bindings and macros the client last wrote, and its earlier saves that your backups hold. This page reads with <code>wowlab char list</code>, <code>wowlab char gear</code>, <code>wowlab char binds</code>, <code>wowlab char macros</code> and <code>wowlab char history</code>, or, for a character kept only in a backup, <code>wowlab char kept</code>, and, when you click <strong>Copy for WoWSims</strong>, <code>wowlab char sim-export</code>, and, when you ask the Twink panel, <code>wowlab char twink</code>. The one change it makes is to <strong>Your links</strong>: adding or forgetting one runs <code>wowlab char link set</code> or <code>wowlab char link forget</code>, which show their plan first and, on Confirm, write only wowlab's own <code>links.json</code> in its data folder, never the game folder. Nothing else runs. The professions are the ones <code>wowlab char list --summary</code> read for All characters. An item's name is the bracketed text of its item link as the game saved it, and nothing is fetched, except that the Twink panel's first run for a game version downloads that version's item tables from wago.tools once. <strong>See it dressed</strong> opens an outside dressing room in your own browser, and only when you click it; this page makes no request to it. <strong>Copy for WoWSims</strong> shows the character as the text WoWSims' Addon Import reads, to copy and paste there yourself; wowlab sends nothing to WoWSims. The same way as See it dressed, only when you click: the <strong>Profiles</strong> row opens the character's page on Blizzard's armory and the Journey Companion's lookup, and the ForeverTwinking page you saved; the guild's name opens its armory page; each item's name in the gear list opens its Wowhead page (its <strong>Details</strong> button opens the rest); and the Twink panel's links and Your links open Wowhead, ForeverTwinking and Warcraft Logs. <strong>See my look</strong> opens the character on Purist, an outfit builder, the same way: its address holds the character's name, race, body type, class, barber-shop choices and equipped item ids, after a <code>#</code>, so your browser does not send them to Purist; its page reads them there. A link that cannot be made says why.</p>
+<p class="intro">One character as the lab-addon last saved it: the file it wrote at logout or <code>/reload</code>, never the session in progress, beside the key bindings and macros the client last wrote, and its earlier saves that your backups hold. This page reads with <code>wowlab char list</code>, <code>wowlab char gear</code>, <code>wowlab char binds</code>, <code>wowlab char macros</code> and <code>wowlab char history</code>, or, for a character kept only in a backup, <code>wowlab char kept</code>, and, when you click <strong>Copy for WoWSims</strong>, <code>wowlab char sim-export</code>, and, when you ask the Twink panel, <code>wowlab char twink</code>, and, when you click <strong>Download the talent tables</strong>, <code>wowlab db2 fetch</code>. The one change it makes is to <strong>Your links</strong>: adding or forgetting one runs <code>wowlab char link set</code> or <code>wowlab char link forget</code>, which show their plan first and, on Confirm, write only wowlab's own <code>links.json</code> in its data folder, never the game folder. Nothing else runs. The professions are the ones <code>wowlab char list --summary</code> read for All characters. An item's name is the bracketed text of its item link as the game saved it, and nothing is fetched, except that the Twink panel's first run for a game version downloads that version's item tables from wago.tools once, and so does <strong>Download the talent tables</strong> for its talent tables. <strong>See it dressed</strong> opens an outside dressing room in your own browser, and only when you click it; this page makes no request to it. <strong>Copy for WoWSims</strong> shows the character as the text WoWSims' Addon Import reads, to copy and paste there yourself; wowlab sends nothing to WoWSims. The same way as See it dressed, only when you click: the <strong>Profiles</strong> row opens the character's page on Blizzard's armory and the Journey Companion's lookup, and the ForeverTwinking page you saved; the guild's name opens its armory page; each item's name in the gear list opens its Wowhead page (its <strong>Details</strong> button opens the rest); and the Twink panel's links and Your links open Wowhead, ForeverTwinking and Warcraft Logs. <strong>Open my talents</strong> opens WoW Forever Builds' talent calculator with the talents of the spec active when the character last saved, the same way; placing each talent needs three game tables for the game version. <strong>See my look</strong> opens the character on Purist, an outfit builder, the same way: its address holds the character's name, race, body type, class, barber-shop choices and equipped item ids, after a <code>#</code>, so your browser does not send them to Purist; its page reads them there. A link that cannot be made says why.</p>
 <div id="char-about" class="char-about">
 <div id="char-sources"></div>
 <div id="char-dressing" class="char-dressing" hidden>
@@ -256,6 +261,8 @@
 <button id="crew-matches-show" type="button">Show the match history</button>
 <button id="crew-world-show" type="button">Show the open-world fights</button>
 <button id="crew-scan-log" type="button">Read the combat logs not read before</button>
+<button id="crew-maps-fetch" type="button" hidden>Download the game's map table</button>
+<p id="crew-maps-note" class="names-note" hidden>Downloads the game's public map table from wago.tools, sending your game version.</p>
 </div>
 <p id="crew-rule" class="crew-words" hidden></p>
 <p id="crew-status" role="status"></p>
@@ -265,9 +272,17 @@
 <h3 id="crew-matches-title" tabindex="-1">Match history</h3>
 <p id="crew-matches-words" class="crew-words"></p>
 <ul id="crew-matches-lines" class="crew-lines"></ul>
+<p id="crew-matches-people-words" class="crew-words" hidden>The players in these, each opening what the crew book keeps about them and their profile links:</p>
+<ul id="crew-matches-people" class="crew-people" hidden></ul>
 </section>
 <section id="crew-player" class="panel crew-player" aria-labelledby="crew-player-title" hidden>
 <h3 id="crew-player-title" tabindex="-1"></h3>
+<p id="crew-profiles" class="char-saved-links profile-links" hidden><span class="saved-title">Profiles:</span>
+<a id="crew-profile-armory" class="dressing-link" target="_blank" rel="noopener noreferrer" hidden>Armory</a>
+<a id="crew-profile-journey" class="dressing-link" target="_blank" rel="noopener noreferrer" hidden>Journey Companion</a>
+<a id="crew-profile-raiderio" class="dressing-link" target="_blank" rel="noopener noreferrer" hidden>Raider.IO</a>
+</p>
+<ul id="crew-profiles-why" class="crew-lines" hidden></ul>
 <ul id="crew-player-lines" class="crew-lines"></ul>
 <div class="crew-actions"><button id="crew-player-matches-show" type="button">Show their matches</button></div>
 <p id="crew-player-matches-words" class="crew-words" hidden></p>
@@ -303,11 +318,17 @@
 <div id="spy-table" class="hub-table" role="region" aria-label="Seen by Spy" tabindex="0" hidden></div>
 <section id="spy-player" class="crew-player" aria-labelledby="spy-player-title" hidden>
 <h4 id="spy-player-title" tabindex="-1"></h4>
+<p id="spy-profiles" class="char-saved-links profile-links" hidden><span class="saved-title">Profiles:</span>
+<a id="spy-profile-armory" class="dressing-link" target="_blank" rel="noopener noreferrer" hidden>Armory</a>
+<a id="spy-profile-journey" class="dressing-link" target="_blank" rel="noopener noreferrer" hidden>Journey Companion</a>
+<a id="spy-profile-raiderio" class="dressing-link" target="_blank" rel="noopener noreferrer" hidden>Raider.IO</a>
+</p>
+<ul id="spy-profiles-why" class="crew-lines" hidden></ul>
 <ul id="spy-player-lines" class="crew-lines"></ul>
 </section>
 </section>
 <details class="about"><summary>About this data</summary>
-<p class="intro">The crew book is the lab-addon's list of the players you grouped with, read with <code>wowlab crew list</code>; picking a player shows what <code>wowlab crew show</code> prints, and the match history is what <code>wowlab crew matches</code> prints. Seen by Spy reads the Spy addon's saved files with <code>wowlab spy list</code>, and picking a player there shows what <code>wowlab spy show</code> prints; nothing in Spy's files is changed. Names, guilds, notes, instance and map names are other people's text and are shown exactly as text, never as a link. Changing a rating or a note, or forgetting a player, runs <code>wowlab crew rate</code>, <code>wowlab crew note</code> or <code>wowlab crew forget</code>: each shows its plan first and changes nothing until you press Confirm; the game must be closed, a snapshot is taken first, and <code>wowlab undo</code> puts back what was there. Confirm runs only the plan shown: if the crew book's files changed after the plan, it is refused and nothing is written. For a player only wowlab's crew database keeps (the game's list dropped them), a rating or note changes that database alone: the plan says so, it cannot be undone, and Confirm is refused if their rating or note there changed after the plan.</p>
+<p class="intro">The crew book is the lab-addon's list of the players you grouped with, read with <code>wowlab crew list</code>; picking a player shows what <code>wowlab crew show</code> prints, and the match history is what <code>wowlab crew matches</code> prints. Seen by Spy reads the Spy addon's saved files with <code>wowlab spy list</code>, and picking a player there shows what <code>wowlab spy show</code> prints; nothing in Spy's files is changed. Names, guilds, notes, instance and map names are other people's text and are shown exactly as text. A player's profile links (the Blizzard armory, the Journey Companion, Raider.IO) are addresses wowlab builds from their name and region: the region a combat log gave the player, or else the one your game's settings name, which wowlab assumes is theirs. A link opens in your browser only when you click it, and wowlab itself requests nothing from those sites. A player with no second name, or with no region known, gets neither an armory link nor a Journey Companion link, and the panel says why. Changing a rating or a note, or forgetting a player, runs <code>wowlab crew rate</code>, <code>wowlab crew note</code> or <code>wowlab crew forget</code>: each shows its plan first and changes nothing until you press Confirm; the game must be closed, a snapshot is taken first, and <code>wowlab undo</code> puts back what was there. Confirm runs only the plan shown: if the crew book's files changed after the plan, it is refused and nothing is written. For a player only wowlab's crew database keeps (the game's list dropped them), a rating or note changes that database alone: the plan says so, it cannot be undone, and Confirm is refused if their rating or note there changed after the plan.</p>
 <div id="crew-about" class="crew-about">
 <p id="crew-keeps"></p>
 <ul id="crew-notes" class="crew-notes"></ul>
