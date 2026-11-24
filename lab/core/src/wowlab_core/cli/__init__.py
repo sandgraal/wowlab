@@ -204,7 +204,9 @@ if TYPE_CHECKING:
     from wowlab_core import simexport as simexport
     from wowlab_core import snaparchive as snaparchive
     from wowlab_core import snapshot as snapshot
+    from wowlab_core import spy as spy
     from wowlab_core import svmerge as svmerge
+    from wowlab_core import twink as twink
     from wowlab_core import wtfconfig as wtfconfig
     from wowlab_core import wtfdiff as wtfdiff
     from wowlab_core.cli import _changes as _changes
@@ -227,6 +229,7 @@ if TYPE_CHECKING:
     from wowlab_core.cli import _cmd_profile as _cmd_profile
     from wowlab_core.cli import _cmd_restore as _cmd_restore
     from wowlab_core.cli import _cmd_snap as _cmd_snap
+    from wowlab_core.cli import _cmd_spy as _cmd_spy
     from wowlab_core.cli import _cmd_sv as _cmd_sv
     from wowlab_core.cli import _cmd_ui as _cmd_ui
     from wowlab_core.cli._changes import (
@@ -725,6 +728,9 @@ if TYPE_CHECKING:
         _SUMMARY_NOTES as _SUMMARY_NOTES,
     )
     from wowlab_core.cli._cmd_char import (
+        _TWINK_FROM as _TWINK_FROM,
+    )
+    from wowlab_core.cli._cmd_char import (
         CharBindsFile as CharBindsFile,
     )
     from wowlab_core.cli._cmd_char import (
@@ -780,6 +786,9 @@ if TYPE_CHECKING:
     )
     from wowlab_core.cli._cmd_char import (
         CharSummaryRow as CharSummaryRow,
+    )
+    from wowlab_core.cli._cmd_char import (
+        CharTwinkReport as CharTwinkReport,
     )
     from wowlab_core.cli._cmd_char import (
         KeptFlavorOpt as KeptFlavorOpt,
@@ -971,6 +980,21 @@ if TYPE_CHECKING:
         _time_notes as _time_notes,
     )
     from wowlab_core.cli._cmd_char import (
+        _twink_config as _twink_config,
+    )
+    from wowlab_core.cli._cmd_char import (
+        _twink_item as _twink_item,
+    )
+    from wowlab_core.cli._cmd_char import (
+        _twink_stats as _twink_stats,
+    )
+    from wowlab_core.cli._cmd_char import (
+        _twink_tables as _twink_tables,
+    )
+    from wowlab_core.cli._cmd_char import (
+        _twink_worn as _twink_worn,
+    )
+    from wowlab_core.cli._cmd_char import (
         _unseen_words as _unseen_words,
     )
     from wowlab_core.cli._cmd_char import (
@@ -996,6 +1020,9 @@ if TYPE_CHECKING:
     )
     from wowlab_core.cli._cmd_char import (
         char_sim_export as char_sim_export,
+    )
+    from wowlab_core.cli._cmd_char import (
+        char_twink as char_twink,
     )
     from wowlab_core.cli._cmd_charmodel import (
         _AS_OF_LOOK as _AS_OF_LOOK,
@@ -2341,6 +2368,84 @@ if TYPE_CHECKING:
     from wowlab_core.cli._cmd_snap import (
         snap_verify as snap_verify,
     )
+    from wowlab_core.cli._cmd_spy import (
+        _SPY_AS_OF as _SPY_AS_OF,
+    )
+    from wowlab_core.cli._cmd_spy import (
+        _SPY_NOTES as _SPY_NOTES,
+    )
+    from wowlab_core.cli._cmd_spy import (
+        _SPY_RESULT_WORDS as _SPY_RESULT_WORDS,
+    )
+    from wowlab_core.cli._cmd_spy import (
+        _SPY_TABLE_WORDS as _SPY_TABLE_WORDS,
+    )
+    from wowlab_core.cli._cmd_spy import (
+        _SPY_TAG_WORDS as _SPY_TAG_WORDS,
+    )
+    from wowlab_core.cli._cmd_spy import (
+        SpyFileRow as SpyFileRow,
+    )
+    from wowlab_core.cli._cmd_spy import (
+        SpyListReport as SpyListReport,
+    )
+    from wowlab_core.cli._cmd_spy import (
+        SpyShowReport as SpyShowReport,
+    )
+    from wowlab_core.cli._cmd_spy import (
+        SpySort as SpySort,
+    )
+    from wowlab_core.cli._cmd_spy import (
+        _spy_character_matches as _spy_character_matches,
+    )
+    from wowlab_core.cli._cmd_spy import (
+        _spy_date as _spy_date,
+    )
+    from wowlab_core.cli._cmd_spy import (
+        _spy_encounter_line as _spy_encounter_line,
+    )
+    from wowlab_core.cli._cmd_spy import (
+        _spy_errors as _spy_errors,
+    )
+    from wowlab_core.cli._cmd_spy import (
+        _spy_flavors as _spy_flavors,
+    )
+    from wowlab_core.cli._cmd_spy import (
+        _spy_label as _spy_label,
+    )
+    from wowlab_core.cli._cmd_spy import (
+        _spy_line as _spy_line,
+    )
+    from wowlab_core.cli._cmd_spy import (
+        _spy_place as _spy_place,
+    )
+    from wowlab_core.cli._cmd_spy import (
+        _spy_player_lines as _spy_player_lines,
+    )
+    from wowlab_core.cli._cmd_spy import (
+        _spy_read as _spy_read,
+    )
+    from wowlab_core.cli._cmd_spy import (
+        _spy_row as _spy_row,
+    )
+    from wowlab_core.cli._cmd_spy import (
+        _spy_sorted as _spy_sorted,
+    )
+    from wowlab_core.cli._cmd_spy import (
+        _spy_who as _spy_who,
+    )
+    from wowlab_core.cli._cmd_spy import (
+        _spy_words as _spy_words,
+    )
+    from wowlab_core.cli._cmd_spy import (
+        _SpyRead as _SpyRead,
+    )
+    from wowlab_core.cli._cmd_spy import (
+        spy_list as spy_list,
+    )
+    from wowlab_core.cli._cmd_spy import (
+        spy_show as spy_show,
+    )
     from wowlab_core.cli._cmd_sv import (
         _ABSENT_NOTE as _ABSENT_NOTE,
     )
@@ -3108,6 +3213,9 @@ if TYPE_CHECKING:
     )
     from wowlab_core.cli._common import (
         snap_app as snap_app,
+    )
+    from wowlab_core.cli._common import (
+        spy_app as spy_app,
     )
     from wowlab_core.cli._common import (
         sv_app as sv_app,

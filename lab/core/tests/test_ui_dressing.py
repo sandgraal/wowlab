@@ -154,12 +154,17 @@ def _only_api(out: dict[str, Any]) -> None:
 def test_the_link_is_static_markup_with_no_href(server: Any) -> None:
     page = (_TEMPLATES / "page.html").read_text(encoding="utf-8")
     anchors = re.findall(r"<a\b[^>]*>", page)
+    # M22-06 added the Twink panel's two links, graded in test_ui_twink.py.
     assert anchors == [
         '<a id="char-dressing-link" class="dressing-link" target="_blank" '
-        'rel="noopener noreferrer" hidden>'
+        'rel="noopener noreferrer" hidden>',
+        '<a id="char-twink-planner" class="dressing-link" target="_blank" '
+        'rel="noopener noreferrer" hidden>',
+        '<a id="char-twink-wowhead" class="dressing-link" target="_blank" '
+        'rel="noopener noreferrer" hidden>',
     ]
     body = _page(server).body.decode("utf-8")
-    assert body.count('target="_blank" rel="noopener noreferrer"') == 1
+    assert body.count('target="_blank" rel="noopener noreferrer"') == 3
     assert "See it dressed</a>" in body
 
 
@@ -290,6 +295,9 @@ def test_the_origin_constant_is_the_shipped_sites() -> None:
     # The other `://` is the SVG namespace (M17-03), a name, not an origin.
     namespace = 'const SVG_NS = "http://www.w3.org/2000/svg";'
     assert script.count(namespace) == 1
-    assert script.replace(namespace, "").count("://") == 1
+    # And, since M22-06, the Twink panel's planner origin (test_ui_twink.py).
+    planner = 'const PLANNER_ORIGIN = "https://forevertwinking.com";'
+    assert script.count(planner) == 1
+    assert script.replace(namespace, "").replace(planner, "").count("://") == 1
     assert f'const DRESSING_ORIGIN = "{dressing.load_sites().site.origin}";' in script
     assert script.count(".href") == 1 and "link.href = checked;" in script

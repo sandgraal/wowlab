@@ -39,6 +39,7 @@ from wowlab_core import (
     labaddon,
     layout,
     luadata,
+    nemesis,
     region,
     snapshot,
     worldpvp,
@@ -91,14 +92,18 @@ _CREW_NOTES = [
     "not yet confirmed.",
     "The class is the game's internal name for it (MAGE, PRIEST, ...), as the game gave it.",
     "Dates are in this computer's time zone.",
+    nemesis.HOW_COUNTED,
 ]
 _MATCH_NOTE = (
     "A match is kept only when you stayed in it until the scoreboard showed its end. With you "
     "and against you are the teams of that match, not factions."
 )
 _MATCH_NOTES = [*_CREW_NOTES, _MATCH_NOTE]
-# `crew list --sort`: the book's own orders, and two of the database's.
-CrewSort = Literal["last", "met", "name", "faced", "allied"]
+# `crew list --sort`: the book's own orders (`last`, `met`, `name`) and the
+# database's: `faced` and `allied` (M20-09), `world`, latest open-world
+# encounter first (M20-18), and `deaths` and `team_losses`, most killed by
+# them and most team losses to them first (M22-03).
+CrewSort = Literal["last", "met", "name", "faced", "allied", "world", "deaths", "team_losses"]
 
 
 class CrewPlace(_Out):
@@ -142,6 +147,7 @@ class CrewReport(_Out):
     skipped: int | None
     current_count: int
     total: int
+    # The order in use: the --sort given, else the view's own (M22-03).
     sort: CrewSort
     rated: crewbook.RatedFilter | None
     noted: bool
@@ -152,6 +158,16 @@ class CrewReport(_Out):
     words: str
     keeps: str
     notes: list[str]
+    # M22-03: only your nemeses (`nemeses`, most killed by them first) and
+    # only rival teams (`rivals`, most team losses to them first), unless
+    # `sort` says otherwise; `nemesis_rule` and `rival_rule` are the two
+    # rules in words, as `--nemeses` and `--rivals` name them. Each player's
+    # record is its `record`, with `personal` and `team` kept apart, or
+    # null for a player with no fight.
+    nemeses: bool = False
+    rivals: bool = False
+    nemesis_rule: str = nemesis.NEMESIS_RULE
+    rival_rule: str = nemesis.RIVAL_RULE
     sync: crewdb.SyncOutcome | None = None
     # The match filters (§21.3, "Reading", M20-09): only players who were
     # against you (`faced`) or with you (`allied`) in a match the database
@@ -180,7 +196,10 @@ class CrewShowReport(_Out):
     as typed (`typed`). `lines` are the lines the text output prints:
     the player and every field kept, or the one sentence of a book never
     turned on. The player is read from wowlab's crew database after a sync
-    (`sync`, as in `CrewReport`)."""
+    (`sync`, as in `CrewReport`). Their record against you is
+    `player.record`; `fights` are the rows it is added up from, oldest
+    first within each source; `nemesis_rule` and `rival_rule` say when
+    they are a nemesis and a rival team."""
 
     flavor_folder: str | None
     account: str | None
@@ -191,6 +210,10 @@ class CrewShowReport(_Out):
     places: list[CrewPlace]
     lines: list[str]
     notes: list[str]
+    # M22-03: the fights `player.record` adds up, and the two rules.
+    fights: list[nemesis.Fight] = pydantic.Field(default_factory=list)
+    nemesis_rule: str = nemesis.NEMESIS_RULE
+    rival_rule: str = nemesis.RIVAL_RULE
     sync: crewdb.SyncOutcome | None = None
     # M21-02: as in `CrewReport`.
     region: Region | None = None
@@ -477,6 +500,8 @@ def _row(p: crewbook.CrewPlayer) -> str:
     if isinstance(p, crewdb.CrewRow):
         if p.allied or p.faced:
             parts.append(f"in matches with you {p.allied}, against you {p.faced}")
+        if p.record is not None:
+            parts.append(_record_words(p.record))
         world = _world_row(p)
         if world is not None:
             parts.append(world)
@@ -485,6 +510,17 @@ def _row(p: crewbook.CrewPlayer) -> str:
         if p.also_known_as:
             parts.append(_also_seen(p.also_known_as))
     return f"  {p.key}: " + "; ".join(parts)
+
+
+def _record_words(r: nemesis.Record) -> str:
+    """A player's record against you in one phrase (M22-03): the fights,
+    the killing blows each way, the team results, and the two marks."""
+    me, team = r.personal, r.team
+    words = (
+        f"record against them: {_plural(r.fights, 'fight')}; they killed you {me.deaths}, "
+        f"you killed them {me.kills}; team won {team.wins}, lost {team.losses}"
+    )
+    return words + ("; your nemesis" if me.nemesis else "") + ("; rival team" if team.rival else "")
 
 
 def _also_seen(keys: Sequence[str]) -> str:
@@ -535,6 +571,12 @@ def _sorted(players: Sequence[crewdb.CrewRow], by: CrewSort) -> list[crewdb.Crew
         return sorted(players, key=lambda p: (-p.faced, p.key))
     if by == "allied":
         return sorted(players, key=lambda p: (-p.allied, p.key))
+    if by == "world":
+        return sorted(players, key=lambda p: (-(p.world_last or -1), p.key))
+    if by == "deaths":
+        return sorted(players, key=lambda p: nemesis.nemesis_order(p.record, p.key))
+    if by == "team_losses":
+        return sorted(players, key=lambda p: nemesis.rival_order(p.record, p.key))
     return crewbook.ordered(players, by)
 
 
@@ -543,13 +585,29 @@ RatedOpt = Annotated[
     typer.Option("--rated", help="Only players you rated good, bad, or either (any)."),
 ]
 SortOpt = Annotated[
-    CrewSort,
+    CrewSort | None,
     typer.Option(
         "--sort",
-        help="last: newest group first (the default); met: most groups first; name: by name; "
-        "faced: most matches against you first; allied: most matches with you first.",
+        help="last: newest group first (the default, except with --nemeses, --rivals or "
+        "--world, which have their own); met: most groups first; name: by name; faced: most "
+        "matches against you first; allied: most matches with you first; world: latest "
+        "open-world encounter first; deaths: most killed by them first; team_losses: most "
+        "team losses to them first.",
     ),
 ]
+
+
+def _default_sort(*, nemeses: bool, rivals: bool, world: bool) -> CrewSort:
+    """The order `crew list` uses when no --sort is given: a view's own
+    (nemeses, then rival teams, then the open world), else newest group
+    first."""
+    if nemeses:
+        return "deaths"
+    if rivals:
+        return "team_losses"
+    if world:
+        return "world"
+    return "last"
 
 
 @crew_app.command("list", short_help="The players in the crew book, newest group first.")
@@ -598,7 +656,23 @@ def crew_list(
             "read; latest encounter first unless --sort says otherwise.",
         ),
     ] = False,
-    sort: SortOpt = "last",
+    nemeses: Annotated[
+        bool,
+        typer.Option(
+            "--nemeses",
+            help="Only your nemeses, most killed by them first unless --sort says "
+            f"otherwise. {nemesis.NEMESIS_RULE}",
+        ),
+    ] = False,
+    rivals: Annotated[
+        bool,
+        typer.Option(
+            "--rivals",
+            help="Only rival teams, most team losses to them first unless --sort says "
+            f"otherwise. {nemesis.RIVAL_RULE}",
+        ),
+    ] = False,
+    sort: SortOpt = None,
     account: AccountOpt = None,
     root: RootOpt = None,
     flavor: FlavorOpt = None,
@@ -619,6 +693,9 @@ def crew_list(
     if map_text is not None and not map_text.strip():
         raise CliError("--map is empty; give some letters of a map's name", EXIT_USAGE)
     since_at = _since(since)
+    # With no --sort, a view's own order; an explicit --sort always wins.
+    if sort is None:
+        sort = _default_sort(nemeses=nemeses, rivals=rivals, world=world)
     opened = _open_book(root, flavor, account)
     book = opened.book
     reading = _crew_region(opened)
@@ -639,10 +716,10 @@ def crew_list(
         and (on_map is None or p.key in on_map)
         and (since_at is None or _latest_meeting(p) >= since_at)
         and (not world or p.world_faced > 0 or p.world_allied > 0)
+        and (not nemeses or (p.record is not None and p.record.personal.nemesis))
+        and (not rivals or (p.record is not None and p.record.team.rival))
     ]
     shown = _sorted(picked, sort)
-    if world and sort == "last":
-        shown = sorted(shown, key=lambda p: -(p.world_last or -1))
     place = opened.place
     if book.state == "not_turned_on":
         words = _never_on(opened.places if place is None else [place])
@@ -669,6 +746,8 @@ def crew_list(
         words=words,
         keeps=CREW_BOOK_SENTENCE,
         notes=_CREW_NOTES,
+        nemeses=nemeses,
+        rivals=rivals,
         sync=outcome,
         faced=faced,
         allied=allied,
@@ -696,6 +775,8 @@ def crew_list(
         or map_text is not None
         or since is not None
         or world
+        or nemeses
+        or rivals
     )
     if filtered:
         _say(f"{len(shown)} of {_plural(len(kept), 'player')} match.")
@@ -726,7 +807,41 @@ def _record_lines(p: crewdb.CrewRow) -> list[str]:
             f"  Their scoreboard line in that match ({_date(p.score.at)}, the game's own field "
             "names): " + ", ".join(f"{k} {_score_value(v)}" for k, v in p.score.values.items())
         )
-    return lines
+    return lines + _against_lines(p.record)
+
+
+def _fights_of(opened: _Opened, player: crewdb.CrewRow | None) -> list[nemesis.Fight]:
+    """The fights the player's record adds up (M22-03), from the crew
+    database the record was read from; none without a player."""
+    target = _target(opened)
+    if player is None or target is None:
+        return []
+    return crewdb.fights(target.flavor_folder, target.account, player.key)
+
+
+# Where a fight came from, in words (M22-03); a source not named here is
+# shown by its name.
+_SOURCE_WORDS = {"match": "in matches", "world": "in the open world"}
+
+
+def _against_lines(r: nemesis.Record | None) -> list[str]:
+    """The record against them (M22-03): the fights and where they came
+    from, the first and latest fight, then its two parts apart: killing
+    blows each way and the nemesis mark; team results and the rival-team
+    mark; each mark with its rule."""
+    if r is None:
+        return ["  Record against them: no fight kept"]
+    where = ", ".join(f"{n} {_SOURCE_WORDS.get(s, s)}" for s, n in r.sources.items())
+    me, team = r.personal, r.team
+    return [
+        f"  Record against them: {_plural(r.fights, 'fight')} ({where}); first "
+        f"{_date(r.first)}, latest {_date(r.last)}",
+        f"  Killing blows: theirs on you {me.deaths}, yours on them {me.kills}",
+        f"  Your nemesis: {'yes' if me.nemesis else 'no'} ({nemesis.NEMESIS_RULE})",
+        f"  Team results in matches against them: your side won {team.wins}, their side won "
+        f"{team.losses}",
+        f"  Rival team: {'yes' if team.rival else 'no'} ({nemesis.RIVAL_RULE})",
+    ]
 
 
 def _score_value(value: crewbook.ScoreValue) -> str:
@@ -851,6 +966,7 @@ def crew_show(
         places=opened.places,
         lines=lines,
         notes=_CREW_NOTES,
+        fights=_fights_of(opened, player),
         sync=outcome,
         region=_region_fields(reading)[0],
         region_absent=_region_fields(reading)[1],

@@ -450,6 +450,10 @@ def read_commands(root: Path, tmp_path: Path) -> list[list[str]]:
         ["casc", "cat", "--fdid", "1"],
         # M15-11: likewise; its full text is linted by test_cli_char_model.py.
         ["char", "model"],
+        # M22-06: the sandbox's versions have no recorded item tables, or its
+        # records no class, so it ends in its one error line, which is player
+        # copy too; its full text is linted in test_cli_char_twink.py.
+        ["char", "twink"],
         # M19-02: the captures hold no crew book, so both say it is not
         # turned on; test_cli_crew.py runs them on constructed books.
         ["crew", "list"],
@@ -466,6 +470,12 @@ def read_commands(root: Path, tmp_path: Path) -> list[list[str]]:
         ["crew", "scan-log"],
         ["crew", "list", "--world"],
         ["crew", "matches", "--world", "--notes"],
+        # M22-01: the sandbox (macos/ and its overlays) holds no Spy file,
+        # so list says so and show ends in its one error line;
+        # test_cli_spy.py runs both on the Spy files of macos-71037/.
+        ["spy", "list"],
+        ["spy", "list", "--notes"],
+        ["spy", "show", "Inventeda-Fakerealm"],
         ["db2", "builds"],
         ["db2", "fetch", "ChrClasses", "--build", TABLE_BUILD],
         ["db2", "head", "ChrClasses", "--build", TABLE_BUILD],
