@@ -1,0 +1,113 @@
+{
+	"enable_system_notifications": "true",
+	"collapse_to_tray": "true",
+	"use_hardware_acceleration": "true",
+	"current_theme": "default-theme",
+	"wowup_release_channel_2_6": "1",
+	"use_symlink_mode": "false",
+	"enable_app_badge": "true",
+	"trusted_domains": [
+		"wowup.io",
+		"dev.wowup.io",
+		"discord.gg",
+		"www.patreon.com",
+		"github.com",
+		"wago.io",
+		"addons.wago.io",
+		"tukui.org"
+	],
+	"acct_push_enabled": "false",
+	"install_id": "00000000-0000-4000-8000-000000000001",
+	"blizzard_agent_path": "/Users/Shared/Battle.net/Agent/product.db",
+	"retail_default_addon_channel": "0",
+	"retail_default_auto_update": "false",
+	"classic_default_addon_channel": "0",
+	"selected_language": "en",
+	"classic_default_auto_update": "false",
+	"retailptr_default_addon_channel": "0",
+	"wow_installations": [
+		{
+			"id": "b83ae8a8-efcc-400b-b8c4-a1930a7863c7",
+			"clientType": 5,
+			"label": "{defaultName}",
+			"displayName": "MoP Classic Beta",
+			"location": "/Volumes/Labdisk/Games/World of Warcraft/_classic_beta_/World of Warcraft Classic Beta.app",
+			"selected": true,
+			"defaultAddonChannelType": 0,
+			"defaultAutoUpdate": false
+		}
+	],
+	"retailptr_default_auto_update": "false",
+	"classicptr_default_addon_channel": "0",
+	"classicptr_default_auto_update": "false",
+	"beta_default_addon_channel": "0",
+	"beta_default_auto_update": "false",
+	"classicbeta_default_addon_channel": "0",
+	"classicbeta_default_auto_update": "false",
+	"classicera_default_addon_channel": "0",
+	"classicera_default_auto_update": "false",
+	"classiceraptr_default_addon_channel": "0",
+	"classiceraptr_default_auto_update": "false",
+	"retailxptr_default_addon_channel": "0",
+	"retailxptr_default_auto_update": "false",
+	"anniversary_default_addon_channel": "0",
+	"anniversary_default_auto_update": "false",
+	"addon_providers": [
+		{
+			"providerName": "wago",
+			"enabled": true,
+			"canEdit": true
+		}
+	],
+	"wago_prompt": "true",
+	"telemetry_enabled": "true",
+	"addon_migration_version": "2.23.1",
+	"my_addons_sort_order": [
+		{
+			"colId": "name",
+			"sort": null
+		},
+		{
+			"colId": "sortOrder",
+			"sort": null
+		},
+		{
+			"colId": "installedAt",
+			"sort": "desc"
+		},
+		{
+			"colId": "latestVersion",
+			"sort": null
+		},
+		{
+			"colId": "releasedAt",
+			"sort": null
+		},
+		{
+			"colId": "gameVersion",
+			"sort": null
+		},
+		{
+			"colId": "externalChannel",
+			"sort": null
+		},
+		{
+			"colId": "providerName",
+			"sort": null
+		},
+		{
+			"colId": "author",
+			"sort": null
+		}
+	],
+	"update_notes_popup_version": "2.23.1",
+	"main-window-is-maximized": false,
+	"main-window-is-minimized": false,
+	"main-window-is-fullscreen": false,
+	"main-window-state": {
+		"x": 2080,
+		"y": -435,
+		"width": 1280,
+		"height": 720
+	}
+}

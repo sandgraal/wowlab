@@ -103,7 +103,9 @@ def _v2_customization(char: labaddon.CharDB) -> labaddon.CustomizationV2:
 def test_the_addon_source_lists_what_these_tests_use() -> None:
     assert len(MODEL_REASONS) == 4, MODEL_REASONS
     assert CHANGE_EVENTS == ("BARBER_SHOP_OPEN", "BARBER_SHOP_APPEARANCE_APPLIED")
-    assert len(COUNT_ONLY) == 6, COUNT_ONLY
+    # Five since M21-11 dropped BARBER_SHOP_SUCCESS (not in the 70938 event list).
+    assert len(COUNT_ONLY) == 5, COUNT_ONLY
+    assert "BARBER_SHOP_SUCCESS" not in COUNT_ONLY
     assert "WOWLAB_CONTROL_NOT_A_REAL_EVENT" in COUNT_ONLY
 
 

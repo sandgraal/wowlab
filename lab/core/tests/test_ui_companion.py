@@ -209,9 +209,10 @@ def test_the_header_has_the_mark_the_name_and_five_sections_in_order() -> None:
         ("backups", "Backups"),
         ("addons", "Addons"),
         ("keybinds", "Keybinds"),
+        ("live", "Live"),  # M22-05
         ("advanced", "Advanced"),
     ]
-    assert [s[1] for s in sections] == ["true", "false", "false", "false", "false"]
+    assert [s[1] for s in sections] == ["true", "false", "false", "false", "false", "false"]
     html = _template("page.html")
     for _name, _on, controls, _label in sections:
         for view in controls.split():
@@ -257,11 +258,11 @@ def test_each_section_with_several_views_has_its_own_tabs() -> None:
         r'<nav id="([a-z]+)-tabs" class="tabs" role="tablist"[^>]*>(.*?)</nav>', html, re.S
     )
     assert [(name, re.findall(r'id="tab-([a-z]+)"', body)) for name, body in rows] == [
-        ("characters", ["account", "character", "crew"]),
+        ("characters", ["account", "character", "crew", "lookup"]),
         ("advanced", ["explorer", "gaps", "commands", "looks"]),
     ]
     script = _template("page.js")
-    assert 'characters: ["account", "character", "crew"],' in script
+    assert 'characters: ["account", "character", "crew", "lookup"],' in script
     assert 'advanced: ["explorer", "gaps", "commands", "looks"],' in script
 
 
@@ -280,8 +281,9 @@ def _views(html: str) -> dict[str, str]:
 _ABOUT = re.compile(
     r'<details class="about"><summary>About this data</summary>\n<p class="(?:intro|patch-day-intro)">'
     # The character page's own facts and saves follow its intro (M18-05);
-    # the crew book's own sentences follow the Crew tab's (M19-06).
-    r'(?:(?!</p>).)+</p>\n(?:<div id="(?P<part>char|crew)-about" class="(?P=part)-about">\n.*</div>\n)?'
+    # the crew book's own sentences follow the Crew tab's (M19-06); what a
+    # lookup left out follows the Look up tab's (M22-08).
+    r'(?:(?!</p>).)+</p>\n(?:<div id="(?P<part>char|crew|lookup)-about" class="(?P=part)-about">\n.*</div>\n)?'
     r"</details>\n</section>\n$",
     flags=re.DOTALL,
 )
@@ -294,8 +296,10 @@ def test_every_view_ends_with_one_closed_about_this_data() -> None:
         "account-view",
         "character-view",
         "crew-view",
+        "lookup-view",
         "backups-view",
         "addons-view",
+        "live-view",  # M22-05
         "explorer-view",
         "gaps-view",
         "commands-view",
@@ -394,8 +398,14 @@ def test_the_looks_network_line_stays_beside_its_button() -> None:
         '<p class="names-note">Downloads the game\'s public name tables from wago.tools, '
         "sending your game version.</p>\n"
     ) in html
+    # M22-08: the Look up tab's download offer, likewise.
+    assert (
+        '<button id="lookup-fetch" type="button">Download zone and item names</button>\n'
+        '<p class="names-note">Downloads the game\'s public item and zone tables from wago.tools, '
+        "sending your game version.</p>\n"
+    ) in html
     outside = re.sub(r'<details class="about">.*?</details>', "", html, flags=re.DOTALL)
-    assert outside.count("wago.tools") == 2
+    assert outside.count("wago.tools") == 3
 
 
 def test_the_keys_table_scrolls_inside_its_own_box() -> None:

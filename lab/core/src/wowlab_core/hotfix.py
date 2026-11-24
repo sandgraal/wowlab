@@ -9,7 +9,7 @@ decodes the rows of the tables `hotfix_layouts.toml` describes (`Item`,
 `ItemSparse` and `TraitNodeEntry`) that a caller asks for;
 `gamedata.HotfixOverlay` lays them over the cached tables of the same build (ADR-0022, ADR-0033 note of 2026-11-23).
 
-The format (`docs/LAB_FORMATS.md` §13), as wowsims/forever (MIT) reads it
+The format (`docs/LAB_FORMATS.md` §16), as wowsims/forever (MIT) reads it
 in `tools/db2tool/wdc/hotfix.go` (commit
 a8bd7fd83a3a7c5102012ed87d86a71d175b3a89, a Go translation of DBCD's
 hotfix reader and wow.tools.local's table hash; read on GitHub, not

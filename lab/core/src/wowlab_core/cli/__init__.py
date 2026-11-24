@@ -173,6 +173,7 @@ from wowlab_core.cli import _common
 if TYPE_CHECKING:
     from wowlab_core import addoncheck as addoncheck
     from wowlab_core import addoninstall as addoninstall
+    from wowlab_core import addonsource as addonsource
     from wowlab_core import bindscoach as bindscoach
     from wowlab_core import combatlog as combatlog
     from wowlab_core import crewbook as crewbook
@@ -190,10 +191,13 @@ if TYPE_CHECKING:
     from wowlab_core import keymap as keymap
     from wowlab_core import labaddon as labaddon
     from wowlab_core import layout as layout
+    from wowlab_core import links as links
+    from wowlab_core import linkstore as linkstore
     from wowlab_core import longpath as longpath
     from wowlab_core import looks as looks
     from wowlab_core import lookspage as lookspage
     from wowlab_core import lookstore as lookstore
+    from wowlab_core import lookup as lookup
     from wowlab_core import luadata as luadata
     from wowlab_core import macrocheck as macrocheck
     from wowlab_core import macroplace as macroplace
@@ -203,6 +207,7 @@ if TYPE_CHECKING:
     from wowlab_core import simexport as simexport
     from wowlab_core import snaparchive as snaparchive
     from wowlab_core import snapshot as snapshot
+    from wowlab_core import spy as spy
     from wowlab_core import svmerge as svmerge
     from wowlab_core import twink as twink
     from wowlab_core import wtfconfig as wtfconfig
@@ -220,13 +225,16 @@ if TYPE_CHECKING:
     from wowlab_core.cli import _cmd_doctor as _cmd_doctor
     from wowlab_core.cli import _cmd_filemap as _cmd_filemap
     from wowlab_core.cli import _cmd_install as _cmd_install
+    from wowlab_core.cli import _cmd_live as _cmd_live
     from wowlab_core.cli import _cmd_log as _cmd_log
     from wowlab_core.cli import _cmd_looks as _cmd_looks
+    from wowlab_core.cli import _cmd_lookup as _cmd_lookup
     from wowlab_core.cli import _cmd_macros as _cmd_macros
     from wowlab_core.cli import _cmd_names as _cmd_names
     from wowlab_core.cli import _cmd_profile as _cmd_profile
     from wowlab_core.cli import _cmd_restore as _cmd_restore
     from wowlab_core.cli import _cmd_snap as _cmd_snap
+    from wowlab_core.cli import _cmd_spy as _cmd_spy
     from wowlab_core.cli import _cmd_sv as _cmd_sv
     from wowlab_core.cli import _cmd_ui as _cmd_ui
     from wowlab_core.cli._changes import (
@@ -482,6 +490,21 @@ if TYPE_CHECKING:
         _CHECK_OUT_OF_DATE as _CHECK_OUT_OF_DATE,
     )
     from wowlab_core.cli._cmd_addons import (
+        _SOURCES_FOLDERS as _SOURCES_FOLDERS,
+    )
+    from wowlab_core.cli._cmd_addons import (
+        _SOURCES_NOTES as _SOURCES_NOTES,
+    )
+    from wowlab_core.cli._cmd_addons import (
+        _SOURCES_OTHERS as _SOURCES_OTHERS,
+    )
+    from wowlab_core.cli._cmd_addons import (
+        _SOURCES_STALE as _SOURCES_STALE,
+    )
+    from wowlab_core.cli._cmd_addons import (
+        _SOURCES_UPDATE as _SOURCES_UPDATE,
+    )
+    from wowlab_core.cli._cmd_addons import (
         _UI_ESCAPE as _UI_ESCAPE,
     )
     from wowlab_core.cli._cmd_addons import (
@@ -503,10 +526,22 @@ if TYPE_CHECKING:
         _check_toc_lines as _check_toc_lines,
     )
     from wowlab_core.cli._cmd_addons import (
+        _scope_lines as _scope_lines,
+    )
+    from wowlab_core.cli._cmd_addons import (
+        _source_date as _source_date,
+    )
+    from wowlab_core.cli._cmd_addons import (
+        _toc_words as _toc_words,
+    )
+    from wowlab_core.cli._cmd_addons import (
         _TocRole as _TocRole,
     )
     from wowlab_core.cli._cmd_addons import (
         _ui_text as _ui_text,
+    )
+    from wowlab_core.cli._cmd_addons import (
+        _wowup_record_words as _wowup_record_words,
     )
     from wowlab_core.cli._cmd_addons import (
         addons_check as addons_check,
@@ -719,6 +754,9 @@ if TYPE_CHECKING:
         CharKeptRow as CharKeptRow,
     )
     from wowlab_core.cli._cmd_char import (
+        CharLinkRow as CharLinkRow,
+    )
+    from wowlab_core.cli._cmd_char import (
         CharListFlavor as CharListFlavor,
     )
     from wowlab_core.cli._cmd_char import (
@@ -848,6 +886,9 @@ if TYPE_CHECKING:
         _kept_rows as _kept_rows,
     )
     from wowlab_core.cli._cmd_char import (
+        _link_row as _link_row,
+    )
+    from wowlab_core.cli._cmd_char import (
         _Listing as _Listing,
     )
     from wowlab_core.cli._cmd_char import (
@@ -885,6 +926,9 @@ if TYPE_CHECKING:
     )
     from wowlab_core.cli._cmd_char import (
         _row_words as _row_words,
+    )
+    from wowlab_core.cli._cmd_char import (
+        _saved_links as _saved_links,
     )
     from wowlab_core.cli._cmd_char import (
         _say_char_binds as _say_char_binds,
@@ -993,6 +1037,54 @@ if TYPE_CHECKING:
     )
     from wowlab_core.cli._cmd_char import (
         char_twink as char_twink,
+    )
+    from wowlab_core.cli._cmd_charlink import (
+        CharLinkChangeReport as CharLinkChangeReport,
+    )
+    from wowlab_core.cli._cmd_charlink import (
+        CharLinkListReport as CharLinkListReport,
+    )
+    from wowlab_core.cli._cmd_charlink import (
+        CharLinkRefused as CharLinkRefused,
+    )
+    from wowlab_core.cli._cmd_charlink import (
+        LinkCharacterOpt as LinkCharacterOpt,
+    )
+    from wowlab_core.cli._cmd_charlink import (
+        LinkDryRunOpt as LinkDryRunOpt,
+    )
+    from wowlab_core.cli._cmd_charlink import (
+        _link_folder_gone as _link_folder_gone,
+    )
+    from wowlab_core.cli._cmd_charlink import (
+        _link_key as _link_key,
+    )
+    from wowlab_core.cli._cmd_charlink import (
+        _link_part as _link_part,
+    )
+    from wowlab_core.cli._cmd_charlink import (
+        _link_read as _link_read,
+    )
+    from wowlab_core.cli._cmd_charlink import (
+        _link_shown as _link_shown,
+    )
+    from wowlab_core.cli._cmd_charlink import (
+        _link_who as _link_who,
+    )
+    from wowlab_core.cli._cmd_charlink import (
+        _link_write as _link_write,
+    )
+    from wowlab_core.cli._cmd_charlink import (
+        char_link_forget as char_link_forget,
+    )
+    from wowlab_core.cli._cmd_charlink import (
+        char_link_list as char_link_list,
+    )
+    from wowlab_core.cli._cmd_charlink import (
+        char_link_set as char_link_set,
+    )
+    from wowlab_core.cli._cmd_charlink import (
+        link_app as link_app,
     )
     from wowlab_core.cli._cmd_charmodel import (
         _AS_OF_LOOK as _AS_OF_LOOK,
@@ -1768,6 +1860,12 @@ if TYPE_CHECKING:
     from wowlab_core.cli._cmd_install import (
         install_show as install_show,
     )
+    from wowlab_core.cli._cmd_live import (
+        LiveRecapReport as LiveRecapReport,
+    )
+    from wowlab_core.cli._cmd_live import (
+        live_recap as live_recap,
+    )
     from wowlab_core.cli._cmd_log import (
         _BATCHES as _BATCHES,
     )
@@ -2080,6 +2178,117 @@ if TYPE_CHECKING:
     from wowlab_core.cli._cmd_looks import (
         looks_show as looks_show,
     )
+    from wowlab_core.cli._cmd_lookup import (
+        _FACTIONS as _FACTIONS,
+    )
+    from wowlab_core.cli._cmd_lookup import (
+        _LOOKUP_KIND_WORDS as _LOOKUP_KIND_WORDS,
+    )
+    from wowlab_core.cli._cmd_lookup import (
+        _NOTE_CHANCE as _NOTE_CHANCE,
+    )
+    from wowlab_core.cli._cmd_lookup import (
+        _NOTE_POINTS as _NOTE_POINTS,
+    )
+    from wowlab_core.cli._cmd_lookup import (
+        _NOTE_SOURCE as _NOTE_SOURCE,
+    )
+    from wowlab_core.cli._cmd_lookup import (
+        _SHOWN as _SHOWN,
+    )
+    from wowlab_core.cli._cmd_lookup import (
+        LookupHitReport as LookupHitReport,
+    )
+    from wowlab_core.cli._cmd_lookup import (
+        LookupReport as LookupReport,
+    )
+    from wowlab_core.cli._cmd_lookup import (
+        _caveat as _caveat,
+    )
+    from wowlab_core.cli._cmd_lookup import (
+        _chance as _chance,
+    )
+    from wowlab_core.cli._cmd_lookup import (
+        _fetch as _fetch,
+    )
+    from wowlab_core.cli._cmd_lookup import (
+        _heading as _heading,
+    )
+    from wowlab_core.cli._cmd_lookup import (
+        _hit_list as _hit_list,
+    )
+    from wowlab_core.cli._cmd_lookup import (
+        _item as _item,
+    )
+    from wowlab_core.cli._cmd_lookup import (
+        _item_lines as _item_lines,
+    )
+    from wowlab_core.cli._cmd_lookup import (
+        _levels as _levels,
+    )
+    from wowlab_core.cli._cmd_lookup import (
+        _matches as _matches,
+    )
+    from wowlab_core.cli._cmd_lookup import (
+        _notes as _notes,
+    )
+    from wowlab_core.cli._cmd_lookup import (
+        _npc as _npc,
+    )
+    from wowlab_core.cli._cmd_lookup import (
+        _npc_lines as _npc_lines,
+    )
+    from wowlab_core.cli._cmd_lookup import (
+        _object as _object,
+    )
+    from wowlab_core.cli._cmd_lookup import (
+        _object_lines as _object_lines,
+    )
+    from wowlab_core.cli._cmd_lookup import (
+        _percent as _percent,
+    )
+    from wowlab_core.cli._cmd_lookup import (
+        _places as _places,
+    )
+    from wowlab_core.cli._cmd_lookup import (
+        _point as _point,
+    )
+    from wowlab_core.cli._cmd_lookup import (
+        _quest as _quest,
+    )
+    from wowlab_core.cli._cmd_lookup import (
+        _quest_level as _quest_level,
+    )
+    from wowlab_core.cli._cmd_lookup import (
+        _quest_lines as _quest_lines,
+    )
+    from wowlab_core.cli._cmd_lookup import (
+        _quest_zone as _quest_zone,
+    )
+    from wowlab_core.cli._cmd_lookup import (
+        _read_words as _read_words,
+    )
+    from wowlab_core.cli._cmd_lookup import (
+        _report_hit as _report_hit,
+    )
+    from wowlab_core.cli._cmd_lookup import (
+        _several_words as _several_words,
+    )
+    from wowlab_core.cli._cmd_lookup import (
+        _spots as _spots,
+    )
+    from wowlab_core.cli._cmd_lookup import (
+        _table_label as _table_label,
+    )
+    from wowlab_core.cli._cmd_lookup import (
+        _where as _where,
+    )
+    from wowlab_core.cli._cmd_lookup import (
+        _zone as _zone,
+    )
+    from wowlab_core.cli._cmd_lookup import (
+        lookup_cmd as lookup_cmd,
+    )
     from wowlab_core.cli._cmd_macros import (
         _FIX_KEPT as _FIX_KEPT,
     )
@@ -2343,6 +2552,84 @@ if TYPE_CHECKING:
     )
     from wowlab_core.cli._cmd_snap import (
         snap_verify as snap_verify,
+    )
+    from wowlab_core.cli._cmd_spy import (
+        _SPY_AS_OF as _SPY_AS_OF,
+    )
+    from wowlab_core.cli._cmd_spy import (
+        _SPY_NOTES as _SPY_NOTES,
+    )
+    from wowlab_core.cli._cmd_spy import (
+        _SPY_RESULT_WORDS as _SPY_RESULT_WORDS,
+    )
+    from wowlab_core.cli._cmd_spy import (
+        _SPY_TABLE_WORDS as _SPY_TABLE_WORDS,
+    )
+    from wowlab_core.cli._cmd_spy import (
+        _SPY_TAG_WORDS as _SPY_TAG_WORDS,
+    )
+    from wowlab_core.cli._cmd_spy import (
+        SpyFileRow as SpyFileRow,
+    )
+    from wowlab_core.cli._cmd_spy import (
+        SpyListReport as SpyListReport,
+    )
+    from wowlab_core.cli._cmd_spy import (
+        SpyShowReport as SpyShowReport,
+    )
+    from wowlab_core.cli._cmd_spy import (
+        SpySort as SpySort,
+    )
+    from wowlab_core.cli._cmd_spy import (
+        _spy_character_matches as _spy_character_matches,
+    )
+    from wowlab_core.cli._cmd_spy import (
+        _spy_date as _spy_date,
+    )
+    from wowlab_core.cli._cmd_spy import (
+        _spy_encounter_line as _spy_encounter_line,
+    )
+    from wowlab_core.cli._cmd_spy import (
+        _spy_errors as _spy_errors,
+    )
+    from wowlab_core.cli._cmd_spy import (
+        _spy_flavors as _spy_flavors,
+    )
+    from wowlab_core.cli._cmd_spy import (
+        _spy_label as _spy_label,
+    )
+    from wowlab_core.cli._cmd_spy import (
+        _spy_line as _spy_line,
+    )
+    from wowlab_core.cli._cmd_spy import (
+        _spy_place as _spy_place,
+    )
+    from wowlab_core.cli._cmd_spy import (
+        _spy_player_lines as _spy_player_lines,
+    )
+    from wowlab_core.cli._cmd_spy import (
+        _spy_read as _spy_read,
+    )
+    from wowlab_core.cli._cmd_spy import (
+        _spy_row as _spy_row,
+    )
+    from wowlab_core.cli._cmd_spy import (
+        _spy_sorted as _spy_sorted,
+    )
+    from wowlab_core.cli._cmd_spy import (
+        _spy_who as _spy_who,
+    )
+    from wowlab_core.cli._cmd_spy import (
+        _spy_words as _spy_words,
+    )
+    from wowlab_core.cli._cmd_spy import (
+        _SpyRead as _SpyRead,
+    )
+    from wowlab_core.cli._cmd_spy import (
+        spy_list as spy_list,
+    )
+    from wowlab_core.cli._cmd_spy import (
+        spy_show as spy_show,
     )
     from wowlab_core.cli._cmd_sv import (
         _ABSENT_NOTE as _ABSENT_NOTE,
@@ -2789,6 +3076,9 @@ if TYPE_CHECKING:
         _click_wording as _click_wording,
     )
     from wowlab_core.cli._common import (
+        _client_facts as _client_facts,
+    )
+    from wowlab_core.cli._common import (
         _client_names as _client_names,
     )
     from wowlab_core.cli._common import (
@@ -3092,6 +3382,9 @@ if TYPE_CHECKING:
         install_app as install_app,
     )
     from wowlab_core.cli._common import (
+        live_app as live_app,
+    )
+    from wowlab_core.cli._common import (
         log_app as log_app,
     )
     from wowlab_core.cli._common import (
@@ -3111,6 +3404,9 @@ if TYPE_CHECKING:
     )
     from wowlab_core.cli._common import (
         snap_app as snap_app,
+    )
+    from wowlab_core.cli._common import (
+        spy_app as spy_app,
     )
     from wowlab_core.cli._common import (
         sv_app as sv_app,

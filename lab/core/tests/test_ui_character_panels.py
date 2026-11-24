@@ -39,6 +39,7 @@ from test_ui_character import (
     NEWER,
     OLDER,
     PICK_READS,
+    PLANS,
     READS,
     _gear_params,
     _local,
@@ -81,7 +82,8 @@ function panelsView() {
     keysCount: one(keys, "char-count"),
     keyRows: keys.all().filter((e) => e.tagName === "tr" && has(e, "key-row")).map((tr) => ({
       own: tr.children.map((c) => c._text), full: tr.children.map((c) => c.textContent),
-      disagrees: has(tr, "key-disagrees"), slotTitle: tr.children[2].title, sourceTitle: tr.children[4].title })),
+      disagrees: has(tr, "key-disagrees"), notClient: has(tr, "key-not-client"),
+      slotTitle: tr.children[2].title, sourceTitle: tr.children[4].title })),
     keysNone: find(keys, "char-none").map((e) => e.textContent),
     keysHeads: keys.all().filter((e) => e.tagName === "h4").map((e) => e.textContent),
     unreached: find(keys, "char-slots").map((ul) => ul.children.map((li) => li.textContent)),
@@ -96,6 +98,7 @@ function panelsView() {
       name: one(card, "macro-name"),
       facts: one(card, "macro-facts"),
       lines: find(card, "macro-line").map((e) => e.textContent),
+      flagged: find(card, "macro-line-finding").map((e) => ({ text: e.textContent, title: e.title })),
       reason: one(card, "macro-reason"),
       slots: find(card, "macro-slots").flatMap((ul) => ul.children.map((li) => ({
         text: li._text, keys: li.all().filter((x) => x.tagName === "li").map((x) => x.textContent) }))),
@@ -310,7 +313,8 @@ def _kept(report: dict[str, Any], needle: str, disagreeing: bool) -> list[dict[s
     for row in report["keys"]:
         if disagreeing and not row["disagrees"]:
             continue
-        hay = "\n".join([row["key"], row["command"], row["does"], *row["sources"]]).lower()
+        words = [row["key"], row["command"], row["command_label"] or "", row["does"]]
+        hay = "\n".join([*words, *row["sources"]]).lower()
         if needle.strip().lower() in hay:
             out.append(row)
     return out
@@ -337,12 +341,21 @@ def test_the_keys_panel_draws_the_rows_of_char_binds_cross_capture(
     assert [r["own"] for r in view["keyRows"]] == [_key_cells(k) for k in report["keys"]]
     for drawn, row in zip(view["keyRows"], report["keys"], strict=True):
         assert drawn["disagrees"] is row["disagrees"] is False
+        # M22-18: the game's own name under the command; an addon's command marked.
+        assert drawn["full"][1] == row["command"] + (row["command_label"] or "")
+        assert drawn["notClient"] is (row["client_command"] is False)
         assert drawn["slotTitle"] == (row["page_note"] or "")
         # The agreement in the model's word, under the sources.
         assert drawn["full"][4] == _sources(row) + row["agreement"]
         assert drawn["sourceTitle"] == (row["note"] or "")
     assert view["keysCount"] == "131 keys."
     assert view["keysCannot"] == []
+    # The record's one addon command (ITEMTREE_OPEN, not the game's) is the
+    # one row marked; the game's own commands are named in its words.
+    marked = [r["own"][1] for r in view["keyRows"] if r["notClient"]]
+    assert marked == ["ITEMTREE_OPEN"]
+    world = next(r for r in view["keyRows"] if r["own"][1] == "TOGGLEWORLDMAP")
+    assert world["full"][1] == "TOGGLEWORLDMAPToggle World Map Pane (Interface Panel)"
     # The files and the record, with their times.
     facts = _facts(view["keysFacts"])
     assert facts["Record"] == (
@@ -698,6 +711,40 @@ def test_findings_only_with_no_finding_says_so_constructed(
     assert view["macrosNone"] == ["No macro here has a finding."]
 
 
+def test_a_body_line_a_finding_is_about_is_marked_constructed(
+    server: Any, picked: Path, tmp_path: Path
+) -> None:
+    """M22-18: a body line a finding names (an addon's `/command`, unbalanced
+    brackets) is marked, with the finding's words as its tooltip; the other
+    lines, and a finding about the macro as a whole, mark nothing."""
+    _put_macros(
+        picked,
+        _macro(
+            1, "Lab marks", "#showtooltip", "/labaddoncmd go", "/cast [mod:shift Fear", "/say ok"
+        ),
+        _macro(2, "Lab marks", "/say lab clean"),
+    )
+    scenario = _scenario(server, [{"char_tab": True}, {"panels": True}], [PICKED])
+    out = _drive(tmp_path / "node", scenario)
+    report = _run_report(scenario, "macros", PICKED)
+    first, second = report["macros"]
+    assert [f["rule"] for f in first["findings"]] == ["unbalanced-brackets", "unknown-command"]
+    assert [f["rule"] for f in second["findings"]] == ["duplicate-name"]  # the header line
+    by_line = {f["line"]: f["detail"] for f in first["findings"]}
+    cards = out["steps"][1]["macros"]
+    assert cards[0]["flagged"] == [
+        {"text": "/labaddoncmd go", "title": by_line[first["line"] + 2]},
+        {"text": "/cast [mod:shift Fear", "title": by_line[first["line"] + 3]},
+    ]
+    assert by_line[first["line"] + 2].startswith(
+        "body line 2: '/labaddoncmd' is not a slash command"
+    )
+    assert cards[1]["flagged"] == []
+    assert f"finding unknown-command (line {first['line'] + 2}): " in "\n".join(
+        cards[0]["findings"]
+    )
+
+
 # ─── player text is text ─────────────────────────────────────────────────────
 
 
@@ -935,15 +982,23 @@ def test_the_panels_request_only_read_commands_cross_capture(
     scenario = _scenario(server, steps, [PICKED, NEWER])
     out = _drive(tmp_path / "node", scenario)
     asked = _tab_requests(out, 0)
-    assert {tuple(b["command"]) for b in asked} == READS
+    assert {tuple(b["command"]) for b in asked} - PLANS == READS
     for body in asked:
-        if body["command"] != ["char", "list"]:
+        if tuple(body["command"]) in PLANS:  # the pick's params and the button's own
+            mine = {
+                k: v for k, v in body["params"].items() if k in ("character", "account", "flavor")
+            }
+            assert mine in (_gear_params(PICKED), _gear_params(NEWER)), body
+        elif body["command"] != ["char", "list"]:
             assert body["params"] in (_gear_params(PICKED), _gear_params(NEWER)), body
     for request in out["requests"]:
         if request["body"] is None:
             assert request["url"].startswith("/api/commands"), request
         else:
-            assert tuple(request["body"]["command"]) in READS | {("tree",)}, request
+            # M21-03: the saved-links panel's buttons run a plan, never a
+            # confirmed run (no token).
+            assert tuple(request["body"]["command"]) in READS | PLANS | {("tree",)}, request
+            assert "confirm" not in request["body"], request
     offered = {tuple(c["path"]): c for c in scenario["commands"]["commands"]}
     for path in READS:
         assert offered[path]["excluded"] is None and not offered[path].get("confirm"), path
@@ -978,14 +1033,23 @@ def test_the_tab_offers_no_edit_control_and_says_so() -> None:
         named.append((tag, ident.group(1), kind.group(1) if kind else ""))
     named.sort()
     # Since M22-06, the Twink panel's two pickers and Show the gaps, which
-    # run the read `char twink` (test_ui_twink.py).
+    # run the read `char twink` (test_ui_twink.py). Since M21-03, the saved
+    # links' address field, Show the plan, Confirm and the three Forget
+    # buttons: they change only wowlab's own list of links, never the game
+    # folder, through the confirm step (test_ui_links.py).
     assert named == [
         ("button", "char-back", "button"),
+        ("button", "char-saved-confirm", "button"),
+        ("button", "char-saved-ft-build-forget", "button"),
+        ("button", "char-saved-ft-profile-forget", "button"),
+        ("button", "char-saved-plan", "button"),
+        ("button", "char-saved-wcl-report-forget", "button"),
         ("button", "char-sim-button", "button"),
         ("button", "char-twink-show", "button"),
         ("input", "char-keys-disagree", "checkbox"),
         ("input", "char-keys-filter", "search"),
         ("input", "char-macros-findings", "checkbox"),
+        ("input", "char-saved-address", "text"),
         ("select", "char-picker", ""),
         ("select", "char-twink-bracket", ""),
         ("select", "char-twink-weights", ""),
@@ -1001,7 +1065,16 @@ def test_the_tab_offers_no_edit_control_and_says_so() -> None:
     # The intro names the four commands.
     intro = re.search(r'<p class="intro">(.*?)</p>', section, re.S)
     assert intro is not None
-    for command in ("char list", "char gear", "char binds", "char macros"):
+    # M21-03: and the two that change wowlab's own links.json, said as such.
+    assert "never the game folder" in intro.group(1)
+    for command in (
+        "char list",
+        "char gear",
+        "char binds",
+        "char macros",
+        "char link set",
+        "char link forget",
+    ):
         assert f"<code>wowlab {command}</code>" in intro.group(1), command
 
 

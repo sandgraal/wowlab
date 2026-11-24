@@ -83,13 +83,13 @@ from urllib.parse import urlencode, urlsplit
 import platformdirs
 from pydantic import BaseModel, ConfigDict
 
-from wowlab_core import dressing, gear, hotfix, snapshot
+from wowlab_core import gear, hotfix, links, snapshot
 
 __all__ = [
     "CONFIG_FILE",
     "HOTFIX_TABLES",
+    "PLANNER_SITE",
     "TABLES",
-    "WOWHEAD_BONUS",
     "ClassGear",
     "Planner",
     "TwinkCandidate",
@@ -132,10 +132,8 @@ TABLES: tuple[str, ...] = (
 HOTFIX_TABLES: tuple[str, ...] = ("Item", "ItemSparse")
 """Of `TABLES`, those the game's hotfix cache is laid over (M22-23)."""
 
-WOWHEAD_BONUS = False
-"""Whether a Wowhead item address carries `?bonus=<suffix>`: off until the
-owner's check (M21-O2) confirms Wowhead reads it; M21-03's link builder
-takes this over."""
+PLANNER_SITE = "forevertwinking"
+"""The `link_sites.toml` site the planner's origin must be (M21-03)."""
 TOP_DEFAULT = 5
 TOP_MAX = 20
 LEVEL_MAX = 1000
@@ -824,21 +822,12 @@ def _admits(mask: int, row_id: int | None) -> bool:
 
 
 def wowhead_link(item_id: int, bonus: int | None, version: str | None) -> str | None:
-    """The item's page on the site `dressing_sites.toml` names, in the room
-    of the client's version (`/forever/item=<id>`), with `?bonus=<id>` for a
-    suffix [verify]; None when no room covers the version."""
-    try:
-        sites = dressing.load_sites()
-    except dressing.SitesError:
-        return None
-    room = dressing.room_for(sites, version)
-    if room is None:
-        return None
-    base = sites.rooms[room].removesuffix("/dressing-room")
-    url = f"{sites.site.origin}{base}/item={item_id}"
-    if bonus is None or not WOWHEAD_BONUS:
-        return url
-    return f"{url}?{urlencode({'bonus': bonus})}"
+    """The item's Wowhead page in the room of the client's version, from
+    the shared link builder (`links.wowhead_item`, M21-03), which adds
+    `?bonus=<id>` for a suffix only while `links.WOWHEAD_BONUS` is True;
+    None when there is no link."""
+    made = links.wowhead_item(item_id, version=version, bonus=bonus)
+    return made.url if isinstance(made, links.Link) else None
 
 
 def planner_link(
@@ -853,6 +842,15 @@ def planner_link(
     if race is None:
         which = "the record has no race" if race_id is None else f"race id {race_id}"
         return None, f"{CONFIG_FILE} has no planner word for {which}"
+    # The origin must be one the page may link to (M21-03): the shipped
+    # `link_sites.toml`'s ForeverTwinking site. A player's own twink.toml
+    # may change the path and the words, not where the link goes.
+    try:
+        allowed = links.origins()
+    except links.LinkSitesError:
+        allowed = {}
+    if planner.origin != allowed.get(PLANNER_SITE):
+        return None, f"{planner.origin} is not a site wowlab links to"
     query = urlencode({"class": klass, "race": race, "bracket": f"l{bracket}"})
     return f"{planner.origin}{planner.path}?{query}", None
 

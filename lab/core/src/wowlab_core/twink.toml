@@ -407,7 +407,9 @@ melee_hit_rating = 0.8
 # The "Plan on ForeverTwinking" address: origin and path, then
 # ?class=<class word>&race=<race word>&bracket=l<cap>. The shape is from the
 # owner's browser history (?class=warlock&race=undead&bracket=l29); the
-# words for the other classes and races are [verify].
+# words for the other classes and races are [verify]. The origin must be
+# link_sites.toml's ForeverTwinking site, the page's allowlist (M21-03): one
+# a player's own twink.toml names elsewhere gets no link.
 origin = "https://forevertwinking.com"
 path = "/planner"
 

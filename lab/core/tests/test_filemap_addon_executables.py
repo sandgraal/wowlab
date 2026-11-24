@@ -24,6 +24,7 @@ from pathlib import Path
 import platformdirs
 import psutil
 import pytest
+from _user_dirs import no_wowup_list
 from typer.testing import CliRunner
 
 from wowlab_core import cli, filemap, guard, install
@@ -207,6 +208,7 @@ runner = CliRunner()
 @pytest.fixture
 def flavor(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     redirected = tmp_path / "userdata"
+    no_wowup_list(monkeypatch, tmp_path / "wowup")
     monkeypatch.setattr(platformdirs, "user_data_path", lambda *a, **k: redirected / "wowlab")
     monkeypatch.setattr(psutil, "process_iter", lambda *a, **k: iter(()))
     root = tmp_path / "World of Warcraft"

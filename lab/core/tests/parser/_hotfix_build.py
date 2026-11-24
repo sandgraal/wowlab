@@ -1,7 +1,7 @@
 """Constructed hotfix caches for the tests (M22-23; L8: constructed, labelled
 by every test that uses them).
 
-`cache` writes the bytes of an `XFTH` file as `docs/LAB_FORMATS.md` §13
+`cache` writes the bytes of an `XFTH` file as `docs/LAB_FORMATS.md` §16
 describes it; `encode_row` writes one row's data the way the client does
 (fields in layout order at their widths, strings ending in a zero byte), the
 inverse of `hotfix.decode_row`, so a derived row (values read from a real

@@ -253,7 +253,7 @@ def test_an_item_with_suffixes_is_scored_per_suffix(served: Tables, root: Path) 
     assert (rod.item_id, rod.name) == (15935, "Durable Rod")
     assert rod.suffix is not None
     assert (rod.suffix.id, rod.suffix.name) == (12761, "of Shadow Wrath")
-    # No `?bonus=` until Wowhead is confirmed to read it (twink.WOWHEAD_BONUS).
+    # No `?bonus=` until Wowhead is confirmed to read it (links.WOWHEAD_BONUS, M21-03).
     assert rod.wowhead == "https://www.wowhead.com/forever/item=15935"
     assert rod.score == 10.0 and rod.suffix.score == 10.0
     others = rod.other_suffixes
