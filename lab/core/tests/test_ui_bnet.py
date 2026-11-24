@@ -165,7 +165,7 @@ def test_without_an_api_client_the_panel_says_how_and_offers_no_fetch_constructe
     assert shown["newRequests"][0]["body"] == {"command": SHOW, "params": CHAR_PARAMS}
     assert _blizzard_bodies(out) == [{"command": SHOW, "params": CHAR_PARAMS}]
     assert shown["fetchHidden"] is True
-    assert shown["status"].startswith("Nothing fetched from Blizzard for Sandgraal Rizzen yet.")
+    assert shown["status"].startswith("Nothing fetched from the armory for Sandgraal Rizzen yet.")
     assert bnet.SETUP_WORDS in shown["status"]
     assert "develop.battle.net" in shown["status"] and "wowlab blizzard login" in shown["status"]
     assert shown["lines"] == [] and shown["gear"] == []
@@ -340,15 +340,19 @@ def test_a_crew_player_gets_the_panel_on_a_click_only_constructed(
 
 def _section() -> str:
     script = (_TEMPLATES / "page.js").read_text(encoding="utf-8")
-    start = script.index("// ─── Blizzard profiles (M22-11) ───")
+    start = script.index("// ─── armory profiles (M22-11) ───")
     return script[start : script.index("// ─── the account hub", start)]
 
 
 def test_the_panels_run_only_blizzard_show_and_fetch_and_draw_text_only() -> None:
     body = _section()
     code = "\n".join(line for line in body.splitlines() if not line.strip().startswith("//"))
-    assert re.findall(r'runJson\(\["([a-z]+)", ([a-z"]+)\]', code) == [("blizzard", "verb")]
-    assert '"show"' in code and '"fetch"' in code
+    assert re.findall(r"runJson\(\[([^\]]*)\]", code) == [
+        '"blizzard", "fetch"',
+        '"blizzard", "show"',
+    ]
+    # The file map's words stay out of the script (test_ui_explorer.py).
+    assert "Blizzard" not in code
     for sink in (
         "innerHTML",
         "outerHTML",

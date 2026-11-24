@@ -1548,7 +1548,7 @@
     // The Twink panel's run is the reader's choice (M22-06): kept until then.
     twink.params = Object.assign({}, params);
     byId("char-twink-show").disabled = false;
-    // The Blizzard profile panel (M22-11): remembered, run only on a click.
+    // The armory profile panel (M22-11): remembered, run only on a click.
     bnetFor("char", entry.label, flavor ? { flavor: flavor } : {});
     for (const load of [loadGear, loadKeys, loadMacros, loadHistory]) {
       await load(entry, params, seq);
@@ -3389,12 +3389,12 @@
 
   byId("looks-write").addEventListener("click", () => writeLooks());
 
-  // ─── Blizzard profiles (M22-11) ───
+  // ─── armory profiles (M22-11) ───
   // One panel on the Character page and one on a crew player, each its own
   // ids (`bnet-char-*`, `bnet-crew-*`). Opening a character or a player
   // only remembers the name: Show the saved profile runs `blizzard show`
-  // (what earlier fetches saved; no request to Blizzard), and Fetch from
-  // Blizzard, offered only when an API client is kept, runs `blizzard
+  // (what earlier fetches saved; no request to the armory), and the Fetch
+  // button, offered only when an API client is kept, runs `blizzard
   // fetch`. Nothing runs on a pick, a timer or at the start. Every word
   // about the profile is the report's, drawn as text; the portrait's
   // address is shown as text, never loaded (the slot `bnet-*-portrait`
@@ -3469,7 +3469,7 @@
     const p = report.profile && typeof report.profile === "object" ? report.profile : null;
     const who = bnetText(report.name);
     if (!p) {
-      const none = "Nothing fetched from Blizzard for " + who + " yet.";
+      const none = "Nothing fetched from the armory for " + who + " yet.";
       bnetSay(where, configured ? none : none + " " + bnetText(report.setup), false);
       return;
     }
@@ -3520,8 +3520,11 @@
     if (!state.params) return;
     const seq = ++state.seq;
     const name = visible(state.name);
-    bnetSay(where, verb === "fetch" ? "Asking Blizzard for " + name + "…" : "Reading what was saved for " + name + "…", false);
-    const reply = await runJson(["blizzard", verb], Object.assign({}, state.params), verb === "fetch");
+    const params = Object.assign({}, state.params);
+    bnetSay(where, verb === "fetch" ? "Asking the armory for " + name + "…" : "Reading what was saved for " + name + "…", false);
+    const reply = verb === "fetch"
+      ? await runJson(["blizzard", "fetch"], params, true)
+      : await runJson(["blizzard", "show"], params);
     if (seq !== state.seq) return;
     const report = reply.data;
     if (!report || typeof report !== "object" || typeof report.configured !== "boolean") {
@@ -4436,7 +4439,7 @@
     byId("crew-note-codes").hidden = true;
     clearPlayerMatches();
     byId("crew-player-title").textContent = visible(key);
-    // The Blizzard profile panel (M22-11): remembered, run only on a click.
+    // The armory profile panel (M22-11): remembered, run only on a click.
     bnetFor("crew", key, crew.report && hubStr(crew.report.flavor_folder) ? { flavor: crew.report.flavor_folder } : {});
     const lines = byId("crew-player-lines");
     lines.replaceChildren(make("li", "Reading…"));
