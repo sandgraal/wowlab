@@ -488,6 +488,8 @@ The owner asked whether `Data/` could also be edited. The conductor recommended 
 - The reader is the first module whose correctness cannot be shown in CI on real data. The derived fixtures carry that weight; the conductor keeps the live tests on the owner's TODO list after any CASC change, as `make test-parser` is for `luadata.py`.
 - The first wave on this base (§17) is data-only: no file from the archives reaches a browser until the viewer ADR (ADR-0034) is built on.
 
+
+**Note (2026-11-23, M22-23; owner decision in session, "Yes, read it", after the conductor asked whether wowlab may read item rows from the client's local hotfix cache):** the exclusion of `DBCache.bin` above is about encryption keys only. The Lab may read the client's own hotfix cache (`Cache/ADB/<locale>/DBCache.bin`, GLOSSARY "Hotfix cache") read-only, as data, to overlay the rows of game tables it already uses (Item and ItemSparse first): only when the cache's build equals the tables' build (ADR-0022), never writing it, never decrypting anything, and never reading or using a key from it. It is graded like the formats above: constructed files, derived fixtures (what was read, never the bytes), and an owner-run `@live` test. Ticket M22-23.
 ---
 
 ## ADR-0034 — A pinned three.js, vendored inside the package and served by the UI, draws the character in `wowlab ui`
