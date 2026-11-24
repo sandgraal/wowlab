@@ -426,6 +426,8 @@ def read_commands(root: Path, tmp_path: Path) -> list[list[str]]:
         # left out and the line says how to get them.
         ["char", "sim-export"],
         ["char", "sim-export", "--notes"],
+        # M21-03: nothing saved in the sandbox, so it says so.
+        ["char", "link", "list"],
         *[
             [*cmd, "--character", c]
             for c in chars
@@ -527,6 +529,9 @@ NOT_RUN = {
     ("crew", "rate"): "writes into the install",
     ("crew", "note"): "writes into the install",
     ("undo",): "writes into the install",
+    # M21-03: test_cli_char_link.py runs them and checks their text.
+    ("char", "link", "set"): "writes into wowlab's user data directory",
+    ("char", "link", "forget"): "writes into wowlab's user data directory",
     ("ui",): "runs a local server",
 }
 

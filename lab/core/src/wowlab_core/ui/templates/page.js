@@ -56,15 +56,12 @@
   const NO_SESSION =
     "This page needs the link wowlab ui opened. Open that link again, or, if wowlab ui was stopped, start it again.";
   const byId = (id) => document.getElementById(id);
-  // The one outside origin the page may link to (M15-02; ADR-0019's and
-  // ADR-0031's amendments of 2026-10-19): the dressing room `char gear --json`
-  // builds an address for, as `dressing_sites.toml` names it. The page never
-  // requests it; a link to it opens in the player's browser on a click.
-  const DRESSING_ORIGIN = "https://www.wowhead.com";
-  // The twink panel's planner (M22-06): the other outside origin, checked the
-  // same way before the Twink panel's "Plan on ForeverTwinking" link takes an
-  // address `char twink --json` built. Its Wowhead links use DRESSING_ORIGIN.
-  const PLANNER_ORIGIN = "https://forevertwinking.com";
+  // The outside origins the page may link to, by site key (M21-03; ADR-0019's
+  // amendments of 2026-10-19 and 2026-11-23): `link_sites.toml`'s sites, sent
+  // by the server with the command list, never fetched from outside. Empty
+  // until then, so no outside link is drawn before it. The page never
+  // requests any of them; a link opens in the player's browser on a click.
+  const linkOrigins = new Map();
   let current = null;
   let inputs = [];
   // The plan the server offered Confirm for: its command, the parameters it
@@ -1565,6 +1562,7 @@
     for (const id of CHAR_BOXES) byId(id).replaceChildren();
     clearDressing();
     clearSim();
+    clearSaved();
     character.params = null;
     clearTwink();
     character.kept = null;
@@ -1607,6 +1605,7 @@
     drawGear(report);
     drawDressing(report.dressing);
     byId("char-sim-button").hidden = false;
+    drawSaved(report.saved_links, params);
   }
 
   // One fact; `title`, when given, is the exact value behind the one shown.
@@ -1996,18 +1995,36 @@
     box.appendChild(list);
   }
 
-  // ─── the dressing-room link (M15-02, §16.3's amendment of 2026-10-19) ───
-  // `dressing` is `{url, site, note}` or `{items, note}`. The address becomes
-  // the static link's href only when it parses, is https: and its origin is
-  // exactly DRESSING_ORIGIN, and only as the parser writes it back (no
-  // userinfo, nothing the parser would change); anything else leaves the
-  // link hidden with no href, and says so. The fallback is the item ids as
-  // text, with a Copy button.
-  // The same check for the Twink panel's links (M22-06), against the origin
-  // each one may name: DRESSING_ORIGIN for Wowhead, PLANNER_ORIGIN for the
-  // planner. `origin` is always one of the two constants.
-  function outsideAddress(value, origin) {
-    if (typeof value !== "string") return null;
+  // ─── outside links (M21-03) ───
+  // The allowlist the server sent: each site key with its origin, kept only
+  // when the key is a plain word and the origin is an https: origin exactly
+  // as the URL parser writes it (no path, no port, no user name).
+  function takeLinkOrigins(given) {
+    linkOrigins.clear();
+    if (!given || typeof given !== "object" || Array.isArray(given)) return;
+    for (const site of Object.keys(given)) {
+      const origin = given[site];
+      if (!/^[a-z][a-z0-9_]{0,31}$/.test(site) || typeof origin !== "string") continue;
+      let parsed = null;
+      try {
+        parsed = new URL(origin);
+      } catch (_) {
+        continue;
+      }
+      if (parsed.protocol !== "https:" || parsed.origin !== origin) continue;
+      if (parsed.username !== "" || parsed.password !== "") continue;
+      linkOrigins.set(site, origin);
+    }
+  }
+
+  // The one check every outside link goes through: the address, when it
+  // parses, is https:, its origin is exactly the origin the allowlist gives
+  // the site it names, it has no user name or password, and the parser
+  // writes it back unchanged; else null, and the caller draws no link.
+  function outsideAddress(value, site) {
+    if (typeof value !== "string" || typeof site !== "string") return null;
+    const origin = linkOrigins.get(site);
+    if (typeof origin !== "string") return null;
     let parsed = null;
     try {
       parsed = new URL(value);
@@ -2019,14 +2036,21 @@
     return value;
   }
 
-  function dressingAddress(value) {
-    return outsideAddress(value, DRESSING_ORIGIN);
-  }
-
-  // The page's one URL sink: a static link of page.html given an address
-  // `outsideAddress` returned.
+  // The page's one URL sink: a static link of page.html (each opens in a new
+  // tab, `rel="noopener noreferrer"`) given an address `outsideAddress`
+  // returned.
   function pointLink(link, checked) {
     link.href = checked;
+  }
+
+  // ─── the dressing-room link (M15-02, §16.3's amendment of 2026-10-19) ───
+  // `dressing` is `{url, site, note}` or `{items, note}`. The address becomes
+  // the static link's href only when `outsideAddress` passes it for Wowhead,
+  // the site `dressing_sites.toml` names; anything else leaves the link
+  // hidden with no href, and says so. The fallback is the item ids as text,
+  // with a Copy button.
+  function dressingAddress(value) {
+    return outsideAddress(value, "wowhead");
   }
 
   function clearDressing() {
@@ -2075,6 +2099,176 @@
     ids.className = "dressing-ids";
     box.append(make("span", "Item ids: "), ids, copyButton(text, "Copy the item ids"));
     box.hidden = false;
+  }
+
+  // ─── addresses the player saved (M21-03) ───
+  // `char gear --json`'s `saved_links`: what `char link set` kept for this
+  // character (a ForeverTwinking page or build, a Warcraft Logs report),
+  // each in its own static link of page.html. An address that does not pass
+  // `outsideAddress` for its site is shown as plain text, never as a link.
+  // Adding or forgetting one runs `char link set` or `char link forget`:
+  // the plan first, then Confirm with the server's token, as the Crew tab's
+  // changes do. The address typed goes to the CLI as an argument and is
+  // checked there; nothing here reads it as a URL.
+  const SAVED_SLOTS = [
+    { site: "forevertwinking", kind: "profile", id: "char-saved-ft-profile" },
+    { site: "forevertwinking", kind: "build", id: "char-saved-ft-build" },
+    { site: "warcraftlogs", kind: "report", id: "char-saved-wcl-report" },
+  ];
+  const saved = { params: null, pending: null, seq: 0 };
+
+  // Not a live region: the tab's status line (`charSay`) is its only one.
+  function savedSay(text, isError) {
+    const node = byId("char-saved-status");
+    node.textContent = text;
+    node.classList.toggle("error", Boolean(isError));
+  }
+
+  function clearSavedConfirm() {
+    saved.pending = null;
+    byId("char-saved-confirm-box").hidden = true;
+    byId("char-saved-plan-lines").textContent = "";
+    byId("char-saved-plan-lines").hidden = true;
+    byId("char-saved-confirm-note").textContent = "";
+    const button = byId("char-saved-confirm");
+    button.hidden = true;
+    button.disabled = true;
+  }
+
+  function clearSavedSlots() {
+    for (const slot of SAVED_SLOTS) {
+      const link = byId(slot.id);
+      link.removeAttribute("href");
+      link.hidden = true;
+      byId(slot.id + "-text").textContent = "";
+      byId(slot.id + "-box").hidden = true;
+    }
+    byId("char-saved-none").hidden = false;
+  }
+
+  function clearSaved() {
+    saved.params = null;
+    saved.seq += 1;
+    clearSavedConfirm();
+    clearSavedSlots();
+    byId("char-saved-address").value = "";
+    savedSay("", false);
+    byId("char-saved").hidden = true;
+  }
+
+  // The character's saved addresses: one per slot, the first of each site
+  // and kind. `params` is the pick's (character, account, flavor).
+  function drawSaved(rows, params) {
+    clearSavedSlots();
+    saved.params = params && typeof params === "object" ? Object.assign({}, params) : null;
+    byId("char-saved").hidden = saved.params === null;
+    const list = Array.isArray(rows) ? rows.filter((r) => r && typeof r === "object") : [];
+    let any = false;
+    for (const slot of SAVED_SLOTS) {
+      const row = list.find((r) => r.site === slot.site && r.kind === slot.kind);
+      if (!row || typeof row.url !== "string") continue;
+      any = true;
+      byId(slot.id + "-box").hidden = false;
+      const checked = outsideAddress(row.url, slot.site);
+      if (checked === null) {
+        byId(slot.id + "-text").textContent = visible(row.url) + " (not shown as a link: it is not an address this page links to)";
+        continue;
+      }
+      const link = byId(slot.id);
+      pointLink(link, checked);
+      link.hidden = false;
+    }
+    byId("char-saved-none").hidden = any;
+  }
+
+  // The plan run of one change; Confirm is offered only when the server
+  // minted a token for it and the plan changes something.
+  async function savedPlan(command, extra) {
+    if (saved.params === null) return;
+    const seq = ++saved.seq;
+    clearSavedConfirm();
+    savedSay("Working out what would change…", false);
+    const params = withFlavor(command, Object.assign({}, saved.params, extra));
+    const reply = await postRun({ command: command, params: params });
+    if (seq !== saved.seq) return;
+    if (reply.error) {
+      savedSay(reply.error, true);
+      return;
+    }
+    const result = reply.result;
+    const offer = result.confirm && result.confirm.stage === "plan" ? result.confirm : null;
+    const token = offer && typeof offer.token === "string" && offer.token ? offer.token : null;
+    let report = null;
+    try {
+      report = JSON.parse(result.stdout);
+    } catch (_) {
+      // no report: the command's own words say why
+    }
+    if (!token || !report || report.changed !== true) {
+      const nothing = result.exit_code === 0 && Boolean(report) && report.changed === false;
+      const text = String(result.stderr || "").trim();
+      savedSay(nothing ? "Nothing would change: it is already so." : text ? shown(text) : "This change could not be planned.", !nothing);
+      return;
+    }
+    saved.pending = { command: command, params: params, token: token };
+    savedSay("", false);
+    const lines = Array.isArray(report.plan_lines) ? report.plan_lines.filter((l) => typeof l === "string") : [];
+    const planLines = byId("char-saved-plan-lines");
+    planLines.textContent = lines.map(visible).join("\n");
+    planLines.hidden = lines.length === 0;
+    byId("char-saved-confirm-note").textContent = "Confirm changes only wowlab's own list of your links; nothing in the game folder changes.";
+    const button = byId("char-saved-confirm");
+    button.hidden = false;
+    button.disabled = false;
+    byId("char-saved-confirm-box").hidden = false;
+  }
+
+  async function savedConfirm() {
+    const plan = saved.pending;
+    if (plan === null) return;
+    saved.pending = null;
+    const seq = ++saved.seq;
+    const button = byId("char-saved-confirm");
+    button.disabled = true;
+    button.hidden = true;
+    savedSay("Saving…", false);
+    const reply = await postRun({ command: plan.command, params: plan.params, confirm: plan.token });
+    if (seq !== saved.seq) return;
+    byId("char-saved-confirm-box").hidden = true;
+    if (reply.error) {
+      savedSay(reply.error, true);
+      return;
+    }
+    const result = reply.result;
+    let report = null;
+    try {
+      report = JSON.parse(result.stdout);
+    } catch (_) {
+      // no report: a refusal, said below
+    }
+    if (result.exit_code !== 0 || !report || !Array.isArray(report.links)) {
+      const text = String(result.stderr || "").trim();
+      savedSay(text ? shown(text) : "The change was not made.", true);
+      return;
+    }
+    drawSaved(report.links, saved.params);
+    byId("char-saved-address").value = "";
+    savedSay(plan.command[2] === "set" ? "Saved." : "Forgotten.", false);
+  }
+
+  byId("char-saved-plan").addEventListener("click", () => {
+    const address = byId("char-saved-address").value.trim();
+    if (!address) {
+      savedSay("Paste an address first.", true);
+      return;
+    }
+    savedPlan(["char", "link", "set"], { address: address });
+  });
+  byId("char-saved-confirm").addEventListener("click", () => savedConfirm());
+  for (const slot of SAVED_SLOTS) {
+    byId(slot.id + "-forget").addEventListener("click", () =>
+      savedPlan(["char", "link", "forget"], { site: slot.site, kind: slot.kind }),
+    );
   }
 
   // ─── Copy for WoWSims (M21-08) ───
@@ -2246,7 +2440,7 @@
     twinkSay(visible(String(panel.words || "")) + yours, false);
     hideLink("char-twink-wowhead", "Open on Wowhead");
     twink.opened = null;
-    const planner = outsideAddress(panel.planner, PLANNER_ORIGIN);
+    const planner = outsideAddress(panel.planner, "forevertwinking");
     const link = byId("char-twink-planner");
     if (planner !== null) {
       pointLink(link, planner);
@@ -2350,7 +2544,7 @@
       detail.hidden = !open;
       button.setAttribute("aria-expanded", open ? "true" : "false");
       twink.opened = open ? { button: button, detail: detail } : null;
-      const address = open ? outsideAddress(c.wowhead, DRESSING_ORIGIN) : null;
+      const address = open ? outsideAddress(c.wowhead, "wowhead") : null;
       if (address === null) {
         hideLink("char-twink-wowhead", "Open on Wowhead");
         return;
@@ -6423,6 +6617,7 @@
       return;
     }
     const data = await reply.json();
+    takeLinkOrigins(data.link_origins);
     if (typeof data.home === "string") home = data.home;
     if (typeof data.sep === "string" && data.sep) sep = data.sep;
     offeredCommands = Array.isArray(data.commands) ? data.commands : [];

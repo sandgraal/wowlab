@@ -190,6 +190,8 @@ if TYPE_CHECKING:
     from wowlab_core import keymap as keymap
     from wowlab_core import labaddon as labaddon
     from wowlab_core import layout as layout
+    from wowlab_core import links as links
+    from wowlab_core import linkstore as linkstore
     from wowlab_core import longpath as longpath
     from wowlab_core import looks as looks
     from wowlab_core import lookspage as lookspage
@@ -724,6 +726,9 @@ if TYPE_CHECKING:
         CharKeptRow as CharKeptRow,
     )
     from wowlab_core.cli._cmd_char import (
+        CharLinkRow as CharLinkRow,
+    )
+    from wowlab_core.cli._cmd_char import (
         CharListFlavor as CharListFlavor,
     )
     from wowlab_core.cli._cmd_char import (
@@ -853,6 +858,9 @@ if TYPE_CHECKING:
         _kept_rows as _kept_rows,
     )
     from wowlab_core.cli._cmd_char import (
+        _link_row as _link_row,
+    )
+    from wowlab_core.cli._cmd_char import (
         _Listing as _Listing,
     )
     from wowlab_core.cli._cmd_char import (
@@ -890,6 +898,9 @@ if TYPE_CHECKING:
     )
     from wowlab_core.cli._cmd_char import (
         _row_words as _row_words,
+    )
+    from wowlab_core.cli._cmd_char import (
+        _saved_links as _saved_links,
     )
     from wowlab_core.cli._cmd_char import (
         _say_char_binds as _say_char_binds,
@@ -998,6 +1009,54 @@ if TYPE_CHECKING:
     )
     from wowlab_core.cli._cmd_char import (
         char_twink as char_twink,
+    )
+    from wowlab_core.cli._cmd_charlink import (
+        CharLinkChangeReport as CharLinkChangeReport,
+    )
+    from wowlab_core.cli._cmd_charlink import (
+        CharLinkListReport as CharLinkListReport,
+    )
+    from wowlab_core.cli._cmd_charlink import (
+        CharLinkRefused as CharLinkRefused,
+    )
+    from wowlab_core.cli._cmd_charlink import (
+        LinkCharacterOpt as LinkCharacterOpt,
+    )
+    from wowlab_core.cli._cmd_charlink import (
+        LinkDryRunOpt as LinkDryRunOpt,
+    )
+    from wowlab_core.cli._cmd_charlink import (
+        _link_folder_gone as _link_folder_gone,
+    )
+    from wowlab_core.cli._cmd_charlink import (
+        _link_key as _link_key,
+    )
+    from wowlab_core.cli._cmd_charlink import (
+        _link_part as _link_part,
+    )
+    from wowlab_core.cli._cmd_charlink import (
+        _link_read as _link_read,
+    )
+    from wowlab_core.cli._cmd_charlink import (
+        _link_shown as _link_shown,
+    )
+    from wowlab_core.cli._cmd_charlink import (
+        _link_who as _link_who,
+    )
+    from wowlab_core.cli._cmd_charlink import (
+        _link_write as _link_write,
+    )
+    from wowlab_core.cli._cmd_charlink import (
+        char_link_forget as char_link_forget,
+    )
+    from wowlab_core.cli._cmd_charlink import (
+        char_link_list as char_link_list,
+    )
+    from wowlab_core.cli._cmd_charlink import (
+        char_link_set as char_link_set,
+    )
+    from wowlab_core.cli._cmd_charlink import (
+        link_app as link_app,
     )
     from wowlab_core.cli._cmd_charmodel import (
         _AS_OF_LOOK as _AS_OF_LOOK,
