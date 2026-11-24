@@ -87,6 +87,7 @@ __all__ = [
     "MAX_BUILDS_BYTES",
     "MAX_TABLE_BYTES",
     "NAME_TABLES",
+    "TALENT_TABLES",
     "Build",
     "BuildNotPublished",
     "CacheLocationError",
@@ -955,6 +956,14 @@ def cached_rows(
 NAME_TABLES: tuple[str, ...] = ("ChrRaces", "ChrClasses", "ChrSpecialization", "SkillLine")
 """The tables the names of races, classes, specs and professions are read
 from (M18-02). Table names, not game data and nothing about a flavor (L6)."""
+
+TALENT_TABLES: tuple[str, ...] = ("TraitNode", "TraitNodeGroup", "TraitNodeGroupXTraitNode")
+"""The tables that place each class talent in its tree, by row and column
+(M21-07, `talentlink`): the node's position, and the groups the game's
+talent frame splits a class's one trait tree into its three trees by. On
+Forever the classic `Talent` and `TalentTab` tables are still in the
+client but describe the classic layout, not the one the game draws
+(docs/DATA_SOURCES.md, 2026-11-24). Table names only (L6)."""
 
 
 def missing_tables(names: Iterable[str], build: str, *, cache_dir: Path | None = None) -> list[str]:

@@ -64,6 +64,11 @@ runner = CliRunner()
 
 # Environment variables the player sets, named in help on purpose.
 ENV_NAMES = frozenset({"WOWLAB_WOW_ROOT", "WOWLAB_FLAVOR", "NO_COLOR"})
+# The game's table names wago.tools serves, as the recordings name them
+# (`wago/<Table>.<build>...`). One of them is also the name of a wowlab model
+# (`TraitNode`); written in double quotes it is the game's word, a table
+# name `char gear` tells the player to download (M21-07), and is admitted.
+GAME_TABLES = frozenset(p.name.split(".", 1)[0] for p in WAGO.iterdir() if p.is_file())
 
 
 # ─── the patterns ────────────────────────────────────────────────────────────
@@ -161,6 +166,15 @@ class Install:
         return bool(self.text) and context in self.text
 
 
+def _quoted_table(line: str, start: int, end: int) -> bool:
+    """Whether `line[start:end]` is a game table's name in double quotes."""
+    return (
+        line[start:end] in GAME_TABLES
+        and line[start - 1 : start] == '"'
+        and line[end : end + 1] == '"'
+    )
+
+
 def hits(text: str, install: Install | None = None) -> list[str]:
     """Every rule `text` breaks, as "<rule>: <the match in its line>"."""
     install = install or Install()
@@ -169,6 +183,8 @@ def hits(text: str, install: Install | None = None) -> list[str]:
         shown = repr(line.strip()[:160])
         for rule, pattern in PATTERNS.items():
             for m in pattern.finditer(line):
+                if rule == "model class" and _quoted_table(line, m.start(), m.end()):
+                    continue
                 if not install.says(line, m.start(), m.end()):
                     found.append(f"{rule}: {m.group()!r} in {shown}")
         for m in UPPER_SNAKE.finditer(line):
@@ -250,6 +266,12 @@ def test_lint_catches_what_it_is_for_constructed() -> None:
         "JSON: DoctorReport.",
         "(GC_GRACE_SECONDS)",
         f"{CONFIRM} and again {CONFIRM}",
+        # A model's name that is also a game table's is still ours unquoted.
+        "the TraitNode table",
+        "'TraitNode'",
+        '"TraitNode',
+        # A model's name in quotes that is no game table's.
+        '"DoctorReport"',
     ):
         assert hits(line), line
     for line in (
@@ -257,8 +279,10 @@ def test_lint_catches_what_it_is_for_constructed() -> None:
         "Config.wtf, WowLab.lua and SavedVariables",
         "Level 15, version 1.60.1.70450",
         f"one {CONFIRM}",
+        'for each of "TraitNode", "TraitNodeGroup" and "TraitNodeGroupXTraitNode"',
     ):
         assert hits(line) == [], line
+    assert "TraitNode" in GAME_TABLES and "TraitNode" in _model_names()
 
 
 @pytest.mark.parametrize(("path", "cmd"), [(p, c) for p, c in COMMANDS if p])

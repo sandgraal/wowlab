@@ -161,7 +161,11 @@ def test_the_links_are_static_markup_with_no_href() -> None:
         '<a id="char-twink-wowhead" class="dressing-link" target="_blank" '
         'rel="noopener noreferrer" hidden>',
     ]
-    assert anchors[-2:] == twink_links  # after the dressing room's and M21-03's
+    # After M21-04's Profiles row, guild and twenty gear-row links, the
+    # dressing room's, See my look's (M21-06) and M21-03's; M21-05's profile
+    # links follow.
+    assert [a for a in anchors if 'id="char-twink-' in a] == twink_links
+    assert anchors.index(twink_links[0]) == 31
     script = (_TEMPLATES / "page.js").read_text(encoding="utf-8")
     # Since M21-03 the page names no origin: each twink link takes only an
     # address checked against the origin the server's allowlist gives its
@@ -175,20 +179,30 @@ def test_the_links_are_static_markup_with_no_href() -> None:
     # dressing room, the three saved links, the planner, the Wowhead link,
     # and M21-04's `pointOutside`, which every profile, guild and gear-row
     # link goes through; test_ui_char_links.py; and since M21-06 See my
-    # look, graded in test_ui_purist.py).
-    assert script.count("pointLink(") == 7
+    # look, graded in test_ui_purist.py; since M21-07 Open my talents,
+    # test_ui_talents.py; and M21-05's profile links of other players, one
+    # call for all six).
+    assert script.count("pointLink(") == 9
     assert script.count("function pointLink(link, checked) {") == 1
     for call, checked in (
         ("pointLink(link, checked);", "const checked = dressingAddress(dressing.url);"),
         ("pointLink(link, checked);", "const checked = outsideAddress(row.url, slot.site);"),
         (
+            "pointLink(link, checked);",
+            "const checked = outsideAddress(made.url, TALENTS_SITE);",
+        ),
+        (
             "pointLink(link, planner);",
             'const planner = outsideAddress(panel.planner, "forevertwinking");',
         ),
         ("pointLink(link, address);", 'outsideAddress(c.wowhead, "wowhead")'),
+        (
+            "pointLink(profile, checked);",
+            'typeof one.url === "string" ? outsideAddress(one.url, slot.site) : null;',
+        ),
         ("pointLink(anchor, checked);", "const checked = outsideAddress(url, site);"),
     ):
-        assert script.count(call) == (2 if call == "pointLink(link, checked);" else 1), call
+        assert script.count(call) == (3 if call == "pointLink(link, checked);" else 1), call
         assert script.count(checked) == 1, checked
         assert script.index(checked) < script.index(call, script.index(checked)), call
     assert script.count('runJson(["char", "twink"], params)') == 1

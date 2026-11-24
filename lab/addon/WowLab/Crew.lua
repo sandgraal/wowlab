@@ -2,7 +2,7 @@
 --
 -- Runs in the game client only; the Lab never loads or runs this file (L3).
 -- It remembers the players the owner groups with, in the account-wide saved
--- variable WowLabCrewDB (its own schema, 2; the per-character schema does not
+-- variable WowLabCrewDB (its own schema, 3; the per-character schema does not
 -- change), and says so in the owner's own chat frame when a rated or noted
 -- player joins the group again. Nothing is sent anywhere: no chat message,
 -- whisper or addon message (tests/addon/test_lab_addon.py refuses the calls).
@@ -37,17 +37,30 @@
 -- after the `matched` marker, so a repeated event or a /reload counts it once.
 -- Every scoreboard call is made through pcall, after a test that it exists.
 --
+-- Schema 3 (M21-12): the book's region, once (`region`, the text
+-- GetCurrentRegionName() gives), and each kept player's name as the game
+-- gives it for their GUID (`resolved_name`, `resolved_realm`,
+-- `resolved_eighth`, `resolved_at`, from GetPlayerInfoByGUID). On Forever the
+-- name is "<First> <Second>"; the realm was empty for the player checked on
+-- 2026-11-23 (retail leaves it empty for your own realm, [verify]); the
+-- eighth value was 22 for a level-22 character, so it is probably the level
+-- ([verify]). Both are read at the end of a roster pass and of the
+-- scoreboard pass, out of combat only (resolveNames, which says the order and
+-- the limits). A GUID the client does not name now gives nothing: nothing is
+-- stored but the time of the ask (`resolve_tried_at`), which sends it to the
+-- back of the queue.
+--
 -- API status: every client API used is listed in lab/addon/README.md; all of
 -- them are [verify] for this file until the owner's in-game checks (M19-07,
 -- and M20-06 for the scoreboard).
 
 local _, ns = ...
 
--- The book's own version number (§20.1, §21.2). A book of schema 1 that is
--- on is migrated (crewMigrate); a book of any other schema (a newer WowLab,
--- a restored snapshot) is left wholly alone: crewOn, crewLoaded and the
--- slash handler's first lines test it.
-local CREW_SCHEMA = 2
+-- The book's own version number (§20.1, §21.2; 3 since M21-12). A book of
+-- schema 1 or 2 that is on is migrated (crewMigrate); a book of any other
+-- schema (a newer WowLab, a restored snapshot) is left wholly alone: crewOn,
+-- crewLoaded and the slash handler's first lines test it.
+local CREW_SCHEMA = 3
 -- The drop order (§20.1 "Limits", §21.2): at most MAX_PLAYERS players. When
 -- the book is full, the unrated, un-noted player with the oldest `last` is
 -- dropped first (makeRoom); a rated or noted player is never dropped, and
@@ -79,6 +92,16 @@ local FIRST_PASS_DELAY = 15
 -- The unit tokens walked: raid1 to raid40 in a raid, party1 to party4 in a party.
 local MAX_RAID = 40
 local MAX_PARTY = 4
+-- M21-12: at most MAX_RESOLVES GUIDs met before this session and never named
+-- are asked in one pass, and at most MAX_RESOLVES that gave no name in an
+-- earlier session in one login or /reload (resolveNames), so a full book is
+-- asked a little at a time. Players met this session are not limited.
+local MAX_RESOLVES = 100
+-- M21-12 fix round 1: a GUID that gave no name is asked once more in the
+-- same session, at a pass at least RETRY_SECONDS later. The client has no
+-- event for a late answer (the 71037 event list), so asking again is the
+-- only way to collect one.
+local RETRY_SECONDS = 5
 
 -- The sentence of ADR-0036 term 2 (§20.5), printed when the book is turned on.
 -- Changed for M19-10's domain review: battleground and arena teams count
@@ -122,6 +145,15 @@ local pvpRequested = false
 local pvpReasked = false -- the data asked for once more after the winner (recordMatch)
 local pvpScoreEvents = 0
 local pvpCompleteEvents = 0
+-- M21-12: the GUIDs asked for a name in this session (to the time() of the
+-- first ask, 0 without a clock), those asked the second time, those met this
+-- session (a group member or a scoreboard row), how many asks in all, and how
+-- many of players that gave no name in an earlier session.
+local resolveTried = {}
+local resolveRetried = {}
+local resolveSeen = {}
+local resolveAsked = 0
+local backlogAsked = 0
 
 local function crewOn()
     return type(WowLabCrewDB) == "table" and WowLabCrewDB.schema == CREW_SCHEMA
@@ -151,16 +183,23 @@ local function say(text)
     print("|cff33ff99WowLab|r: " .. text)
 end
 
--- The migration (§21.2), pinned whole: a schema 1 book becomes schema 2 by
--- the new number and an empty `matches`, and nothing else. Called only for a
--- book that is on (crewLoaded) or is being turned on (the slash handler's
--- head). A book that is off stays at schema 1; any other schema is left alone.
+-- The migration (§21.2), pinned whole: a schema 1 book gains an empty
+-- `matches` (schema 2's one change), and a schema 1 or 2 book the new number
+-- (M21-12: schema 3 adds only fields that are left out until read), and
+-- nothing else. Called only for a book that is on (crewLoaded) or is being
+-- turned on (the slash handler's head). A book that is off keeps its schema;
+-- any other schema is left alone.
 local function crewMigrate()
-    if type(WowLabCrewDB) ~= "table" or WowLabCrewDB.schema ~= 1 then
+    if type(WowLabCrewDB) ~= "table" then
         return
     end
+    if WowLabCrewDB.schema ~= 1 and WowLabCrewDB.schema ~= 2 then
+        return
+    end
+    if WowLabCrewDB.schema == 1 then
+        WowLabCrewDB.matches = {}
+    end
     WowLabCrewDB.schema = CREW_SCHEMA
-    WowLabCrewDB.matches = {}
 end
 
 -- The probe's helpers (§21.2), pinned whole. True only in an instance whose
@@ -488,6 +527,12 @@ local function fieldsMissing()
     end
     if type(UnitIsPlayer) ~= "function" then
         missing = missing .. " Your target cannot be rated: the client has no UnitIsPlayer function."
+    end
+    if type(GetPlayerInfoByGUID) ~= "function" then
+        missing = missing .. " No names by character id: the client has no GetPlayerInfoByGUID function."
+    end
+    if type(GetCurrentRegionName) ~= "function" then
+        missing = missing .. " No region: the client has no GetCurrentRegionName function."
     end
     if type(issecretvalue) ~= "function" then
         missing = missing .. " Values are not tested for secrets: the client has no issecretvalue function."
@@ -942,6 +987,8 @@ local function readMember(unit)
         end
         if not secret(guid) and type(guid) == "string" and guid ~= "" then
             entry.guid = ns.String(guid)
+            -- M21-12: met now, so the client knows them: asked first.
+            resolveSeen[guid] = true
         end
     end
     if type(UnitRace) == "function" then
@@ -969,6 +1016,164 @@ local function readMember(unit)
         end
         if not secret(honor) and type(honor) == "number" and honor > 0 then
             entry.honor_level = ns.Number(honor)
+        end
+    end
+end
+
+-- M21-12: the book's region, once per book: the text GetCurrentRegionName()
+-- gives ("US" on the owner's launch client, 2026-11-23), kept as given, with
+-- the time() it was recorded (`region_at`). A secret or empty answer stores
+-- nothing and is asked again at the next pass.
+local function readRegion()
+    if not crewOn() then
+        return
+    end
+    if crewBlocked() then
+        return
+    end
+    if WowLabCrewDB.region ~= nil then
+        return
+    end
+    if type(GetCurrentRegionName) ~= "function" then
+        return
+    end
+    local region = GetCurrentRegionName()
+    if secret(region) then
+        addSkipped()
+    end
+    if not secret(region) and type(region) == "string" and region ~= "" then
+        WowLabCrewDB.region = ns.String(region)
+        -- Fix round 1: when it was recorded, so the desk can date it.
+        if type(time) == "function" then
+            WowLabCrewDB.region_at = ns.Number(time())
+        end
+    end
+end
+
+-- M21-12: the names the game gives for the GUIDs of kept players that have
+-- none yet, out of combat (the gate). GetPlayerInfoByGUID's sixth value is
+-- the name ("<First> <Second>" on Forever), the seventh the realm (empty for
+-- the player checked on 2026-11-23; retail leaves it empty for your own
+-- realm, [verify]), the eighth probably the level ([verify]; 22 for a
+-- level-22 character). The client is believed to name only a player it has
+-- met lately, so the order is (fix round 1): players met this session
+-- (resolveSeen: a group member, a scoreboard row), not limited; then players
+-- never asked; then one more ask, at least RETRY_SECONDS after the first, of
+-- a GUID that gave nothing this session; then players that gave nothing in an
+-- earlier session, the oldest ask first. All but the first kind share
+-- MAX_RESOLVES per pass, and the last kind also MAX_RESOLVES per login or
+-- /reload. A GUID that gives no name keeps the time of the ask
+-- (`resolve_tried_at`), so it goes to the back of the queue; a name clears it.
+local function resolveNames()
+    if not crewOn() then
+        return
+    end
+    if crewBlocked() then
+        return
+    end
+    if type(GetPlayerInfoByGUID) ~= "function" then
+        return
+    end
+    local now = nil
+    if type(time) == "function" then
+        now = ns.Number(time())
+    end
+    -- Each list holds keys (type-checked text), never the entries.
+    local seen, fresh, again, older, olderAt = {}, {}, {}, {}, {}
+    local olderRoom = MAX_RESOLVES - backlogAsked
+    for key, entry in pairs(WowLabCrewDB.players) do
+        local guid = nil
+        if type(entry) == "table" and entry.resolved_name == nil then
+            guid = ns.String(entry.guid)
+        end
+        if guid ~= nil and string.find(guid, "^Player%-") ~= nil then
+            local asked = resolveTried[guid]
+            local due = asked == nil
+            if asked ~= nil and resolveRetried[guid] == nil and now ~= nil and now - asked >= RETRY_SECONDS then
+                due = true
+            end
+            local tried = ns.Number(entry.resolve_tried_at)
+            if due and resolveSeen[guid] == true then
+                seen[#seen + 1] = ns.String(key)
+            elseif due and asked ~= nil then
+                again[#again + 1] = ns.String(key)
+            elseif due and tried == nil then
+                fresh[#fresh + 1] = ns.String(key)
+            elseif due and olderRoom > 0 and type(key) == "string" then
+                -- Kept oldest first, at most olderRoom long.
+                if #older < olderRoom or tried < olderAt[#older] then
+                    if #older >= olderRoom then
+                        older[#older] = nil
+                        olderAt[#olderAt] = nil
+                    end
+                    local at = #older + 1
+                    while at > 1 and olderAt[at - 1] > tried do
+                        older[at] = ns.String(older[at - 1])
+                        olderAt[at] = ns.Number(olderAt[at - 1])
+                        at = at - 1
+                    end
+                    older[at] = ns.String(key)
+                    olderAt[at] = ns.Number(tried)
+                end
+            end
+        end
+    end
+    -- The queue in that order; kinds: 1 met this session, 2 never asked or
+    -- asked again, 3 from an earlier session.
+    local queue, kinds = {}, {}
+    for i = 1, #seen do
+        queue[#queue + 1] = ns.String(seen[i])
+        kinds[#queue] = 1
+    end
+    for i = 1, #fresh do
+        queue[#queue + 1] = ns.String(fresh[i])
+        kinds[#queue] = 2
+    end
+    for i = 1, #again do
+        queue[#queue + 1] = ns.String(again[i])
+        kinds[#queue] = 2
+    end
+    for i = 1, #older do
+        queue[#queue + 1] = ns.String(older[i])
+        kinds[#queue] = 3
+    end
+    local passRoom = MAX_RESOLVES
+    for i = 1, #queue do
+        local entry = WowLabCrewDB.players[queue[i]]
+        local kind = kinds[i]
+        local guid = nil
+        if type(entry) == "table" then
+            guid = ns.String(entry.guid)
+        end
+        if guid ~= nil and (kind == 1 or passRoom > 0) then
+            if kind ~= 1 then
+                passRoom = passRoom - 1
+            end
+            if kind == 3 then
+                backlogAsked = backlogAsked + 1
+            end
+            if resolveTried[guid] == nil then
+                resolveTried[guid] = now or 0
+            else
+                resolveRetried[guid] = true
+            end
+            resolveAsked = resolveAsked + 1
+            local _, _, _, _, _, name, realm, eighth = GetPlayerInfoByGUID(guid)
+            if secret(name) or secret(realm) or secret(eighth) then
+                addSkipped()
+            end
+            entry.resolve_tried_at = now
+            if not secret(name) and type(name) == "string" and name ~= "" and name ~= UNKNOWNOBJECT then
+                entry.resolved_name = ns.String(name)
+                entry.resolved_at = now
+                entry.resolve_tried_at = nil
+                if not secret(realm) and type(realm) == "string" then
+                    entry.resolved_realm = ns.String(realm)
+                end
+                if not secret(eighth) and type(eighth) == "number" then
+                    entry.resolved_eighth = ns.Number(eighth)
+                end
+            end
         end
     end
 end
@@ -1037,6 +1242,9 @@ local function pass()
         greeted = true
         say("Crew book on: " .. plural(ns.Number(countPlayers()) or 0, "player", "players") .. ". /wowlab crew off to stop.")
     end
+    -- M21-12: the region once, then the names the game gives by GUID.
+    pcall(readRegion)
+    pcall(resolveNames)
 end
 
 -- A pass after `delay` seconds, once however many events ask for it.
@@ -1236,6 +1444,10 @@ local function recordMatch()
             ownAt = i
         end
         keys[i] = ns.String(key)
+        -- M21-12: every row's player is met now, so asked first.
+        if type(score.guid) == "string" then
+            resolveSeen[score.guid] = true
+        end
     end
     local ownSide = nil
     if ownAt ~= nil then
@@ -1398,6 +1610,8 @@ local function pvpPass()
     -- scoreboard has rows, then held off by the `matched` marker.
     if pvpWon() then
         pcall(recordMatch)
+        -- M21-12: the scoreboard's players, while the client knows them.
+        pcall(resolveNames)
     end
 end
 

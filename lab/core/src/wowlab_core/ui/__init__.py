@@ -1539,6 +1539,9 @@ class UiServer(http.server.ThreadingHTTPServer):
         # combat log, in memory only.
         self._watcher: Any = None
         self._watcher_lock = threading.Lock()
+        # M22-22: the game's map table each version read for the Live view,
+        # kept once read (a missing or unreadable one is looked for again).
+        self._map_tables: dict[str, Any] = {}
         super().__init__((_LOOPBACK, 0), _Handler)
         self.port = int(self.server_address[1])
         self.url = f"http://{_LOOPBACK}:{self.port}/?boot={self.boot}"
@@ -1620,9 +1623,31 @@ class UiServer(http.server.ThreadingHTTPServer):
         chosen = flavors[0]
         if len(flavors) > 1:
             chosen = max(flavors, key=lambda f: live.saved_watch(f.path).newest_ns or 0)
-        watch = watcher.poll(chosen.path, chosen.folder)
+        table = self._map_table_for(chosen.version)
+        watch = watcher.poll(
+            chosen.path,
+            chosen.folder,
+            maps=table.usable(),
+            map_table=table.state,
+            map_words=_live_map_words(table),
+        )
         payload.update(found=True, watch=watch.model_dump(mode="json"))
         return _live_json(payload)
+
+    def _map_table_for(self, version: str | None) -> Any:
+        """The game's map table for `version` (`maptable.load`, read-only,
+        never fetched), kept once read."""
+        from wowlab_core import maptable
+
+        with self._watcher_lock:
+            held = self._map_tables.get(version or "")
+        if held is not None:
+            return held
+        table = maptable.load(version)
+        if table.state == "read" and version is not None:
+            with self._watcher_lock:
+                self._map_tables[version] = table
+        return table
 
     def booted_shell(self) -> bytes:
         """The shell served for the boot key: the page shell with the session
@@ -1806,6 +1831,31 @@ _LOOKS_PAGE = "/api/looks-page"
 # The Live view's poll (M22-05): file times and the newest combat log's
 # zone lines, read in this process; no request names a file.
 _LIVE = "/api/live"
+
+
+def _live_map_words(table: Any) -> str | None:
+    """What the Live view says when the game's map table was not read
+    (M22-22): the open world is then told by the zone line alone."""
+    if table.state == "read":
+        return None
+    if table.state == "missing":
+        return (
+            "The game's map table is not downloaded, so a dungeon, raid or battleground whose "
+            "zone line looks like the open world's may be shown as the open world. Download it "
+            "from the Crew tab."
+        )
+    if table.state == "unreadable":
+        return (
+            "The game's map table is downloaded but cannot be read, so a dungeon, raid or "
+            "battleground whose zone line looks like the open world's may be shown as the open "
+            "world."
+        )
+    return (
+        "wowlab cannot tell this game's version, so a dungeon, raid or battleground whose zone "
+        "line looks like the open world's may be shown as the open world."
+    )
+
+
 _LIVE_NO_INSTALL = (
     "wowlab found no game folder to watch. Set WOWLAB_WOW_ROOT to it and start wowlab ui again."
 )

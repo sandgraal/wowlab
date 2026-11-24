@@ -1037,7 +1037,9 @@ def test_the_tab_offers_no_edit_control_and_says_so() -> None:
     # run the read `char twink` (test_ui_twink.py). Since M21-03, the saved
     # links' address field, Show the plan, Confirm and the three Forget
     # buttons: they change only wowlab's own list of links, never the game
-    # folder, through the confirm step (test_ui_links.py).
+    # folder, through the confirm step (test_ui_links.py). Since M21-07,
+    # Download the talent tables, which runs `db2 fetch`: it writes only
+    # wowlab's game-table cache, never the game folder (test_ui_talents.py).
     # Since M22-11, the Blizzard profile panel's two buttons, which run
     # `blizzard show` and `blizzard fetch` and change nothing in the game
     # folder (test_ui_bnet.py).
@@ -1051,6 +1053,7 @@ def test_the_tab_offers_no_edit_control_and_says_so() -> None:
         ("button", "char-saved-plan", "button"),
         ("button", "char-saved-wcl-report-forget", "button"),
         ("button", "char-sim-button", "button"),
+        ("button", "char-talents-fetch", "button"),
         ("button", "char-twink-show", "button"),
         ("input", "char-keys-disagree", "checkbox"),
         ("input", "char-keys-filter", "search"),

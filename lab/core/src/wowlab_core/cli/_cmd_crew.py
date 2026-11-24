@@ -24,7 +24,7 @@ import re
 import time
 from collections.abc import Callable, Sequence
 from pathlib import Path
-from typing import Annotated, Literal
+from typing import TYPE_CHECKING, Annotated, Literal, NoReturn
 
 import pydantic
 import typer
@@ -38,12 +38,16 @@ from wowlab_core import (
     install,
     labaddon,
     layout,
+    links,
     luadata,
     nemesis,
     region,
     snapshot,
     worldpvp,
 )
+
+if TYPE_CHECKING:
+    from wowlab_core import maptable
 from wowlab_core.cli._common import (
     CREW_BOOK_SENTENCE,
     EXIT_ERROR,
@@ -64,6 +68,8 @@ from wowlab_core.cli._common import (
     _handled,
     _is_lab_file,
     _listed,
+    _map_table,
+    _map_table_line,
     _Out,
     _plural,
     _region_fields,
@@ -99,6 +105,13 @@ _MATCH_NOTE = (
     "and against you are the teams of that match, not factions."
 )
 _MATCH_NOTES = [*_CREW_NOTES, _MATCH_NOTE]
+# `crew show`'s profile links (M21-05), said once behind --notes.
+_LINKS_NOTE = (
+    "The profile links are addresses to open in your browser; wowlab itself requests nothing "
+    "from those sites. Each uses the region a combat log gave the player, or else the one "
+    "your game's settings name, which wowlab assumes is theirs."
+)
+_SHOW_NOTES = [*_CREW_NOTES, _LINKS_NOTE]
 # `crew list --sort`: the book's own orders (`last`, `met`, `name`) and the
 # database's: `faced` and `allied` (M20-09), `world`, latest open-world
 # encounter first (M20-18), and `deaths` and `team_losses`, most killed by
@@ -392,6 +405,70 @@ def _crew_region_line(reading: region.RegionReading | None, *, unconfirmed: bool
     return _region_text(reading.region, reading.absent, source)
 
 
+def _names_words(p: crewdb.CrewRow) -> str:
+    """Where a crew row's names came from (M21-12), in the player's words;
+    a name the game gave is dated, since it is not asked again (fix round 1)."""
+    if p.names_from == "game":
+        return f"as the game gave it for the character's id on {_date(p.resolved_at)}"
+    if p.names_from == "log":
+        return "from a combat log's name for them"
+    if p.names_from == "borrowed":
+        return f"from {p.borrowed_from}, the same character by the game's id"
+    return "from the name the crew book keeps"
+
+
+def _crew_names_line(p: crewdb.CrewRow, *, second_names: bool) -> str:
+    """`crew show`'s line naming the player's first and second name and
+    where they came from (M21-12). On a flavor whose characters have no
+    second name, a row with none says "name", not "first name" (fix round 1)."""
+    plain = p.second_name is None and not second_names
+    parts = [f"name {p.first_name}" if plain else f"first name {p.first_name}"]
+    if p.second_name is not None:
+        parts.append(f"second name {p.second_name}")
+    if p.realm is not None:
+        parts.append(f"realm {p.realm}")
+    return f"  Name in game: {p.game_name} ({', '.join(parts)}; {_names_words(p)})"
+
+
+# Said of a region the crew book recorded (fix round 1): it is your
+# connection's region, given to the other player by an assumption.
+_CREW_BOOK_REGION_SOURCE = "your region as the game gave it to the crew book on {date}"
+_CREW_ASSUMED = "wowlab assumes every player is in your region"
+
+
+def _crew_player_region_line(
+    p: crewdb.CrewRow, reading: region.RegionReading | None, *, unconfirmed: bool
+) -> str | None:
+    """`crew show`'s region line (M21-12): the player's own region and where
+    it came from; the book's line (`_crew_region_line`) when it is the
+    flavor's settings or there is none. A region from the crew book keeps
+    the assumption and its date, and a book and settings that name
+    different regions are both said, with no region (fix round 1)."""
+    if p.region_conflict:
+        book, settings = (r.upper() for r in p.region_conflict)
+        return (
+            f"Region: not known: the crew book recorded {book} as your region on "
+            f"{_date(p.region_recorded_at)}, but your game's settings name {settings}"
+        )
+    if p.region is None or p.region_from in (None, "settings"):
+        return _crew_region_line(reading, unconfirmed=unconfirmed)
+    caveat = ", not yet confirmed" if unconfirmed else ""
+    if p.region_from == "log":
+        source = "from a combat log's name for them"
+    elif p.region_from == "book":
+        source = (
+            _CREW_BOOK_REGION_SOURCE.format(date=_date(p.region_recorded_at))
+            + f"; {_CREW_ASSUMED}{caveat}"
+        )
+    else:
+        source = (
+            f"from {p.borrowed_from}, the same character by the game's id: "
+            + _CREW_BOOK_REGION_SOURCE.format(date=_date(p.region_recorded_at))
+            + f"; {_CREW_ASSUMED}{caveat}"
+        )
+    return _region_text(p.region, None, source)
+
+
 def _crew_second_names(opened: _Opened) -> bool:
     """Whether the chosen book's flavor names characters by first and
     second name (M21-02): a digits-only folder of one of its accounts holds
@@ -425,6 +502,28 @@ def _from_database(
         region=reading.region if reading is not None else None,
         second_names=_crew_second_names(opened),
     )
+
+
+def _crew_version(opened: _Opened) -> str | None:
+    """The game version of the chosen book's flavor (its `.build.info`
+    row), which picks the pages a profile link points at (M21-05)."""
+    return opened.where[0].version if opened.where is not None else None
+
+
+def _crew_profile_links(p: crewdb.CrewRow, version: str | None) -> list[crewdb.ProfileLink]:
+    """A player's profile links (M21-05): the armory, the Journey Companion
+    and Raider.IO, each an address or why there is none, from the names and
+    region the row holds. A row with no second name (a key whose second part
+    is a realm) or no region gets no armory link, and says why."""
+    return list(links.profiles(p.first_name or None, p.second_name, p.region, version=version))
+
+
+def _linked(rows: Sequence[crewdb.CrewRow], opened: _Opened) -> list[crewdb.CrewRow]:
+    """The rows a report shows, each with its profile links (M21-05). Built
+    for those rows only, and only for output that shows them: about a
+    third of a millisecond a player."""
+    version = _crew_version(opened)
+    return [r.model_copy(update={"links": _crew_profile_links(r, version)}) for r in rows]
 
 
 def _rereader(opened: _Opened) -> Callable[[], bytes] | None:
@@ -613,6 +712,16 @@ def _default_sort(*, nemeses: bool, rivals: bool, world: bool) -> CrewSort:
     return "last"
 
 
+NoLinksOpt = Annotated[
+    bool,
+    typer.Option(
+        "--no-links",
+        help="With --json, leave out each player's profile links (a shorter list; crew show "
+        "still gives them).",
+    ),
+]
+
+
 @crew_app.command("list", short_help="The players in the crew book, newest group first.")
 @_handled
 def crew_list(
@@ -676,6 +785,7 @@ def crew_list(
         ),
     ] = False,
     sort: SortOpt = None,
+    no_links: NoLinksOpt = False,
     account: AccountOpt = None,
     root: RootOpt = None,
     flavor: FlavorOpt = None,
@@ -744,7 +854,10 @@ def crew_list(
         rated=rated,
         noted=noted,
         search=search,
-        players=shown,
+        # The text lists no link, so only the JSON pays for building them;
+        # the Crew tab's list asks for none (`--no-links`: it shows them only
+        # for the player opened, from crew show).
+        players=_linked(shown, opened) if json_out and not no_links else shown,
         unread=_unread(book),
         places=opened.places,
         words=words,
@@ -931,14 +1044,15 @@ def crew_show(
                 "shows it",
                 EXIT_USAGE,
             )
-        player = found[0]
+        (player,) = _linked(found, opened)
     if player is None:
         lines = [_never_on(opened.places if place is None else [place])]
     else:
         assert place is not None
         lines = [f"{player.key}, from the crew book of {_place_words(place)}, {_AS_OF}:"]
         lines += _field_lines(player)
-        region_line = _crew_region_line(reading, unconfirmed=not notes)
+        lines.append(_crew_names_line(player, second_names=_crew_second_names(opened)))
+        region_line = _crew_player_region_line(player, reading, unconfirmed=not notes)
         if region_line is not None:
             lines.append(f"  {region_line}")
         if player.also_known_as:
@@ -969,7 +1083,7 @@ def crew_show(
         player=player,
         places=opened.places,
         lines=lines,
-        notes=_CREW_NOTES,
+        notes=_SHOW_NOTES,
         fights=_fights_of(opened, player),
         sync=outcome,
         region=_region_fields(reading)[0],
@@ -981,10 +1095,39 @@ def crew_show(
     for line in lines:
         _say(line)
     if player is not None:
-        _say_notes(_CREW_NOTES, notes)
+        for line in _profile_lines(player.links):
+            _say(line)
+        _say_notes(_SHOW_NOTES, notes)
+
+
+def _profile_lines(made: Sequence[crewdb.ProfileLink]) -> list[str]:
+    """A player's profile links as `crew show` prints them (M21-05): each
+    site's name and address, or why there is no link."""
+    if not made:
+        return []
+    lines = ["Profiles:"]
+    for made_link in made:
+        label = made_link.label or "Profile"  # no label: the list of sites cannot be used
+        if isinstance(made_link, links.Link):
+            lines.append(f"  {label}: {made_link.url}")
+        else:
+            lines.append(f"  {label}: no link: {made_link.why}")
+    return lines
 
 
 # ─── matches (§21.3, "Reading", M20-09) ──────────────────────────────────────
+
+
+class CrewProfile(_Out):
+    """One player a listed match or open-world encounter names (M21-05):
+    their stored key, their in-game name, the region their links use and
+    their profile links (`crewdb.CrewRow.links`), each an address or why
+    there is none."""
+
+    key: str
+    game_name: str
+    region: Region | None
+    links: list[crewdb.ProfileLink]
 
 
 class CrewMatchesReport(_Out):
@@ -1023,6 +1166,11 @@ class CrewMatchesReport(_Out):
     # as in `CrewReport`.
     region: Region | None = None
     region_absent: str | None = None
+    # Links out (M21-05): every player the listed matches or encounters
+    # name, with you and against you, once each in the order first named,
+    # with their profile links (empty with `--no-links`). A key the database
+    # no longer keeps is in no match, so every one listed has its row.
+    profiles: list[CrewProfile] = pydantic.Field(default_factory=list)
 
 
 _MATCH_KIND_WORDS = {"bg": "battleground", "arena": "arena", "shuffle": "solo shuffle"}
@@ -1078,6 +1226,7 @@ def crew_matches(
             "read: when, where, who was against you and with you, and how each ended.",
         ),
     ] = False,
+    no_links: NoLinksOpt = False,
     account: AccountOpt = None,
     root: RootOpt = None,
     flavor: FlavorOpt = None,
@@ -1144,6 +1293,21 @@ def crew_matches(
                 f"newest first: {n}."
             )
             lines = [line for m in found for line in _match_lines(m)]
+    named = (
+        [k for e in encounters for k in (*e.foes, *e.allies, *e.your_kills, *e.killed_you)]
+        if world
+        else [k for m in found for k in (*m.team, *m.foes)]
+    )
+    rows = {p.key: p for p in kept}
+    picked = [rows[k] for k in dict.fromkeys(named) if k in rows]
+    profiles = (
+        [
+            CrewProfile(key=r.key, game_name=r.game_name, region=r.region, links=r.links)
+            for r in (_linked(picked, opened) if not no_links else picked)
+        ]
+        if json_out  # the text lists no link
+        else []
+    )
     report = CrewMatchesReport(
         flavor_folder=place.flavor_folder if place else None,
         account=place.account if place else None,
@@ -1162,6 +1326,7 @@ def crew_matches(
         encounters=encounters,
         region=_region_fields(reading)[0],
         region_absent=_region_fields(reading)[1],
+        profiles=profiles,
     )
     if json_out:
         _emit(report)
@@ -1316,9 +1481,14 @@ _WORLD_NOTES = [
     "you: your own hits always, other players' only near you. The game writes it in chunks, so "
     "a read while you play lags behind.",
     "Only damage counts: a player who only stunned, feared or missed you is not counted yet.",
-    "Fights in battlegrounds, arenas and dungeons are left out by the zone the log names; that a "
-    "battleground's zone line differs from the open world's is not yet confirmed, and a map "
-    "wowlab keeps a battleground or arena match on is always left out.",
+    "Dungeons, raids and battlegrounds are left out by the game's map table. A fight on a map "
+    "it does not hold is kept but set aside, with its players: counted and listed nowhere until "
+    "a later table names the map. An arena is left out by the log's arena-match lines or a "
+    "match wowlab keeps on its map; how the table classes this game's arenas is not yet "
+    "confirmed. Without the table, the zone line decides, and a dungeon's, raid's or "
+    "battleground's can look like the open world's.",
+    "The map table is the one for the game version installed now; a log written before a patch "
+    "is judged by it too.",
     "A duel cannot be told from the log, so one fought in the open world counts as a fight.",
     "Which flags the game writes for a hostile player, a group member, a pet and a guardian is "
     "not yet confirmed.",
@@ -1354,6 +1524,11 @@ class CrewScanLogFile(_Out):
 
     def unreadable_text(self) -> str:
         return self.unreadable or "not read"
+
+
+MapTableState = Literal["read", "missing", "unreadable", "no_version"]
+"""As `maptable.MapTableState` (kept here: `crew` loads the game-data
+client only when a combat log is read)."""
 
 
 class CrewScanLogReport(_Out):
@@ -1398,6 +1573,96 @@ class CrewScanLogReport(_Out):
     logs_kept_old_keys: int = 0
     marks_carried: int = 0
     marks_not_carried: int = 0
+    # M22-22: the game's map table for the flavor's version: `map_table`
+    # true when it was read (`map_table_state` `read`; `missing`: not
+    # downloaded; `unreadable`: downloaded but it cannot be read, so
+    # downloading it again changes nothing; `no_version`), `map_version`
+    # the game version whose table was looked for (None when unknown),
+    # `map_lines` the lines the text says about it, and what the re-check of
+    # earlier reads against it did.
+    map_table: bool = False
+    map_table_state: MapTableState = "no_version"
+    map_version: str | None = None
+    map_lines: list[str] = pydantic.Field(default_factory=list)
+    recheck: crewdb.WorldRecheck = pydantic.Field(default_factory=crewdb.WorldRecheck)
+
+
+def _recheck_line(recheck: crewdb.WorldRecheck) -> str | None:
+    """What the re-check of earlier reads against the map table did, or
+    None when it changed nothing."""
+    if recheck.skipped:
+        return (
+            "The open-world encounters an earlier read kept were not checked against the game's "
+            "map table: another wowlab was writing the crew database; the next read checks them."
+        )
+    if not recheck.checked:
+        return None
+    parts: list[str] = []
+    if recheck.removed:
+        removed = (
+            f"removed {recheck.removed:,} that {'was' if recheck.removed == 1 else 'were'} in a "
+            "dungeon, raid, battleground or arena"
+        )
+        if recheck.players_removed:
+            removed += f", and {_plural(recheck.players_removed, 'player')} only those fights held"
+        parts.append(removed)
+    if recheck.set_aside:
+        parts.append(
+            f"set aside {recheck.set_aside:,} on a map the table does not know: kept, with "
+            "their players, but counted and listed nowhere until a later table names the map"
+        )
+    if recheck.brought_back:
+        parts.append(
+            f"brought back {recheck.brought_back:,} set aside before, whose map the table now "
+            "names as the open world"
+        )
+    if not parts:
+        parts.append("all are the open world")
+    tail = ""
+    if recheck.removed or recheck.set_aside:
+        which = (
+            "removed and set aside"
+            if recheck.removed and recheck.set_aside
+            else "removed"
+            if recheck.removed
+            else "set aside"
+        )
+        tail = (
+            f". The ones {which} no longer count toward the open-world record or Nemesis; the "
+            "copies wowlab keeps beside its crew database still hold them"
+        )
+    return (
+        f"Checked {_plural(recheck.checked, 'open-world encounter')} an earlier read kept "
+        f"against the game's map table: {'; '.join(parts)}{tail}."
+    )
+
+
+def _map_lines(
+    table: "maptable.MapTable",
+    folder: str,
+    recheck: crewdb.WorldRecheck,
+    unknown: list[int],
+    count: int,
+) -> list[str]:
+    """What the text says about the map table: why it was not used, the
+    fights on maps it does not hold, and what the re-check removed."""
+    lines: list[str] = []
+    said = _map_table_line(table, folder)
+    if said is not None:
+        lines.append(f"  {said}")
+    if count:
+        ids = ", ".join(str(i) for i in unknown)
+        lines.append(
+            f"  Set aside: {_plural(count, 'fight')} on a map the game's map table does not hold "
+            f"({'id' if len(unknown) == 1 else 'ids'} {ids}), so wowlab cannot tell whether "
+            f"{'it was' if count == 1 else 'they were'} in the open world: kept, with "
+            f"{'its' if count == 1 else 'their'} players, but counted and listed nowhere until "
+            "a later table names the map."
+        )
+    done = _recheck_line(recheck)
+    if done is not None:
+        lines.append(f"  {done}")
+    return lines
 
 
 def _owner_guids(lay: layout.Layout, account: str) -> tuple[dict[str, str | None], int]:
@@ -1445,8 +1710,8 @@ def _scan_lines(out: crewdb.WorldOutcome, without: int) -> list[str]:
     parts = f", in {out.parts:,} parts" if out.parts > 1 else ""
     lines = [f"  Read {how} (bytes {out.read_from:,} to {out.read_to:,}{parts})."]
     lines.append(
-        f"  Fights with players in the open world: {out.fights:,}; in a battleground, arena "
-        f"or dungeon, not counted: {out.outside_world:,}."
+        f"  Fights with players in the open world: {out.fights:,}; in a dungeon, raid, "
+        f"battleground or arena, not counted: {out.outside_world:,}."
     )
     if out.no_zone or out.no_time or out.bad_lines or out.pet_hits_no_owner:
         lines.append(
@@ -1475,11 +1740,13 @@ def _scan_lines(out: crewdb.WorldOutcome, without: int) -> list[str]:
 _SUMMED = (
     "fights",
     "outside_world",
+    "unknown_map",
     "no_zone",
     "no_time",
     "bad_lines",
     "pet_hits_no_owner",
     "encounters_added",
+    "encounters_set_aside",
     "encounters_left_out",
     "opponents",
     "allies",
@@ -1488,10 +1755,20 @@ _SUMMED = (
 )
 
 
+def _ids_joined(*lists: list[int]) -> list[int]:
+    """The instance ids of several reads, each once, in order, at most
+    `worldpvp.MAX_UNKNOWN_MAPS`."""
+    out: list[int] = []
+    for ids in lists:
+        out += [i for i in ids if i not in out]
+    return out[: worldpvp.MAX_UNKNOWN_MAPS]
+
+
 def _joined(first: crewdb.WorldOutcome, later: crewdb.WorldOutcome) -> crewdb.WorldOutcome:
     """Two parts of one read as one outcome: counts added up, from the
     first part's start to the later part's end."""
     update: dict[str, object] = {k: getattr(first, k) + getattr(later, k) for k in _SUMMED}
+    update["unknown_maps"] = _ids_joined(first.unknown_maps, later.unknown_maps)
     state = later.state
     if state == "unchanged" and first.state == "scanned":
         state = "scanned"
@@ -1504,6 +1781,7 @@ def _read_log_parts(
     path: Path,
     owners: dict[str, str | None],
     second_names: bool = False,
+    maps: dict[int, int] | None = None,
 ) -> crewdb.WorldOutcome:
     """Read the log and keep what it holds, a bounded part at a time: each
     part is read from where the last stopped and kept in its own write."""
@@ -1515,7 +1793,7 @@ def _read_log_parts(
         except OSError as exc:
             raise CliError(f"cannot read the combat log {path}: {exc.strerror or exc}") from exc
         head_sha = hashlib.sha256(head).hexdigest()
-        maps = crewdb.world_maps(target.flavor_folder, target.account)
+        pvp_maps = crewdb.world_maps(target.flavor_folder, target.account)
         resume = crewdb.world_resume(target.flavor_folder, target.account, key, size, head_sha)
         try:
             scan = worldpvp.read_world(
@@ -1523,8 +1801,9 @@ def _read_log_parts(
                 owners,
                 start=resume.start,
                 state=resume.state,
-                pvp_maps=maps,
+                pvp_maps=pvp_maps,
                 second_names=second_names,
+                maps=maps,
             )
         except OSError as exc:
             raise CliError(f"cannot read the combat log {path}: {exc.strerror or exc}") from exc
@@ -1560,13 +1839,15 @@ def crew_scan_log(
     notes: NotesOpt = False,
 ) -> None:
     """Read a combat log (turn it on in game with /combatlog) for the players
-    who fought you outside battlegrounds and arenas, and keep them in
-    wowlab's own crew database with who fought beside you and how each
-    fight ended. The log holds only what the game showed you while logging
-    was on. Each log is read once; a log that grew is read on from where
-    the last read stopped. Without PATH every log in the Logs folder not
-    read before is read (the newest 1,000), oldest first; one that cannot
-    be read is skipped and named. Nothing in the game folder is changed.
+    who fought you outside dungeons, raids, battlegrounds and arenas, and
+    keep them in wowlab's own crew database with who fought beside you and
+    how each fight ended. Which maps are instances comes from the game's
+    map table, once downloaded (wowlab db2 fetch Map). The log holds only
+    what the game showed you while logging was on. Each log is read once; a
+    log that grew is read on from where the last read stopped. Without PATH
+    every log in the Logs folder not read before is read (the newest
+    1,000), oldest first; one that cannot be read is skipped and named.
+    Nothing in the game folder is changed.
 
     \f
     JSON: CrewScanLogReport."""
@@ -1577,17 +1858,39 @@ def crew_scan_log(
             "several game accounts and no crew book to choose by; choose one with --account",
             EXIT_USAGE,
         )
-    _, lay = opened.where
+    chosen_flavor, lay = opened.where
     owners, without = _owner_guids(lay, target.account)
     if not owners:
         raise CliError(_NO_OWNER.format(account=target.account))
+    # M22-22: the open world is told from the instances by the game's map
+    # table for this flavor's version, when it is cached; the encounters an
+    # earlier read kept are checked against it once a log is found to read
+    # (`_recheck`), and what that removed is said whatever the read does.
+    table = _map_table(chosen_flavor.version)
+    maps = table.usable()
+    rechecked: list[crewdb.WorldRecheck] = []
+
+    def recheck() -> None:
+        if maps is not None and not rechecked:
+            rechecked.append(crewdb.recheck_world(target, maps))
+
+    def said_if_failed(exc: CliError) -> NoReturn:
+        line = _recheck_line(rechecked[0]) if rechecked else None
+        if line is not None:
+            _say_err(line)
+        raise exc
+
     # M21-02: four-part unit names are first and second name only where the
     # flavor's characters have second names (read from the folders, L6).
     second_names = layout.has_second_names(lay)
     assert opened.place is not None
     place = _place_words(opened.place)
     if path is not None:
-        outcome = _read_log_parts(target, path, owners, second_names)
+        recheck()
+        try:
+            outcome = _read_log_parts(target, path, owners, second_names, maps)
+        except CliError as exc:
+            said_if_failed(exc)
         label = _log_label(lay, path)
         words = f"{outcome.words} ({place}, {label})"
         lines = _scan_lines(outcome, without) if outcome.state in ("scanned", "unchanged") else []
@@ -1605,8 +1908,12 @@ def crew_scan_log(
                 f"no combat log in {lay.flavor_path}: turn logging on in game with /combatlog, "
                 "fight, then run this again"
             )
+        recheck()
         if len(found) == 1:
-            outcome = _read_log_parts(target, found[0], owners, second_names)
+            try:
+                outcome = _read_log_parts(target, found[0], owners, second_names, maps)
+            except CliError as exc:
+                said_if_failed(exc)
             label = _log_label(lay, found[0])
             files = [CrewScanLogFile(log=label, scan=outcome)]
             words = f"{outcome.words} ({place}, {label})"
@@ -1617,7 +1924,7 @@ def crew_scan_log(
             files = []
             for each in found:
                 try:
-                    got = _read_log_parts(target, each, owners, second_names)
+                    got = _read_log_parts(target, each, owners, second_names, maps)
                 except CliError as exc:
                     # One log that cannot be read does not hold the others.
                     cause = exc.__cause__
@@ -1633,9 +1940,11 @@ def crew_scan_log(
                     break
             read_any = [f for f in files if f.scan is not None]
             if not read_any:
-                raise CliError(
-                    f"none of the {len(found)} combat logs in the Logs folder could be read: "
-                    + files[-1].unreadable_text()
+                said_if_failed(
+                    CliError(
+                        f"none of the {len(found)} combat logs in the Logs folder could be read: "
+                        + files[-1].unreadable_text()
+                    )
                 )
             last = read_any[-1]
             assert last.scan is not None
@@ -1676,6 +1985,12 @@ def crew_scan_log(
             "more than one player, or the full name already has a rating or note; both rows "
             "are kept."
         )
+    done = rechecked[0] if rechecked else crewdb.WorldRecheck()
+    unknown = _ids_joined(*(o.unknown_maps for o in scans))
+    map_lines = _map_lines(
+        table, target.flavor_folder, done, unknown, sum(o.unknown_map for o in scans)
+    )
+    lines += map_lines
     report = CrewScanLogReport(
         flavor_folder=target.flavor_folder,
         account=target.account,
@@ -1695,12 +2010,19 @@ def crew_scan_log(
         logs_kept_old_keys=kept_old,
         marks_carried=carried,
         marks_not_carried=not_carried,
+        map_table=table.state == "read",
+        map_table_state=table.state,
+        map_version=table.version,
+        map_lines=[line.strip() for line in map_lines],
+        recheck=done,
     )
     failed = outcome.state in ("skipped", "elsewhere")
     if json_out:
         _emit(report)
     elif failed:
         _say_err(words)
+        for line in map_lines:  # what the re-check removed is said all the same
+            _say_err(line.strip())
     else:
         _say(words)
         for line in lines:
