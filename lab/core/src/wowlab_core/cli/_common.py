@@ -485,6 +485,13 @@ crew_app = typer.Typer(
     no_args_is_help=True,
 )
 app.add_typer(crew_app, name="crew", short_help="The players you grouped with (the crew book).")
+spy_app = typer.Typer(
+    help="What the Spy addon saved: the players it saw, your kill-on-sight and ignore lists, "
+    "the fights it counted, and your notes and tags, as of your last logout or /reload. "
+    "Read only: Spy's files are never changed.",
+    no_args_is_help=True,
+)
+app.add_typer(spy_app, name="spy", short_help="The players the Spy addon saw (read only).")
 
 # The modules of this package in the order they register their commands when
 # all are imported, which is the order `wowlab --help` lists them in. Each
@@ -512,6 +519,7 @@ _PART_NAMES = (
     "_cmd_casc",
     "_cmd_charmodel",
     "_cmd_crew",
+    "_cmd_spy",
     "_cmd_ui",
 )
 # The modules to import before a root command or group is looked up (M15-22):
@@ -540,6 +548,7 @@ _COMMAND_MODULES: dict[str, tuple[str, ...]] = {
     "char": ("_cmd_char", "_cmd_charmodel"),
     "casc": ("_cmd_casc",),
     "crew": ("_cmd_crew",),
+    "spy": ("_cmd_spy",),
 }
 
 

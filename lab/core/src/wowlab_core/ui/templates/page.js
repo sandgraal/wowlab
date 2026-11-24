@@ -3880,6 +3880,183 @@
     byId("tab-account").focus();
   });
 
+  // ─── Seen by Spy (M22-01) ───
+
+  // What the Spy addon saved, from `spy list --json`: its search, filters
+  // and order are the command's own options, so the matching and the order
+  // are Python's. A row opens what `spy show --json` prints (its `lines`),
+  // sent the row's key as an argument. Read only: nothing here writes.
+  // Every name, guild and place is other people's text: it reaches the page
+  // only as text, through `visible()`, never in an attribute, a class or an
+  // id, and no link or address is built from it.
+  const spySeen = { listSeq: 0, showSeq: 0, searchTimer: null, read: false };
+  const SPY_FILTER = [["", "Everyone"], ["enemies", "Enemies"], ["kos", "Kill on sight"]];
+  const SPY_SORT = [["last", "Last seen, newest first"], ["name", "By name"], ["level", "Highest level first"]];
+  const SPY_COLUMNS = ["Player", "Who", "Guild", "Last seen", "Place Spy last recorded", "Seen by"];
+  fillSelect(byId("spy-filter"), SPY_FILTER);
+  fillSelect(byId("spy-sort"), SPY_SORT);
+
+  function spySay(text, isError) {
+    const node = byId("spy-status");
+    announce(node, text, Boolean(isError));
+    node.classList.toggle("error", Boolean(isError));
+  }
+
+  function spyParams() {
+    const params = {};
+    const search = byId("spy-search").value;
+    if (search.trim() !== "") params.search = search;
+    const filter = byId("spy-filter").value;
+    if (filter === "enemies") params.enemies = true;
+    if (filter === "kos") params.kos_only = true;
+    params.sort = byId("spy-sort").value || "last";
+    return params;
+  }
+
+  function spyWho(p) {
+    const level = hubNum(p.level);
+    const parts = [
+      level === null ? null : "level " + level + (p.is_guess === true ? "?" : ""),
+      hubStr(p.race) ? visible(p.race) : null,
+      crewClass(p.class_token),
+    ].filter(Boolean);
+    const side = hubStr(p.faction) ? visible(p.faction) : null;
+    const enemy = p.is_enemy === true ? "hostile when Spy last looked" : null;
+    const marks = [p.kos === true ? "kill on sight" : null, p.ignored === true ? "ignored" : null];
+    return [parts.join(" "), side, enemy, ...marks].filter(Boolean).join(", ") || NOT_RECORDED;
+  }
+
+  function spyWhere(p) {
+    const zone = hubStr(p.zone) ? visible(p.zone) : "";
+    const sub = hubStr(p.sub_zone) ? visible(p.sub_zone) : "";
+    return [zone, sub].filter(Boolean).join(": ") || NOT_RECORDED;
+  }
+
+  function spySeenBy(p) {
+    const source = p.source && typeof p.source === "object" ? p.source : {};
+    const character = hubStr(source.character) ? source.character : "";
+    return character ? visible(character.split("/").pop()) : NOT_RECORDED;
+  }
+
+  function spyRow(p) {
+    const tr = make("tr");
+    tr.className = "hub-row";
+    const name = make("td");
+    const open = make("button", visible(p.key));
+    open.type = "button";
+    open.className = "hub-open";
+    open.title = "Show everything Spy saved about this player";
+    name.appendChild(open);
+    tr.appendChild(name);
+    const cells = [
+      spyWho(p),
+      hubStr(p.guild) ? visible(p.guild) : "none",
+      crewDay(p.time) || NOT_RECORDED,
+      spyWhere(p),
+      spySeenBy(p),
+    ];
+    for (const text of cells) tr.appendChild(make("td", text));
+    tr.addEventListener("click", () => openSpyPlayer(p.key));
+    return tr;
+  }
+
+  async function loadSpy() {
+    const seq = ++spySeen.listSeq;
+    spySay("Reading Spy's saved data…", false);
+    const reply = await runJson(["spy", "list"], spyParams(), true);
+    if (seq !== spySeen.listSeq) return;
+    const report = reply.data;
+    const box = byId("spy-table");
+    const warnings = byId("spy-warnings");
+    if (!report || typeof report !== "object" || !Array.isArray(report.players) || typeof report.words !== "string") {
+      box.replaceChildren();
+      box.hidden = true;
+      warnings.replaceChildren();
+      warnings.hidden = true;
+      spySay(reply.error ? shown(reply.error) : "Spy's list came back in a shape this page does not know.", true);
+      return;
+    }
+    spySeen.read = true;
+    // The version warnings and the caveat on shared rows, then the standing
+    // notes under the panel, as the command gives them.
+    const said = [...(Array.isArray(report.warnings) ? report.warnings : []), report.caveat]
+      .filter((w) => typeof w === "string");
+    warnings.replaceChildren(...said.map((w) => make("li", visible(w))));
+    warnings.hidden = said.length === 0;
+    byId("spy-notes").replaceChildren(...(Array.isArray(report.notes) ? report.notes : [])
+      .filter((n) => typeof n === "string").map((n) => make("li", visible(n))));
+    const players = report.players.filter((p) => p && typeof p.key === "string");
+    const total = hubNum(report.total);
+    if (players.length === 0) {
+      box.replaceChildren();
+      box.hidden = true;
+      if (reply.error) spySay(shown(reply.error), true);
+      else spySay(total ? "No row matches." : visible(report.words), false);
+      return;
+    }
+    const table = make("table");
+    table.className = "char-table hub crew";
+    const caption = make("caption", "Players Spy saw");
+    caption.className = "unseen";
+    table.appendChild(caption);
+    const head = make("thead");
+    const tr = make("tr");
+    for (const label of SPY_COLUMNS) {
+      const th = make("th", label);
+      th.scope = "col";
+      tr.appendChild(th);
+    }
+    head.appendChild(tr);
+    table.appendChild(head);
+    const body = make("tbody");
+    for (const p of players) body.appendChild(spyRow(p));
+    table.appendChild(body);
+    box.replaceChildren(table);
+    box.hidden = false;
+    const n = players.length;
+    const all = total === null ? n : total;
+    if (reply.error) {
+      spySay(shown(reply.error), true);
+    } else {
+      // `total` counts rows, one per character that saw a player, as the
+      // command's own match line does.
+      spySay(n === all ? visible(report.words) : "Showing " + n + " of " + pluralWord(all, " row") + ".", false);
+    }
+  }
+
+  async function openSpyPlayer(key) {
+    const seq = ++spySeen.showSeq;
+    byId("spy-player").hidden = false;
+    byId("spy-player-title").textContent = visible(key);
+    const lines = byId("spy-player-lines");
+    lines.replaceChildren(make("li", "Reading…"));
+    const reply = await runJson(["spy", "show"], { name: key }, true);
+    if (seq !== spySeen.showSeq) return;
+    const report = reply.data;
+    const said = report && Array.isArray(report.lines) ? report.lines.filter((l) => typeof l === "string") : null;
+    if (!said) {
+      lines.replaceChildren(make("li", reply.error ? shown(reply.error) : "This player's entry came back in a shape this page does not know."));
+      return;
+    }
+    lines.replaceChildren(...said.map((line) => make("li", visible(line.trim()))));
+    byId("spy-player-title").focus();
+  }
+
+  function spyAgain() {
+    if (spySeen.read) loadSpy();
+  }
+
+  byId("spy-show").addEventListener("click", () => loadSpy());
+  byId("spy-filter").addEventListener("change", () => spyAgain());
+  byId("spy-sort").addEventListener("change", () => spyAgain());
+  byId("spy-search").addEventListener("input", () => {
+    if (spySeen.searchTimer !== null) clearTimeout(spySeen.searchTimer);
+    spySeen.searchTimer = setTimeout(() => {
+      spySeen.searchTimer = null;
+      spyAgain();
+    }, 300);
+  });
+
   // ─── the crew book (M19-06, docs/LAB_PLAN.md §20.4) ───
   // The players the lab-addon's crew book keeps, from `crew list --json`:
   // its search, rating filter and order are the command's own options, so

@@ -140,6 +140,84 @@ as a value, `setmetatable({}, {})`, string concatenation, arithmetic, a bare
 identifier, an unterminated string, an unterminated table, depth 10 000, a
 NUL byte, a lone surrogate escape.
 
+### 4.4 The Spy addon's tables (M22-01)
+
+Spy is a third-party addon; `wowlab_core.spy` reads its two tables through
+`luadata` (§4.1). Read from the M22-01 capture (`fixtures/macos-71037/`,
+build 71037, 2026-11-23; the install runs a Forever port of Spy 1.3.8) and
+from the addon's own Lua on the owner's install (read, never run or
+copied). Field names are Spy's.
+
+- **`SpyPerCharDB`**, in each character folder's `SavedVariables/Spy.lua`:
+  - `version`: text, `"1.1"` on the capture (Spy's `DatabaseVersion`).
+    The reader reads any other value as 1.1 is, with a warning.
+  - `PlayerData`: keyed by `<First>-<Second>` on Forever; each row holds
+    `name` (the key again), `class` (the internal token, `PALADIN`),
+    `race`, `level`, `guild` (absent when none), `faction`, `isEnemy`,
+    `isGuess` (the level is a guess), `zone`, `subZone`, `mapID`, `mapX`,
+    `mapY` (0 to 1, floored to two decimals) and `time` (Unix seconds).
+    Spy keeps hostile players only, and deletes rows two ways
+    (`List.lua`, around lines 389 and 777 to 817):
+    - Not seen for 90 days by default (Spy's purge option, `PurgeData`: 1,
+      5, 10, 30, 60 or 90 days; a value it does not know counts as 90): the
+      row is deleted unless it holds `wins` or `loses`, or, while
+      `PurgeKoS` is off, its `kos` mark. `PurgeWinLossData` drops those
+      and kill-on-sight players alike: with it on, every row past the
+      timeout is deleted and taken off the kill-on-sight list, whatever
+      `PurgeKoS` says.
+    - Seen as friendly (`RemovePlayerData`): the row is deleted unless it
+      holds `wins` or `loses`, when only `isEnemy` is set false; there is
+      no kill-on-sight exception.
+    - `isEnemy` is the game's answer (`UnitIsEnemy`) when Spy last looked:
+      hostile to the recording character, not a faction. A duel, mind
+      control or a free-for-all area can make the same faction hostile;
+      marking a player kill on sight, or a shared row, sets it too.
+    - The place is **where the recording character stood**, never the other
+      player's position (`C_Map` for `"player"`), and it can be from a
+      different moment than `time` (`List.lua`, around lines 339 to 357):
+      `time` is set at every sighting; outside an instance the place is
+      written only when Spy first notices the player after losing sight of
+      them, and not at all when the game gives no position (0,0); inside
+      one Spy writes the instance's
+      name as `zone` and `""` as `subZone` and **leaves `mapID`, `mapX` and
+      `mapY` as they were**, so the map position can be older than `time`
+      (one row of the capture has an instance zone and no map fields,
+      having never been seen outside).
+    - A row another Spy user shared is taken only when the character's
+      profile has `UseData` on (off by default): it carries the sender's
+      place, forces `isEnemy` to true and sets `time` to its arrival.
+    - Spy's code also writes `wins` (your killing blows on them), `loses`
+      (deaths it puts on them, some guessed from who had you targeted),
+      `reason` (kill-on-sight reasons: text to `true`, or the "other"
+      reason to its text) and `kos` (1 while the player is on the
+      kill-on-sight list, cleared when removed); the reader keeps `kos` in
+      the row's unknown fields and takes the list from `KOSData`. `rank`
+      is a Classic-client field the Forever port never passes. None of
+      these is in the capture yet **[verify]**.
+  - `KOSData`: key to the time it was added (Unix seconds).
+  - `IgnoreData`: key to `true`.
+  - `Encounters`: a list of fights (the Forever port's "combat map"), each
+    `{t, n, r, k, c, l, g, m, x, y}`: time, name, result (`W` win, `L`
+    loss, `P` probable win), how it was counted (`kill`, `pet`, `group`,
+    `probable`, `recap`, `targeting`), class, level (only when not a
+    guess), guild, and the recording character's map and position. At
+    most 5000 are kept, the oldest dropped first. Empty in the capture
+    **[verify]**.
+- **`SpyDB`**, in the account's `SavedVariables/Spy.lua`: `kosData`
+  (`[list][faction][character]` to players, each the player's row with
+  `added`; the character is named `"First Second"`, with a space),
+  `removeKOSData`, `watchData` and `guildWatch` (same nesting), the
+  player's `playerNotes` and `playerTags` (`[list][player]` to text, or to
+  `"spare"` or `"rival"`), and Spy's settings (`profiles`, keyed by
+  profile name, and `profileKeys`, character to profile name; a profile's
+  `UseData` says whether that character takes shared rows, and
+  `PurgeData`, `PurgeWinLossData` and `PurgeKoS` what it drops; an option
+  a profile does not set is Spy's default: `NinetyDays`, off, off, off). The Forever
+  port adds `ForeverDebug`, a list of its own diagnostic lines. The list
+  key is Spy's realm label: `Region <realm type>` when the client reports
+  region-wide unique names (`Region RP-PvP` on the capture), else the
+  realm's name.
+
 ## 5. `Config.wtf` and `config-cache.wtf`
 
 One CVar per line: `SET name "value"`. Value is always quoted; an embedded
