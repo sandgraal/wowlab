@@ -81,6 +81,9 @@ READS = {
     # M21-08: Copy for WoWSims, on a click; without --out (which the server
     # refuses) it writes nothing.
     ("char", "sim-export"),
+    # M22-06: the Twink panel, on Show the gaps or a picker change; it reads,
+    # and downloads only into wowlab's own game-table cache.
+    ("char", "twink"),
 }
 # The picker asks for no record (M13-72): `char list --json --brief`.
 LIST_PARAMS = {"brief": True}

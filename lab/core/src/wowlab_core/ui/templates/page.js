@@ -61,6 +61,10 @@
   // builds an address for, as `dressing_sites.toml` names it. The page never
   // requests it; a link to it opens in the player's browser on a click.
   const DRESSING_ORIGIN = "https://www.wowhead.com";
+  // The twink panel's planner (M22-06): the other outside origin, checked the
+  // same way before the Twink panel's "Plan on ForeverTwinking" link takes an
+  // address `char twink --json` built. Its Wowhead links use DRESSING_ORIGIN.
+  const PLANNER_ORIGIN = "https://forevertwinking.com";
   let current = null;
   let inputs = [];
   // The plan the server offered Confirm for: its command, the parameters it
@@ -1298,6 +1302,11 @@
   // and caveat is under About this data; the Keys and Macros panels are
   // shown by Keybinds.
 
+  // The Twink panel (M22-06): the picked character's params, bumped by every
+  // twink run so a late reply draws nothing, and the candidate whose Wowhead
+  // page the panel's one Wowhead link opens.
+  const twink = { params: null, seq: 0, opened: null };
+
   const character = {
     asked: null, // the one `char list` run; asked again after a failure
     entries: [], // its characters, latest-written first
@@ -1536,6 +1545,9 @@
     const flavor = character.flavor || (typeof entry.flavor === "string" && entry.flavor ? entry.flavor : null);
     if (flavor) params.flavor = flavor;
     character.params = params;
+    // The Twink panel's run is the reader's choice (M22-06): kept until then.
+    twink.params = Object.assign({}, params);
+    byId("char-twink-show").disabled = false;
     for (const load of [loadGear, loadKeys, loadMacros, loadHistory]) {
       await load(entry, params, seq);
       if (seq !== character.seq) return;
@@ -1554,6 +1566,7 @@
     clearDressing();
     clearSim();
     character.params = null;
+    clearTwink();
     character.kept = null;
     byId("char-kept").textContent = "";
     byId("char-kept").hidden = true;
@@ -1990,7 +2003,10 @@
   // userinfo, nothing the parser would change); anything else leaves the
   // link hidden with no href, and says so. The fallback is the item ids as
   // text, with a Copy button.
-  function dressingAddress(value) {
+  // The same check for the Twink panel's links (M22-06), against the origin
+  // each one may name: DRESSING_ORIGIN for Wowhead, PLANNER_ORIGIN for the
+  // planner. `origin` is always one of the two constants.
+  function outsideAddress(value, origin) {
     if (typeof value !== "string") return null;
     let parsed = null;
     try {
@@ -1998,9 +2014,19 @@
     } catch (_) {
       return null;
     }
-    if (parsed.protocol !== "https:" || parsed.origin !== DRESSING_ORIGIN) return null;
+    if (parsed.protocol !== "https:" || parsed.origin !== origin) return null;
     if (parsed.username !== "" || parsed.password !== "" || parsed.toString() !== value) return null;
     return value;
+  }
+
+  function dressingAddress(value) {
+    return outsideAddress(value, DRESSING_ORIGIN);
+  }
+
+  // The page's one URL sink: a static link of page.html given an address
+  // `outsideAddress` returned.
+  function pointLink(link, checked) {
+    link.href = checked;
   }
 
   function clearDressing() {
@@ -2030,7 +2056,7 @@
       }
       const site = visible(String(dressing.site));
       const link = byId("char-dressing-link");
-      link.href = checked;
+      pointLink(link, checked);
       link.title = "Opens " + site + "'s dressing room in a new tab";
       link.textContent = "See it dressed on " + site;
       link.hidden = false;
@@ -2120,6 +2146,227 @@
   byId("char-sim-button").addEventListener("click", () => {
     loadSim();
   });
+
+  // ─── the Twink panel (M22-06) ───
+  // Laid out from `char twink --json`, run only when the reader presses Show
+  // the gaps or picks a bracket or a weight set: the first run of a game
+  // version downloads its game tables. Every word about a slot, an item, a
+  // gap or a note is the report's; this script ranks, scores and decides
+  // nothing. Item names are game text: textContent only. The planner and
+  // Wowhead links are static links of page.html, given an address only when
+  // it passes `outsideAddress` for its own origin.
+
+  // The panel's own line is not a live region: the tab's status line
+  // (`charSay`) is its only one, and says when a run starts and ends.
+  function twinkSay(text, isError) {
+    const node = byId("char-twink-status");
+    node.textContent = text;
+    node.classList.toggle("error", Boolean(isError));
+  }
+
+  function twinkOption(select, value, text, picked) {
+    const option = make("option", text);
+    option.value = value;
+    if (picked) option.selected = true;
+    select.appendChild(option);
+  }
+
+  function hideLink(id, text) {
+    const link = byId(id);
+    link.removeAttribute("href");
+    link.hidden = true;
+    link.textContent = text;
+    link.title = "";
+  }
+
+  function clearTwink() {
+    twink.seq += 1;
+    twink.params = null;
+    twink.opened = null;
+    byId("char-twink-panel").hidden = false;
+    byId("char-twink-show").disabled = true;
+    const bracket = byId("char-twink-bracket");
+    bracket.replaceChildren();
+    twinkOption(bracket, "", "The first at or above this level", true);
+    const weights = byId("char-twink-weights");
+    weights.replaceChildren();
+    twinkOption(weights, "", "The class's first", true);
+    bracket.value = "";
+    weights.value = "";
+    byId("char-twink").replaceChildren();
+    byId("char-twink-notes").replaceChildren();
+    hideLink("char-twink-planner", "Plan on ForeverTwinking");
+    hideLink("char-twink-wowhead", "Open on Wowhead");
+    twinkSay("", false);
+  }
+
+  async function loadTwink() {
+    if (!twink.params) return;
+    const seq = ++twink.seq;
+    const params = Object.assign({}, twink.params);
+    const bracket = byId("char-twink-bracket").value;
+    if (/^[0-9]{1,4}$/.test(bracket)) params.bracket = Number(bracket);
+    const weights = byId("char-twink-weights").value;
+    if (/^[a-z][a-z0-9_]{0,47}$/.test(weights)) params.weights = weights;
+    const working = "Scoring the gear for the bracket… (the first time for a game version, the game tables are downloaded)";
+    twinkSay(working, false);
+    charSay(working, false);
+    const reply = await runJson(["char", "twink"], params);
+    if (seq !== twink.seq) return;
+    const report = reply.data;
+    const panel = report && typeof report === "object" ? report.twink : null;
+    if (reply.error || !panel || typeof panel !== "object" || !Array.isArray(panel.slots)) {
+      byId("char-twink").replaceChildren();
+      const why = reply.error ? shown(reply.error) : "wowlab char twink printed something this page does not know.";
+      twinkSay(why, true);
+      charSay(why, true);
+      return;
+    }
+    drawTwink(panel);
+    charSay("The twink gaps are shown in the Twink panel.", false);
+  }
+
+  function drawTwink(panel) {
+    const bracket = byId("char-twink-bracket");
+    bracket.replaceChildren();
+    for (const cap of Array.isArray(panel.brackets) ? panel.brackets : []) {
+      if (typeof cap === "number" && Number.isInteger(cap)) {
+        twinkOption(bracket, String(cap), "Level " + cap, cap === panel.bracket);
+      }
+    }
+    const weights = byId("char-twink-weights");
+    weights.replaceChildren();
+    for (const name of texts(panel.weight_sets)) {
+      twinkOption(weights, name, visible(name), name === panel.weights_name);
+    }
+    // What was run is what the pickers show (a browser also selects it).
+    bracket.value = typeof panel.bracket === "number" ? String(panel.bracket) : "";
+    weights.value = typeof panel.weights_name === "string" ? panel.weights_name : "";
+    const yours = panel.weights_source === "user" ? " (your twink.toml)" : "";
+    twinkSay(visible(String(panel.words || "")) + yours, false);
+    hideLink("char-twink-wowhead", "Open on Wowhead");
+    twink.opened = null;
+    const planner = outsideAddress(panel.planner, PLANNER_ORIGIN);
+    const link = byId("char-twink-planner");
+    if (planner !== null) {
+      pointLink(link, planner);
+      link.title = "Opens ForeverTwinking's planner for this class, race and bracket in a new tab; wowlab sends nothing";
+      link.hidden = false;
+    } else {
+      hideLink("char-twink-planner", "Plan on ForeverTwinking");
+    }
+    const list = make("ul");
+    list.className = "twink-slots";
+    for (const slot of objects(panel.slots)) list.appendChild(twinkSlot(slot));
+    byId("char-twink").replaceChildren(list);
+    const notes = byId("char-twink-notes");
+    notes.replaceChildren();
+    if (planner === null && typeof panel.planner_absent === "string") {
+      notes.appendChild(make("li", "No planner link: " + visible(panel.planner_absent)));
+    }
+    for (const note of texts(panel.notes)) notes.appendChild(make("li", shown(note)));
+  }
+
+  function twinkStats(stats) {
+    const parts = objects(stats)
+      .filter((s) => typeof s.amount === "number" && typeof s.name === "string")
+      .map((s) => s.amount + " " + visible(s.name).split("_").join(" "));
+    return parts.length ? parts.join(", ") : "no stats";
+  }
+
+  function twinkScore(value) {
+    return typeof value === "number" && Number.isFinite(value) ? String(value) : "not scored";
+  }
+
+  function twinkSlot(slot) {
+    const li = make("li");
+    li.className = "twink-slot";
+    const head = make("div");
+    head.className = "twink-head";
+    const name = make("span", slotLabel(slot));
+    name.className = "gear-slot";
+    const worn = slot.worn && typeof slot.worn === "object" ? slot.worn : null;
+    let wornText = "Empty";
+    if (worn) {
+      wornText = "Worn: " + visible(String(worn.name)) + (worn.suffix && typeof worn.suffix.name === "string" && !String(worn.name).endsWith(worn.suffix.name) ? " " + visible(worn.suffix.name) : "");
+      wornText += typeof worn.score === "number" ? " · score " + twinkScore(worn.score) : " · not scored: " + visible(String(worn.unscored || ""));
+      if (worn.above_cap === true) wornText += " · above this bracket's level";
+    }
+    const wornLine = make("span", wornText);
+    wornLine.className = "twink-worn";
+    const gap = make("span", visible(String(slot.gap_words || "")));
+    gap.className = "twink-gap";
+    head.append(name, wornLine, gap);
+    li.appendChild(head);
+    const candidates = objects(slot.candidates);
+    if (candidates.length) {
+      const list = make("ol");
+      list.className = "twink-cands";
+      for (const candidate of candidates) list.appendChild(twinkCandidate(candidate));
+      li.appendChild(list);
+    }
+    return li;
+  }
+
+  function twinkCandidate(c) {
+    const li = make("li");
+    li.className = "twink-cand";
+    const main = make("div");
+    main.className = "gear-main";
+    const suffix = c.suffix && typeof c.suffix === "object" && typeof c.suffix.name === "string" ? " " + visible(c.suffix.name) : "";
+    const label = visible(String(c.name)) + suffix;
+    const button = make("button", label);
+    button.type = "button";
+    button.className = "gear-name";
+    button.setAttribute("aria-expanded", "false");
+    // A required level of 1 asks nothing more than 0 does (the CLI's words).
+    const level = typeof c.required_level === "number" && c.required_level > 1 ? "requires level " + c.required_level : "no level required";
+    const binds = c.binds_on_pickup === true ? " · binds when picked up" : "";
+    const facts = make("span", "score " + twinkScore(c.score) + " · " + level + binds + (c.worn === true ? " · worn" : ""));
+    facts.className = "twink-facts";
+    main.append(button, facts);
+    li.appendChild(main);
+    const detail = make("div");
+    detail.className = "gear-detail";
+    detail.hidden = true;
+    const list = make("dl");
+    const fact = (term, value) => list.append(make("dt", term), make("dd", value));
+    fact("Stats", twinkStats(c.stats));
+    fact("Item level", typeof c.item_level === "number" ? String(c.item_level) : "not known");
+    if (c.two_hand === true) fact("Wielded", "with both hands, so it also takes the off hand");
+    for (const other of objects(c.other_suffixes)) {
+      fact("Also rolls", visible(String(other.name || "suffix " + other.id)) + ": score " + twinkScore(other.score) + " (" + twinkStats(other.stats) + ")");
+    }
+    fact("Where to get it", typeof c.source === "string" && c.source ? visible(c.source) : "not known yet");
+    detail.appendChild(list);
+    li.appendChild(detail);
+    button.addEventListener("click", () => {
+      const open = detail.hidden;
+      // One candidate open at a time: the one the Wowhead link names.
+      if (open && twink.opened && twink.opened.button !== button) {
+        twink.opened.detail.hidden = true;
+        twink.opened.button.setAttribute("aria-expanded", "false");
+      }
+      detail.hidden = !open;
+      button.setAttribute("aria-expanded", open ? "true" : "false");
+      twink.opened = open ? { button: button, detail: detail } : null;
+      const address = open ? outsideAddress(c.wowhead, DRESSING_ORIGIN) : null;
+      if (address === null) {
+        hideLink("char-twink-wowhead", "Open on Wowhead");
+        return;
+      }
+      const link = byId("char-twink-wowhead");
+      pointLink(link, address);
+      link.textContent = "Open " + label + " on Wowhead";
+      link.title = "Opens the item's Wowhead page in a new tab; wowlab sends nothing";
+      link.hidden = false;
+    });
+    return li;
+  }
+
+  byId("char-twink-show").addEventListener("click", () => loadTwink());
+  byId("char-twink-bracket").addEventListener("change", () => loadTwink());
+  byId("char-twink-weights").addEventListener("change", () => loadTwink());
 
   // ─── the keys and macros panels (M14-09, §16.3) ───
   // Laid out from `char binds --json` and `char macros --json`. A key's
@@ -3641,20 +3888,29 @@
     key: null, // the stored key of the player shown
     pending: null, // the plan Confirm would run: { command, params, token }
     searchTimer: null,
+    // The Matches filter just changed (M22-03): the next read sends no order,
+    // so the command uses that view's own, and the Order box then shows it.
+    viewOrder: false,
   };
   const CREW_RATED = [["", "Everyone"], ["good", "Rated good"], ["bad", "Rated bad"], ["any", "Rated either way"]];
   const CREW_SORT = [
     ["last", "Last grouped, newest first"], ["met", "Most groups first"], ["name", "By name"],
     ["faced", "Most matches against you first"], ["allied", "Most matches with you first"],
+    ["world", "Latest open-world fight first"],
+    ["deaths", "Most killed by them"], ["team_losses", "Most team losses to them"],
   ];
   // `crew list --faced` and `--allied` (M20-09): players met in a match.
   // `crew list --world` (M20-18): players met in the open world, from a combat log.
+  // `crew list --nemeses` and `--rivals` (M22-03): your nemeses (by killing
+  // blows), and rival teams (by battleground and arena results).
   const CREW_PVP = [
     ["", "Everyone"], ["faced", "Against you in a match"], ["allied", "With you in a match"],
-    ["world", "Met in the open world"],
+    ["world", "Met in the open world"], ["nemeses", "Your nemeses"], ["rivals", "Rival teams"],
   ];
   const CREW_RATE = [["good", "good"], ["bad", "bad"], ["none", "none (take it away)"]];
-  const CREW_COLUMNS = ["Player", "Class", "Groups", "Last grouped", "Last instance", "Your rating", "Your note"];
+  const CREW_COLUMNS = [
+    "Player", "Class", "Record against them", "Groups", "Last grouped", "Last instance", "Your rating", "Your note",
+  ];
 
   function fillSelect(select, choices) {
     select.replaceChildren();
@@ -3705,6 +3961,20 @@
     return visible(text.charAt(0).toUpperCase() + text.slice(1).toLowerCase());
   }
 
+  // The record against them (M22-03), as `crew list --json` adds it up,
+  // its two parts apart: killing blows each way, then team results; "none"
+  // with no fight kept.
+  function crewRecord(record) {
+    const r = record && typeof record === "object" ? record : {};
+    const fights = hubNum(r.fights);
+    if (fights === null || fights === 0) return "none";
+    const me = r.personal && typeof r.personal === "object" ? r.personal : {};
+    const team = r.team && typeof r.team === "object" ? r.team : {};
+    return pluralWord(fights, " fight") +
+      "; they killed you " + (hubNum(me.deaths) || 0) + ", you killed them " + (hubNum(me.kills) || 0) +
+      "; team won " + (hubNum(team.wins) || 0) + ", lost " + (hubNum(team.losses) || 0);
+  }
+
   function crewCells(p) {
     const level = hubNum(p.level);
     const klass = crewClass(p.class_token);
@@ -3714,6 +3984,7 @@
     const met = hubNum(p.met);
     return [
       who || NOT_RECORDED,
+      crewRecord(p.record),
       met === null ? NOT_RECORDED : String(met),
       crewDay(p.last) || NOT_RECORDED,
       hubStr(p.where) ? visible(p.where) : "none",
@@ -3737,6 +4008,19 @@
     open.className = "hub-open";
     open.title = "Show everything the crew book keeps about this player";
     name.appendChild(open);
+    // The two badges (M22-03), each Python's verdict, never the page's:
+    // Nemesis from killing blows, Rival team from match results.
+    const record = p.record && typeof p.record === "object" ? p.record : {};
+    if (record.personal && record.personal.nemesis === true) {
+      const badge = make("span", "Nemesis");
+      badge.className = "badge badge-nemesis";
+      name.appendChild(badge);
+    }
+    if (record.team && record.team.rival === true) {
+      const badge = make("span", "Rival team");
+      badge.className = "badge badge-rival";
+      name.appendChild(badge);
+    }
     tr.appendChild(name);
     for (const text of crewCells(p)) tr.appendChild(make("td", text));
     tr.addEventListener("click", () => openCrewPlayer(p.key));
@@ -3756,6 +4040,14 @@
     notes.replaceChildren(...(Array.isArray(report.notes) ? report.notes : [])
       .filter((n) => typeof n === "string").map((n) => make("li", visible(n))));
     byId("crew-tools").hidden = !on;
+    // The nemeses and rival-team views say the rule they apply, in Python's
+    // words (M22-03).
+    const rule = byId("crew-rule");
+    const rules = [];
+    if (report.nemeses === true) rules.push(hubStr(report.nemesis_rule) || "");
+    if (report.rivals === true) rules.push(hubStr(report.rival_rule) || "");
+    rule.textContent = on ? visible(rules.filter(Boolean).join(" ")) : "";
+    rule.hidden = !rule.textContent;
     const box = byId("crew-table");
     const players = Array.isArray(report.players) ? report.players.filter((p) => p && typeof p.key === "string") : [];
     const unread = Array.isArray(report.unread) ? report.unread.filter((u) => u && typeof u.key === "string") : [];
@@ -3801,13 +4093,15 @@
     if (search.trim() !== "") params.search = search;
     const rated = byId("crew-rated").value;
     if (rated) params.rated = rated;
-    params.sort = byId("crew-sort").value || "last";
+    if (!crew.viewOrder) params.sort = byId("crew-sort").value || "last";
     // The match filters (M20-09): each the command's own option, sent only
     // when set, so the matching is Python's.
     const pvp = byId("crew-pvp").value;
     if (pvp === "faced") params.faced = true;
     if (pvp === "allied") params.allied = true;
     if (pvp === "world") params.world = true;
+    if (pvp === "nemeses") params.nemeses = true;
+    if (pvp === "rivals") params.rivals = true;
     const map = byId("crew-map").value;
     if (map.trim() !== "") params.map_text = map;
     const since = byId("crew-since").value;
@@ -3832,6 +4126,9 @@
       return;
     }
     crew.report = report;
+    // The Order box shows the order the command used (M22-03).
+    crew.viewOrder = false;
+    if (CREW_SORT.some(([value]) => value === report.sort)) byId("crew-sort").value = report.sort;
     drawCrew();
     // A history on show is read again: a forget or a sync may have changed it.
     if (!byId("crew-matches").hidden) showCrewMatches(false, crew.world);
@@ -3849,7 +4146,10 @@
   });
   byId("crew-rated").addEventListener("change", () => loadCrew());
   byId("crew-sort").addEventListener("change", () => loadCrew());
-  byId("crew-pvp").addEventListener("change", () => loadCrew());
+  byId("crew-pvp").addEventListener("change", () => {
+    crew.viewOrder = true;
+    loadCrew();
+  });
   byId("crew-since").addEventListener("change", () => loadCrew());
   byId("crew-map").addEventListener("input", () => {
     if (crew.searchTimer !== null) clearTimeout(crew.searchTimer);
@@ -4854,6 +5154,8 @@
     line.textContent = (day ? "From your backup of " + day : "From your backup") + why;
     line.hidden = false;
     byId("char-bar-panel").hidden = true;
+    // A kept character is not in the game folder: no twink run (M22-06).
+    byId("char-twink-panel").hidden = true;
     byId("char-header").replaceChildren(charTitle(name));
     charSay("Reading " + name + " from your backup…", false);
     const params = { character: row.realm_folder + "/" + row.label, account: row.account, flavor: row.flavor };

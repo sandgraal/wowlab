@@ -1,0 +1,435 @@
+# twink.toml: what `wowlab char twink` reads besides the game tables (M22-06).
+#
+# A file of the same name in wowlab's user config folder replaces each value
+# it sets: a bracket list, a stat name, an inventory type's slots, a class's
+# gear, a weight set (the whole set), a planner value. A weight set the
+# shipped file lacks is added after the shipped ones.
+#
+# Every value here is community knowledge or a starting point, and
+# [verify] on Forever:
+#
+# - the stat ids are the client's ITEM_MOD numbers, as community
+#   documentation and WoWSims' Forever sim (wowsims/forever, MIT, commit
+#   57df2a7a5a2bb085bfce15890a33d655bb7fd66f, tools/database/dbc/enums.go)
+#   name them;
+# - which armour and weapon types each class can use is from Classic-era
+#   class rules, and a weapon type still needs its weapon skill trained;
+# - the weights are a starting point for a battleground twink, not a
+#   simulation. Edit them.
+#
+# The WoWSims repository the stat numbers were read from is:
+#
+#   MIT License, Copyright (c) 2022 wowsims team
+#
+#   Permission is hereby granted, free of charge, to any person obtaining a
+#   copy of this software and associated documentation files (the
+#   "Software"), to deal in the Software without restriction, including
+#   without limitation the rights to use, copy, modify, merge, publish,
+#   distribute, sublicense, and/or sell copies of the Software, and to permit
+#   persons to whom the Software is furnished to do so, subject to the
+#   following conditions:
+#
+#   The above copyright notice and this permission notice shall be included
+#   in all copies or substantial portions of the Software.
+#
+#   THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
+#   OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+#   MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN
+#   NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM,
+#   DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR
+#   OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE
+#   USE OR OTHER DEALINGS IN THE SOFTWARE.
+
+[brackets]
+# The battleground level brackets a twink stops at: each is its top level.
+caps = [19, 29, 39, 49, 59]
+
+[stats]
+# ItemSparse.StatModifier_bonusStat and ItemBonus Value_0 (type 2) = a name.
+# A weight names a stat by this name. A stat not listed is shown by its
+# number and weighs nothing.
+"0" = "mana"
+"1" = "health"
+"3" = "agility"
+"4" = "strength"
+"5" = "intellect"
+"6" = "spirit"
+"7" = "stamina"
+"12" = "defense_rating"
+"13" = "dodge_rating"
+"14" = "parry_rating"
+"15" = "block_rating"
+"16" = "melee_hit_rating"
+"17" = "ranged_hit_rating"
+"18" = "spell_hit_rating"
+"19" = "melee_crit_rating"
+"20" = "ranged_crit_rating"
+"21" = "spell_crit_rating"
+"28" = "melee_haste_rating"
+"29" = "ranged_haste_rating"
+"30" = "spell_haste_rating"
+"31" = "hit_rating"
+"32" = "crit_rating"
+"35" = "resilience_rating"
+"36" = "haste_rating"
+"37" = "expertise_rating"
+"38" = "attack_power"
+"39" = "ranged_attack_power"
+"40" = "feral_attack_power"
+"41" = "healing"
+"42" = "spell_damage"
+"43" = "mana_regen"
+"44" = "armor_penetration_rating"
+"45" = "spell_power"
+"46" = "health_regen"
+"47" = "spell_penetration"
+"48" = "block_value"
+"50" = "bonus_armor"
+"51" = "fire_resistance"
+"52" = "frost_resistance"
+"53" = "holy_resistance"
+"54" = "shadow_resistance"
+"55" = "nature_resistance"
+"56" = "arcane_resistance"
+"83" = "weapon_damage"
+"84" = "holy_damage"
+"85" = "fire_damage"
+"86" = "nature_damage"
+"87" = "frost_damage"
+"88" = "shadow_damage"
+"89" = "arcane_damage"
+"90" = "two_handed_axes_skill"
+"91" = "two_handed_maces_skill"
+"92" = "two_handed_swords_skill"
+"93" = "axes_skill"
+"94" = "bows_skill"
+"96" = "daggers_skill"
+"98" = "fist_weapons_skill"
+"100" = "maces_skill"
+"101" = "polearms_skill"
+"103" = "swords_skill"
+"119" = "fire_spell_penetration"
+"121" = "frost_spell_penetration"
+"124" = "all_resistances"
+"125" = "attack_power_vs_humanoid"
+"126" = "attack_power_vs_elemental"
+"127" = "attack_power_vs_demon"
+"128" = "attack_power_vs_undead"
+"129" = "attack_power_vs_dragonkin"
+"131" = "attack_power_vs_beast"
+"132" = "attack_power_vs_mechanical"
+"133" = "spell_damage_vs_humanoid"
+"134" = "spell_damage_vs_elemental"
+"135" = "spell_damage_vs_demon"
+"136" = "spell_damage_vs_undead"
+"137" = "spell_damage_vs_dragonkin"
+
+[filters]
+# An item whose name has one of these words (any letter case) or a word
+# starting with one of the prefixes (this letter case) is a test, placeholder
+# or retired item, and is never a candidate.
+skip_words = [
+    "test", "testing", "qatest", "deprecated", "unused", "[unused]", "[ph]", "placeholder",
+    "dnd", "monster",
+]
+skip_prefixes = ["OLD"]
+# An item with no required level (0 or 1) is left out when its item level is
+# more than this many levels above the bracket's top level: most such items
+# are quest rewards, and the quest's level is the real gate (M22-08 will give
+# the quest); the rest are raid or dungeon drops.
+no_level_margin = 5
+
+[slots]
+# Item.InventoryType = the equipment slots (as `char gear` numbers them) an
+# item of that type can go in. The shirt (4) and tabard (19) carry no stats
+# a twink weighs and are left out.
+"1" = [1]  # head
+"2" = [2]  # neck
+"3" = [3]  # shoulders
+"5" = [5]  # chest
+"20" = [5]  # robe
+"6" = [6]  # waist
+"7" = [7]  # legs
+"8" = [8]  # feet
+"9" = [9]  # wrists
+"10" = [10]  # hands
+"11" = [11, 12]  # finger
+"12" = [13, 14]  # trinket
+"16" = [15]  # back
+"13" = [16]  # one-hand; also the off hand for a class that dual wields (below)
+"21" = [16]  # main hand
+"17" = [16]  # two-hand: it also takes the off hand
+"22" = [17]  # off-hand weapon: only for a class that dual wields (below)
+"14" = [17]  # shield
+"23" = [17]  # held in the off hand
+"15" = [18]  # bow
+"25" = [18]  # thrown
+"26" = [18]  # gun, crossbow, wand
+"28" = [18]  # relic
+
+# Each class by the client's class token (the record's class file): the
+# armour types (Item.SubclassID of ClassID 4: 0 miscellaneous, 1 cloth,
+# 2 leather, 3 mail, 4 plate, 6 shield, 7 libram, 8 idol, 9 totem) and weapon
+# types (of ClassID 2: 0 one-handed axe, 1 two-handed axe, 2 bow, 3 gun,
+# 4 one-handed mace, 5 two-handed mace, 6 polearm, 7 one-handed sword,
+# 8 two-handed sword, 10 staff, 13 fist weapon, 15 dagger, 16 thrown,
+# 18 crossbow, 19 wand) it can use.
+#
+# `armor_from`: an armour type learned at a level, by its number: below that
+# level it is left out (Classic-era rules: hunters and shamans learn mail at
+# 40, warriors and paladins plate at 40; [verify] on Forever). The bracket's
+# top level is the level that counts, since a twink stays there.
+# `dual_wield_from`: the level from which the class wields a one-handed
+# weapon in the off hand (Classic-era: rogues 10, warriors and hunters 20;
+# [verify]); a class without it never does.
+[classes.WARLOCK]
+armor = [0, 1]
+weapons = [7, 10, 15, 19]
+
+[classes.MAGE]
+armor = [0, 1]
+weapons = [7, 10, 15, 19]
+
+[classes.PRIEST]
+armor = [0, 1]
+weapons = [4, 10, 15, 19]
+
+[classes.DRUID]
+armor = [0, 1, 2, 8]
+weapons = [4, 5, 10, 13, 15]
+
+[classes.ROGUE]
+armor = [0, 1, 2]
+weapons = [2, 3, 4, 7, 13, 15, 16, 18]
+dual_wield_from = 10
+
+[classes.HUNTER]
+armor = [0, 1, 2, 3]
+armor_from = { "3" = 40 }
+weapons = [0, 1, 2, 3, 6, 7, 8, 10, 13, 15, 16, 18]
+dual_wield_from = 20
+
+# Two-handed axes (1) and maces (5) come to a Classic-era shaman only through
+# an Enhancement talent, so they are not listed; add them if you have it.
+[classes.SHAMAN]
+armor = [0, 1, 2, 3, 6, 9]
+armor_from = { "3" = 40 }
+weapons = [0, 4, 10, 13, 15]
+
+[classes.PALADIN]
+armor = [0, 1, 2, 3, 4, 6, 7]
+armor_from = { "4" = 40 }
+weapons = [0, 1, 4, 5, 6, 7, 8]
+
+[classes.WARRIOR]
+armor = [0, 1, 2, 3, 4, 6]
+armor_from = { "4" = 40 }
+weapons = [0, 1, 2, 3, 4, 5, 6, 7, 8, 10, 13, 15, 16, 18]
+dual_wield_from = 20
+
+# Weight sets: [weights.<class token>.<name>], stat name = points per point
+# of the stat. The first set of a class is the one used unless another is
+# picked. The spec the client reports on Forever is one per class, so a set
+# is named for a talent build, not for the client's spec. Weapon damage and
+# armour are not scored.
+[weights.WARLOCK.affliction]
+spell_power = 1.0
+spell_damage = 1.0
+shadow_damage = 1.0
+stamina = 0.8
+intellect = 0.4
+spirit = 0.15
+crit_rating = 0.5
+spell_crit_rating = 0.5
+hit_rating = 0.5
+spell_hit_rating = 0.5
+spell_penetration = 0.3
+mana_regen = 0.5
+
+[weights.WARLOCK.destruction]
+spell_power = 1.0
+spell_damage = 1.0
+shadow_damage = 0.9
+fire_damage = 0.6
+stamina = 0.7
+intellect = 0.45
+spirit = 0.1
+crit_rating = 0.7
+spell_crit_rating = 0.7
+hit_rating = 0.5
+spell_hit_rating = 0.5
+mana_regen = 0.4
+
+[weights.WARLOCK.demonology]
+stamina = 1.0
+spell_power = 0.8
+spell_damage = 0.8
+shadow_damage = 0.8
+intellect = 0.4
+spirit = 0.2
+crit_rating = 0.3
+spell_crit_rating = 0.3
+hit_rating = 0.4
+spell_hit_rating = 0.4
+
+[weights.MAGE.frost]
+spell_power = 1.0
+spell_damage = 1.0
+frost_damage = 1.0
+stamina = 0.8
+intellect = 0.5
+spirit = 0.1
+crit_rating = 0.5
+spell_crit_rating = 0.5
+hit_rating = 0.5
+spell_hit_rating = 0.5
+
+[weights.MAGE.fire]
+spell_power = 1.0
+spell_damage = 1.0
+fire_damage = 1.0
+stamina = 0.7
+intellect = 0.5
+spirit = 0.1
+crit_rating = 0.7
+spell_crit_rating = 0.7
+hit_rating = 0.5
+spell_hit_rating = 0.5
+
+[weights.PRIEST.shadow]
+spell_power = 1.0
+spell_damage = 1.0
+shadow_damage = 1.0
+stamina = 0.8
+intellect = 0.4
+spirit = 0.3
+crit_rating = 0.4
+spell_crit_rating = 0.4
+hit_rating = 0.5
+spell_hit_rating = 0.5
+
+[weights.PRIEST.holy]
+healing = 1.0
+spell_power = 0.9
+intellect = 0.6
+spirit = 0.5
+stamina = 0.6
+mana_regen = 1.0
+crit_rating = 0.3
+spell_crit_rating = 0.3
+
+[weights.DRUID.feral]
+agility = 1.0
+strength = 0.8
+attack_power = 0.5
+feral_attack_power = 0.5
+stamina = 0.8
+crit_rating = 0.6
+melee_crit_rating = 0.6
+hit_rating = 0.6
+melee_hit_rating = 0.6
+
+[weights.DRUID.balance]
+spell_power = 1.0
+spell_damage = 1.0
+nature_damage = 0.8
+arcane_damage = 0.8
+stamina = 0.8
+intellect = 0.5
+spirit = 0.2
+crit_rating = 0.5
+spell_crit_rating = 0.5
+
+[weights.ROGUE.combat]
+agility = 1.0
+strength = 0.5
+attack_power = 0.5
+stamina = 0.7
+crit_rating = 0.7
+melee_crit_rating = 0.7
+hit_rating = 0.8
+melee_hit_rating = 0.8
+
+[weights.HUNTER.marksmanship]
+agility = 1.0
+ranged_attack_power = 0.5
+attack_power = 0.4
+stamina = 0.7
+intellect = 0.3
+crit_rating = 0.7
+ranged_crit_rating = 0.7
+hit_rating = 0.8
+ranged_hit_rating = 0.8
+
+[weights.SHAMAN.enhancement]
+strength = 1.0
+agility = 0.7
+attack_power = 0.5
+stamina = 0.8
+intellect = 0.2
+crit_rating = 0.6
+melee_crit_rating = 0.6
+hit_rating = 0.7
+melee_hit_rating = 0.7
+
+[weights.SHAMAN.elemental]
+spell_power = 1.0
+spell_damage = 1.0
+nature_damage = 1.0
+fire_damage = 0.6
+stamina = 0.8
+intellect = 0.5
+crit_rating = 0.5
+spell_crit_rating = 0.5
+
+[weights.PALADIN.retribution]
+strength = 1.0
+agility = 0.5
+attack_power = 0.5
+stamina = 0.8
+intellect = 0.2
+crit_rating = 0.6
+melee_crit_rating = 0.6
+hit_rating = 0.7
+melee_hit_rating = 0.7
+
+[weights.WARRIOR.arms]
+strength = 1.0
+agility = 0.6
+attack_power = 0.5
+stamina = 0.8
+crit_rating = 0.7
+melee_crit_rating = 0.7
+hit_rating = 0.8
+melee_hit_rating = 0.8
+
+[planner]
+# The "Plan on ForeverTwinking" address: origin and path, then
+# ?class=<class word>&race=<race word>&bracket=l<cap>. The shape is from the
+# owner's browser history (?class=warlock&race=undead&bracket=l29); the
+# words for the other classes and races are [verify].
+origin = "https://forevertwinking.com"
+path = "/planner"
+
+[planner.classes]
+# The client's class token = the planner's word.
+WARLOCK = "warlock"
+MAGE = "mage"
+PRIEST = "priest"
+DRUID = "druid"
+ROGUE = "rogue"
+HUNTER = "hunter"
+SHAMAN = "shaman"
+PALADIN = "paladin"
+WARRIOR = "warrior"
+
+[planner.races]
+# The character's race id (a ChrRaces row id) = the planner's word.
+"1" = "human"
+"2" = "orc"
+"3" = "dwarf"
+"4" = "nightelf"
+"5" = "undead"
+"6" = "tauren"
+"7" = "gnome"
+"8" = "troll"

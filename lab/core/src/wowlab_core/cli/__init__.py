@@ -205,6 +205,7 @@ if TYPE_CHECKING:
     from wowlab_core import snaparchive as snaparchive
     from wowlab_core import snapshot as snapshot
     from wowlab_core import svmerge as svmerge
+    from wowlab_core import twink as twink
     from wowlab_core import wtfconfig as wtfconfig
     from wowlab_core import wtfdiff as wtfdiff
     from wowlab_core.cli import _changes as _changes
@@ -699,6 +700,9 @@ if TYPE_CHECKING:
         _SUMMARY_NOTES as _SUMMARY_NOTES,
     )
     from wowlab_core.cli._cmd_char import (
+        _TWINK_FROM as _TWINK_FROM,
+    )
+    from wowlab_core.cli._cmd_char import (
         CharBindsFile as CharBindsFile,
     )
     from wowlab_core.cli._cmd_char import (
@@ -754,6 +758,9 @@ if TYPE_CHECKING:
     )
     from wowlab_core.cli._cmd_char import (
         CharSummaryRow as CharSummaryRow,
+    )
+    from wowlab_core.cli._cmd_char import (
+        CharTwinkReport as CharTwinkReport,
     )
     from wowlab_core.cli._cmd_char import (
         KeptFlavorOpt as KeptFlavorOpt,
@@ -945,6 +952,21 @@ if TYPE_CHECKING:
         _time_notes as _time_notes,
     )
     from wowlab_core.cli._cmd_char import (
+        _twink_config as _twink_config,
+    )
+    from wowlab_core.cli._cmd_char import (
+        _twink_item as _twink_item,
+    )
+    from wowlab_core.cli._cmd_char import (
+        _twink_stats as _twink_stats,
+    )
+    from wowlab_core.cli._cmd_char import (
+        _twink_tables as _twink_tables,
+    )
+    from wowlab_core.cli._cmd_char import (
+        _twink_worn as _twink_worn,
+    )
+    from wowlab_core.cli._cmd_char import (
         _unseen_words as _unseen_words,
     )
     from wowlab_core.cli._cmd_char import (
@@ -970,6 +992,9 @@ if TYPE_CHECKING:
     )
     from wowlab_core.cli._cmd_char import (
         char_sim_export as char_sim_export,
+    )
+    from wowlab_core.cli._cmd_char import (
+        char_twink as char_twink,
     )
     from wowlab_core.cli._cmd_charmodel import (
         _AS_OF_LOOK as _AS_OF_LOOK,
