@@ -647,6 +647,7 @@ span.gear-name { cursor: auto; }
 .char-table.crew td, .char-table.crew .hub-open { unicode-bidi: isolate; }
 .crew-unread, .crew-lines, .crew-notes { margin: var(--space-2) 0; padding-left: var(--space-4); }
 .crew-unread li, .crew-lines li, .crew-notes li { overflow-wrap: anywhere; unicode-bidi: isolate; }
+.crew-people { list-style: none; margin: var(--space-2) 0; padding: 0; display: flex; flex-wrap: wrap; gap: var(--space-2); }
 .crew-player { margin-top: var(--space-3); padding: var(--space-3) var(--space-4); }
 .crew-player h3 { margin: 0 0 var(--space-2); font-family: var(--font-display); font-size: 18px; overflow-wrap: anywhere; unicode-bidi: isolate; }
 .crew-player h4 { margin: 0 0 var(--space-2); font-family: var(--font-display); font-size: 16px; font-weight: 600; color: var(--text); }

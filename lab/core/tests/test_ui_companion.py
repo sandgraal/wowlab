@@ -408,6 +408,13 @@ def test_the_looks_network_line_stays_beside_its_button() -> None:
         '<p class="names-note">Downloads the game\'s public item and zone tables from wago.tools, '
         "sending your game version.</p>\n"
     ) in html
+    # M22-22: the Crew tab's map-table download, likewise (shown only when a
+    # read says the table is not downloaded, with its button).
+    assert (
+        '<button id="crew-maps-fetch" type="button" hidden>Download the game\'s map table</button>\n'
+        '<p id="crew-maps-note" class="names-note" hidden>Downloads the game\'s public map table '
+        "from wago.tools, sending your game version.</p>\n"
+    ) in html
     outside = re.sub(r'<details class="about">.*?</details>', "", html, flags=re.DOTALL)
     # M22-20: the Practice tab's spell-timing download, likewise.
     assert (
@@ -415,7 +422,7 @@ def test_the_looks_network_line_stays_beside_its_button() -> None:
         '<p class="names-note">Downloads the game\'s public spell table from wago.tools, '
         "sending your game version.</p>\n"
     ) in html
-    assert outside.count("wago.tools") == 4
+    assert outside.count("wago.tools") == 5
 
 
 def test_the_keys_table_scrolls_inside_its_own_box() -> None:

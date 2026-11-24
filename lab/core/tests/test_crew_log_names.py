@@ -30,7 +30,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _crew_build import ACCOUNT, KEY_A, KEY_C
 from _world_lines import ALLY_C, FOE_A, log, you_hit
 from test_crew_world import _book, _scan, _write_log, owner  # noqa: F401 - the fixture
-from test_crewdb import Env, make  # noqa: F401 - the fixture
+from test_crewdb import Env, before_schema_6, before_schema_7, make  # noqa: F401 - the fixture
 
 # A launch-client player, as the real log writes one (constructed name).
 FOE_TAY = ("Player-9998-0000000E", "Tay-Soulrend-Roleplay PvP-US")
@@ -107,6 +107,8 @@ def _as_schema_4_with_old_keys(env: Env) -> None:
         conn.execute("PRAGMA secure_delete = ON")
         conn.execute("BEGIN")
         conn.execute("DROP TABLE log_names")
+        before_schema_6(conn)  # M22-22's `by_map`, which schema 4 did not have
+        before_schema_7(conn)  # M21-12's columns, which schema 4 did not have
         conn.execute(
             "UPDATE players SET player_key = ?, realm = ? WHERE player_key = ?",
             (OLD_TAY, "SoulrendRoleplayPvP", TAY),

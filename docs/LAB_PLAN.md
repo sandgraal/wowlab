@@ -7055,6 +7055,33 @@ combat is still read once combat ends. The first snapshot (`probe.pvp[1]`) is ta
 before the data is requested (the request follows its reads), so 0 rows and no fields there
 mean the data had not arrived yet, not that a call is missing.
 
+*Note (2026-11-24, M21-12, schema 3, as built).* The book's `schema` becomes 3. At the end
+of each roster pass (so only while the book is on and out of combat) the addon records the
+game's region once per book (`region`, the text of `GetCurrentRegionName()`, `"US"` on the
+owner's launch client), and asks `GetPlayerInfoByGUID` for each kept player with a `guid` and
+no `resolved_name`: the sixth value is `resolved_name` (`"<First> <Second>"` on Forever), the
+seventh `resolved_realm` (empty for the player checked on 2026-11-23; retail leaves it empty for
+your own realm, **[verify]**), the eighth `resolved_eighth` (probably the level, **[verify]**),
+with `resolved_at`; the region is kept with `region_at`. *Fix round 1 (2026-11-24, code and
+domain review):* the client is believed to name only a player it has met lately, and the 71037
+event list has no event for a late answer, so the order is: players met this session (a group
+member, a scoreboard row; the scoreboard pass asks too), with no limit; players never asked;
+one more ask, at a pass at least `RETRY_SECONDS` (5) later, of a GUID that gave nothing this
+session; then earlier sessions' misses, the oldest first. All but the first kind share
+`MAX_RESOLVES` (100) asks per pass, and the last kind also 100 per login or `/reload`. A miss
+keeps `resolve_tried_at`, the time of the ask, so it goes to the back of the queue; a name
+clears it. The pinned migration takes a schema 1 or 2 book that is on to 3
+(a schema 1 book also gains its empty `matches`); nothing else is stored. The desk reads
+schema 1 to 3. The database (§21.3) keeps the four values per player (its schema 7, after M22-22's 6) and the
+book's region as the `meta` row `book_region` (with `book_region_at`, the book's `region_at`
+or the first sync that saw it), and fills each row's first and second name and
+region with their source: `names_from` (`game`, `log`, `borrowed` or `key`) and `region_from`
+(`log`, `book`, `borrowed` or `settings`). A player only a combat log named borrows both from
+the row the game's list gave with the same GUID (`borrowed_from`, through the aliases of
+§21.3). When the book's region and the `portal` setting name different regions, a row whose
+region would come from either has none and says both (`region_conflict`). Whether the client
+answers for a GUID it met in an earlier session is **[verify]** (M21-O2).
+
 ### 21.3 The database (ADR-0039)
 
 One file per book: `<user data>/wowlab/crew/<flavor folder>/<account
@@ -7632,6 +7659,88 @@ source of tallies and fights in `crewdb`; and the kill pairs of a
 battleground's combat log (M22-15: the addon turns the log on in
 battlegrounds and `crew scan-log` reads those segments), which fold into
 that match's fight as its killing blows, never a second fight.
+
+*As built (2026-11-23, M22-22; owner decision of 2026-11-23, "Use the map
+table"; fix round 1 of 2026-11-24 folded in; supersedes the **Where** rule
+above where they differ).* The launch client writes
+`ZONE_CHANGE,33,"Shadowfang Keep",0`, a dungeon with difficulty 0, so the
+difficulty no longer decides. **Where:** a stay is the open world when its
+instance id (the zone line's first field) is a map whose `InstanceType` in
+the build-keyed `Map` table is 0; 1 (dungeon), 2 (raid), 3 (battleground)
+and any other type are not (4 is an arena by community documentation, not
+yet confirmed: no map of build 71037 has it, and 2999 "Ruins of
+Lordaeron" is type 1). With the table read, a map it does not hold is not
+the open world either: its fights are counted apart (`unknown_map`, with
+the first 20 ids in `unknown_maps`), their encounters are kept but set
+aside, never joined with an open-world one and counted nowhere (conductor
+decision of 2026-11-24: such a map is likely one a hotfix added, which the
+published table lacks, and once its log is gone nothing could rebuild the
+fights), and one text line names the ids. A player only set-aside
+encounters hold keeps a players row, for a later table, but is neither
+counted (`players_added`, doctor) nor listed (`crew list`) until one is
+brought back. A zone line with no instance id has no map to look up and
+stays on the difficulty rule (`by_map` 0), with or without the table. Map
+2996 "Warsong Gulch (Winter)" is type 0 and is not special-cased. The rule
+lives in one function, `worldpvp.in_open_world(state, pvp_maps=(), *,
+maps=None)`; `worldpvp.map_types` reads `ID` and `InstanceType` from the
+table's rows; `_Reader`, `scan_entries` and `read_world` take both `maps=`
+and M22-05's `place=` (a `place` decides instead of the rule). The arena
+span and a map the database keeps a match on stay excluded first. With no
+table read, the old reading holds (difficulty 0 is the open world), which
+counts a dungeon, raid or battleground whose zone line says 0 too.
+**The table** is read by `maptable.load(version)` from the `gamedata`
+cache only (`cached_rows`; ADR-0022, L5), for the version of the flavor
+being read, never fetched: `read`, `missing`, `unreadable` (cached but it
+cannot be read or holds no map: downloading it again would change
+nothing, since a cached table is never replaced, so no download is
+offered) or `no_version`. `maptable` is its own module so `worldpvp`,
+`live` and `crewdb` import no network module. A log read later than a
+patch is judged by the current version's table (a log names only the
+patch, §8), and `--notes` says so. **Text:** `crew scan-log` and `live
+recap` say, in one shared line, why the table was not used: not downloaded
+(naming `wowlab db2 fetch Map --flavor F` and wago.tools), downloaded but
+unreadable (with the file, and that downloading again does not replace
+it), or the version unknown. `crew scan-log --json` gains `map_table`
+(the table was read), `map_table_state`, `map_version`, `map_lines` and
+`recheck` (`checked`, `removed`, `set_aside`, `brought_back`,
+`players_removed`, `skipped`); `scan` gains `unknown_map`, `unknown_maps`
+and `encounters_set_aside`; `live recap
+--json` gains `map_table`, `map_version` and `map_words`; the Live view's
+watch gains `map_table` and `map_words`. **Store:** schema 6, after the
+`.before-schema-5` copy: `world_encounters.by_map`: 0 judged by the
+difficulty (no table), 1 the open world by the table, 2 set aside (a map
+the table does not hold). Every encounter of an older database, and every
+one kept while the table is not read, is 0; a read with the table stores
+a set-aside encounter as 2. Every open-world read (the record and
+Nemesis, `crew list --world`, `crew show`, `crew matches --world`,
+`doctor`'s counts, `live`) leaves 2 out. Once the table is read, `crew
+scan-log` runs `crewdb.recheck_world` after it has found a log to read:
+each stored encounter with `by_map` 0 or 2 is judged by the same rule with
+the table. The open world is marked 1 (one set aside before is brought
+back); a map the table does not hold is set aside (2); only a map the
+table names as an instance is deleted, with its players' parts, and each
+of those players' rows held by nothing else (never in the game's list, no
+group, no match, no rating or note, no other encounter) with its
+`log_names` row, as M21-02's re-read deletes them. One transaction after
+today's copy, written only when something changes; running it again
+changes nothing. One line says how many it checked, removed, set aside
+and brought back, how many players went with the removed ones, that they no longer count in the open-world record
+or toward Nemesis (M22-03 reads the kept encounters), and that wowlab's
+copies beside the database still hold them; a read that then fails, or is
+skipped, says that line all the same. **UI:** the Crew tab shows a read's
+map lines after its sentence; after a read that says the table is not
+downloaded, it shows "Download the game's map table" with the note that it
+downloads from wago.tools, sending the game version; the button runs `db2
+fetch` for the read's flavor and then reads again. **Live:** the watcher,
+`live.match_recap` and `live.world_since` take `maps=`; `live recap` and
+the UI's watch load the table as `crew scan-log` does, so the two keep the
+same encounters (a test reads one log both ways). `live recap` says how
+many encounters it set aside and on which maps (`world_set_aside`,
+`world_set_aside_maps`), and calls the latest place, when its map is not
+in the table, "a place the game's map table does not hold", never a match
+(`MatchRecap.unknown_map`). Not yet confirmed: a
+battleground's and a raid's zone line (no log enters one); `InstanceType`
+4; whether map 2996 can be entered.
 
 ### 21.4 The terms of ADR-0036, for the new store
 

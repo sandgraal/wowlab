@@ -59,6 +59,7 @@ CREW_ON: str = _CONSTRUCTED.CREW_ON
 CREW_PROBE_1: str = _CONSTRUCTED.CREW_PROBE_1
 CREW_PROBE: str = _CONSTRUCTED.CREW_PROBE_2  # M20-04: schema 2
 CREW_MIGRATE: str = _CONSTRUCTED.CREW_MIGRATE
+CREW_MIGRATE_3: str = _CONSTRUCTED.CREW_MIGRATE_3  # M21-12: schema 3
 CREW_PVP_ENTRY_STORE: str = _CONSTRUCTED.CREW_PVP_ENTRY_STORE
 CREW_PVP_WINNER_STORE: str = _CONSTRUCTED.CREW_PVP_WINNER_STORE
 _CREW_READ: str = _CONSTRUCTED._CREW_READ
@@ -149,7 +150,6 @@ UNIT_FIRST_ARG = frozenset(
         "GetInventorySlotInfo",
         "GetUnitName",
         "CheckInteractDistance",
-        "GetPlayerInfoByGUID",
         # M19-01: GetGuildInfo(unit), so even in Crew.lua it is a direct call
         # or a type() test, never a value handed on.
         "GetGuildInfo",
@@ -231,8 +231,18 @@ OWN_GLOBALS = frozenset({"WowLabCharDB", "WowLabDB", "SLASH_WOWLAB1", BOOK})
 CREW_FILE = "Crew.lua"
 # M20-11 (owner decision, 2026-11-20, ADR-0036's second note of that date):
 # also `UnitGUID`, held to the same gate and secret test as the others.
+# M21-12: also `GetPlayerInfoByGUID` (a name by GUID; its argument is a GUID,
+# not a unit token, so it left UNIT_FIRST_ARG) and `GetCurrentRegionName`.
 CREW_NAME_CALLS = frozenset(
-    {"UnitName", "UnitFullName", "GetNormalizedRealmName", "GetGuildInfo", "UnitGUID"}
+    {
+        "UnitName",
+        "UnitFullName",
+        "GetNormalizedRealmName",
+        "GetGuildInfo",
+        "UnitGUID",
+        "GetPlayerInfoByGUID",
+        "GetCurrentRegionName",
+    }
 )
 CREW_DB = BOOK  # the crew book's saved variable, from _crew_constructed.py
 _CREW_PATH = Path(CREW_FILE)
@@ -287,6 +297,8 @@ CREW_COMMAND_HEAD = (
 CREW_SCHEMA_NAME = "CREW_SCHEMA"
 CREW_SCHEMA_DECL_1 = "local CREW_SCHEMA = 1"
 CREW_SCHEMA_DECL = "local CREW_SCHEMA = 2"
+# M21-12: the real file is at schema 3 (CREW_PINS_3).
+CREW_SCHEMA_DECL_3 = "local CREW_SCHEMA = 3"
 # Core.lua's one call of it: in its slash handler, a statement of its own,
 # handing on exactly the typed text.
 CREW_COMMAND_CALLER = "SlashCmdList.WOWLAB"
@@ -413,15 +425,31 @@ CREW_PINS_1 = _CrewPins(
 CREW_PINS_2 = _CrewPins(
     2, CREW_SCHEMA_DECL, CREW_PROBE, CREW_COMMAND_HEAD, CREW_PINNED, CREW_EVENTS, CREW_COMPARANDS_2
 )
+# M21-12 (schema 3): schema 2's pins with the schema 3 declaration and the
+# migration that takes a schema 1 or 2 book to 3 (CREW_MIGRATE_3). Every rule
+# of schema 2 applies.
+CREW_PINNED_3 = {**CREW_PINNED_1, "crewMigrate": CREW_MIGRATE_3}
+CREW_PINS_3 = _CrewPins(
+    3,
+    CREW_SCHEMA_DECL_3,
+    CREW_PROBE,
+    CREW_COMMAND_HEAD,
+    CREW_PINNED_3,
+    CREW_EVENTS,
+    CREW_COMPARANDS_2,
+)
 
 
 def _crew_pins(tokens: list[Token]) -> _CrewPins:
     """CREW_PINS_1 for a source that declares `local CREW_SCHEMA = 1` and not
-    `= 2`; CREW_PINS_2 for every other."""
+    `= 2`; CREW_PINS_3 (M21-12) for one that declares `= 3` and neither of the
+    others; CREW_PINS_2 for every other."""
     n = len(CREW_SCHEMA_DECL_1.split(" "))
     rendered = {_render(tokens[k : k + n]) for k in range(len(tokens) - n + 1)}
     if CREW_SCHEMA_DECL_1 in rendered and CREW_SCHEMA_DECL not in rendered:
         return CREW_PINS_1
+    if CREW_SCHEMA_DECL_3 in rendered and not rendered & {CREW_SCHEMA_DECL_1, CREW_SCHEMA_DECL}:
+        return CREW_PINS_3
     return CREW_PINS_2
 
 
@@ -1154,8 +1182,8 @@ def _crew_row_walk(path: Path, tokens: list[Token], i: int) -> bool:
     Crew.lua? M20-11 (owner decision, 2026-11-20): no longer only in the
     pinned pvpSnapshot; in any function that binds `row` as
     _CREW_ROW_BINDING (what is done with each value is the secret rule's,
-    `_crew_score_problems`)."""
-    if CREW_ROW_WALK not in _relaxed(path, "PAIRS") or _crew_pins(tokens).schema != 2:
+    `_crew_score_problems`). M21-12: at schema 3 too (schema 2 or later)."""
+    if CREW_ROW_WALK not in _relaxed(path, "PAIRS") or _crew_pins(tokens).schema < 2:
         return False
     if _render(tokens[i : i + 4]) != "pairs ( row )":
         return False
@@ -7388,8 +7416,8 @@ def _crew_problems(path: Path, text: str, pins: _CrewPins | None = None) -> list
             )
     problems += _crew_schema_problems(flow, pins)
     problems += _crew_write_problems(flow, pins)
-    if pins.schema == 2:
-        problems += _crew_schema_2_problems(flow)
+    if pins.schema >= 2:
+        problems += _crew_schema_2_problems(flow, pins)
     # ns.On, only where _crew_on_call_ok allows it (item 4).
     events = _core_events_on_disk()
     for k in range(len(t) - 3):
@@ -7480,7 +7508,8 @@ def _crew_write_problems(flow: _Flow, pins: _CrewPins) -> list[str]:
     Globals and `ns` are already refused elsewhere."""
     t = flow.tokens
     problems = []
-    ungated = {pins.probe} | ({CREW_MIGRATE} if pins.schema == 2 else set())
+    migrate = pins.pinned.get("crewMigrate")
+    ungated = {pins.probe} | ({migrate} if migrate is not None else set())
     for root, ts in flow.rebound:
         if not root.endswith("."):
             continue
@@ -7513,7 +7542,7 @@ def _crew_write_problems(flow: _Flow, pins: _CrewPins) -> list[str]:
     return problems
 
 
-def _crew_schema_2_problems(flow: _Flow) -> list[str]:
+def _crew_schema_2_problems(flow: _Flow, pins: _CrewPins = CREW_PINS_2) -> list[str]:
     """M20-04 (docs/LAB_PLAN.md §21.1, §21.2): what a schema 2 Crew.lua keeps,
     beside M19's rules and the pins of CREW_PINS_2:
     - the limits: CREW_LIMITS, each one file-level constant;
@@ -7538,7 +7567,7 @@ def _crew_schema_2_problems(flow: _Flow) -> list[str]:
     for name, decl in CREW_LIMITS.items():
         problems += _crew_constant_problems(flow, name, decl)
 
-    pinned_texts = {**CREW_PINNED, "crewLoaded": CREW_PROBE}
+    pinned_texts = {**pins.pinned, "crewLoaded": pins.probe}
 
     def pinned_function(k: int, names: set[str]) -> bool:
         """Is token k inside one of the named pinned functions, as pinned (a
@@ -8811,7 +8840,9 @@ def test_m20_04_the_schema_is_read_from_the_declaration() -> None:
     both = tokenize("local CREW_SCHEMA = 1\nlocal CREW_SCHEMA = 2\n")
     assert _crew_pins(one) is CREW_PINS_1
     assert _crew_pins(both) is CREW_PINS_2
-    assert _crew_pins(tokenize("local CREW_SCHEMA = 3\n")) is CREW_PINS_2
+    # M21-12: a source that declares schema 3 alone gets the schema 3 pins.
+    assert _crew_pins(tokenize("local CREW_SCHEMA = 3\n")) is CREW_PINS_3
+    assert _crew_pins(tokenize("local CREW_SCHEMA = 2\nlocal CREW_SCHEMA = 3\n")) is CREW_PINS_2
     assert _crew_pins([]) is CREW_PINS_2
     assert CREW_PINS_1.pinned == CREW_PINNED_1 and CREW_PINS_1.events == CREW_EVENTS_1
     # M20-11: the probe's three helpers are no longer pinned.
@@ -8879,10 +8910,12 @@ class TestM2005Activation:
     failure as a real one."""
 
     def test_the_real_crew_lua_keeps_the_schema_2_rules(self) -> None:
+        # M21-12: the real file is at schema 3 now, graded with CREW_PINS_3,
+        # which are schema 2's with the schema 3 declaration and migration.
         crew = ADDON / CREW_FILE
         text = crew.read_text(encoding="utf-8")
-        assert _crew_pins(tokenize(text)) is CREW_PINS_2
-        bad = _crew_problems(crew, text, CREW_PINS_2)
+        assert _crew_pins(tokenize(text)) is CREW_PINS_3
+        bad = _crew_problems(crew, text, CREW_PINS_3)
         assert not bad, bad
 
 
