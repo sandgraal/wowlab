@@ -2,7 +2,7 @@
 
 import re
 import time
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from typing import Literal
 
 from wowlab_core import (
@@ -65,15 +65,17 @@ _SOURCES_FOLDERS = (
     "into another game folder is not counted as that app's."
 )
 _SOURCES_STALE = (
-    "A record is out of date when a folder it lists is not here, or when the addon's "
-    "TOC files give a version and none of them agrees with the version the app installed: "
-    "the addon was changed after the app last wrote its list, by hand or by another app. "
-    "CurseForge records only the name of the file it installed, such as Auctionator-352; "
-    "a name with no version in it is not compared."
+    "A record no longer matches this folder when a folder it lists is not here, or when "
+    "the addon's TOC files give a version and none of them agrees with the version the app "
+    "installed: the folder changed after the app installed it, by another of the app's "
+    "records that carries the same folder, by hand, or by another app. CurseForge records "
+    "only the name of the file it installed, such as Auctionator-352.zip; a name with no "
+    "version in it is not compared."
 )
 _SOURCES_UPDATE = (
     "An update is the one the app knew of when it last checked; wowlab fetches nothing, "
-    "so a newer one may exist."
+    "so a newer one may exist. CurseForge's latest file is called an update only when it "
+    "is dated later than the one installed (not yet confirmed)."
 )
 _SOURCES_OTHERS = (
     "Only the lists of WowUp and the CurseForge app are read. An addon installed by hand, "
@@ -99,10 +101,51 @@ def _toc_words(versions: Sequence[addonsource.TocVersion]) -> str:
     return "the TOCs here say " + ", ".join(parts)
 
 
-def _source_record_words(match: addonsource.RecordMatch) -> str:
+_Matches = Mapping[tuple[addonsource.Manager, str], addonsource.RecordMatch]
+
+
+def _shown_version(match: addonsource.RecordMatch, version: str) -> str:
+    """A version as said: CurseForge's is the name of a file."""
+    if not match.version_is_file_name:
+        return version
+    if match.version_in_name is False and version == match.installed_version:
+        return f"file {version} names no version; not compared"
+    return f"file {version}"
+
+
+def _record_name(match: addonsource.RecordMatch) -> str:
+    return match.name or match.record_id
+
+
+def _source_record_words(match: addonsource.RecordMatch, matches: _Matches) -> str:
     """What one record says about its addon, for the line of each folder it
     claims."""
     app = match.manager
+    recorded = match.installed_version
+    latest = match.latest_version
+    if match.stale:
+        # One sentence that names the app and the record; the site in brackets.
+        if not match.provider_known:
+            whose = f"{app}'s {_record_name(match)} record (it does not know where it came from)"
+        elif match.provider and match.provider.casefold() != app.casefold():
+            whose = f"{app}'s {_record_name(match)} record (from {match.provider})"
+        else:
+            whose = f"{app}'s {_record_name(match)} record"
+        words = f"{whose} no longer matches this folder"
+        if recorded:
+            words += f": it installed {_shown_version(match, recorded)}"
+            if match.version_check == "differs":
+                words += f", {_toc_words(match.toc_versions)}"
+        if match.folders_missing:
+            words += f"; not here: {', '.join(match.folders_missing)}"
+        for other_id in match.also_installed_by:
+            other = matches.get((app, other_id))
+            if other is None:
+                continue
+            installed = other.installed_version
+            shown = f" ({_shown_version(other, installed)})" if installed else ""
+            words += f"; {app}'s {_record_name(other)} record{shown} also installs this folder"
+        return words
     if not match.provider_known:
         source = f"in {app}'s list, which does not know where it came from"
     elif match.provider and match.provider.casefold() == app.casefold():
@@ -111,21 +154,13 @@ def _source_record_words(match: addonsource.RecordMatch) -> str:
         source = f"from {match.provider} through {app}"
     else:
         source = f"through {app}"
-    recorded = match.installed_version
-    if not match.stale:
-        words = f"{source}, {recorded}" if recorded else source
-        if match.ignored:
-            words += f", {app} is set to leave it alone"
-        elif match.update_available and match.latest_version:
-            words += f", update {match.latest_version} available"
-        return words
-    words = f"{source}, {app}'s record is out of date"
-    if recorded:
-        words += f": it installed {recorded}"
-        if match.version_check == "differs":
-            words += f", {_toc_words(match.toc_versions)}"
-    if match.folders_missing:
-        words += f"; not here: {', '.join(match.folders_missing)}"
+    words = f"{source}, {_shown_version(match, recorded)}" if recorded else source
+    if match.ignored:
+        words += f", {app} marks it ignored"
+    if match.update_available and latest:
+        words += f", update {_shown_version(match, latest)} available"
+    elif match.other_file_listed and latest:
+        words += f", {app} lists another file, {latest}"
     return words
 
 
@@ -192,7 +227,7 @@ def addons_list(
     """Every folder under Interface/AddOns/ with its TOC files, and where it
     came from when the WowUp app or the CurseForge app installed it into this
     game folder: the site, the version, an update the app knew of, and
-    whether its record is out of date. A folder in neither list is marked,
+    whether its record still matches the folder. A folder in neither list is marked,
     and so is one both apps list. Reads only; the apps' own files are read,
     never changed, and nothing is fetched.
 
@@ -233,7 +268,7 @@ def addons_list(
         if a.blizzard:
             bits.append("named like a Blizzard addon")
         for claim in where.claims:
-            bits.append(_source_record_words(matches[(claim.manager, claim.record_id)]))
+            bits.append(_source_record_words(matches[(claim.manager, claim.record_id)], matches))
         if len(where.managers) > 1:
             bits.append(f"both {' and '.join(where.managers)} list it")
         if where.unclaimed:

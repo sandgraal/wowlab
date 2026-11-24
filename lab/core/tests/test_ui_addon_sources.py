@@ -199,8 +199,8 @@ def test_the_records_the_stale_ones_and_the_folders_no_one_claims_constructed(
     assert beta["what"] == ["In WowUp's list", "In WowUp's list, with none of their folders here"]
     dbm, dungeons, *away = beta["items"]
     assert dbm.startswith(
-        "Deadly Boss Mods (DBM): from Wago, WowUp installed 12.1.11, WowUp's record is out of "
-        "date (not here: DBM-Core, DBM-GUI,"
+        "Deadly Boss Mods (DBM): from Wago, WowUp installed 12.1.11, WowUp's record no longer "
+        "matches this folder (not here: DBM-Core, DBM-GUI,"
     )
     assert dbm.endswith(" Folders: DBM-Brawlers.")
     assert "the TOC" not in dungeons  # r264 agrees with DBM-Dungeons-r264
@@ -208,8 +208,9 @@ def test_the_records_the_stale_ones_and_the_folders_no_one_claims_constructed(
     assert [a.split(":")[0] for a in away] == ["RareScanner", "Pawn", "Baganator", "Syndicator"]
     assert beta["loose"] == []
     assert beta["notes"] == [
-        "An out-of-date record means the addon changed after its app last wrote its list, by "
-        "hand or by another app."
+        "A record that no longer matches this folder means the folder changed after the app "
+        "installed it: by another of the app's records that carries the same folder, by hand, "
+        "or by another app."
     ]
     forever = blocks[FOREVER]
     assert forever["items"] == [] and forever["loose"] == [] and forever["notes"] == []
@@ -235,8 +236,8 @@ def test_a_stale_record_and_folders_no_one_claims_constructed(
     forever = _blocks(out["steps"][0]["sources"])[FOREVER]
     [baganator] = [i for i in forever["items"] if i.startswith("Baganator:")]
     assert baganator == (
-        "Baganator: from Wago, WowUp installed 829, WowUp's record is out of date "
-        "(the TOC here says 850). Folders: Baganator."
+        "Baganator: from Wago, WowUp installed 829, WowUp's record no longer matches this "
+        "folder (the TOC here says 850). Folders: Baganator."
     )
     listed = json.loads(_list_run(scenario, FOREVER)["stdout"])["sources"]["folders"]
     loose = [f["folder"] for f in listed if f["unclaimed"] is True]

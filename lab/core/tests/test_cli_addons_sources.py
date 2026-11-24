@@ -167,9 +167,10 @@ def test_the_beta_capture_in_text_constructed(beta: Path, home: Path) -> None:
     out = ok("addons", "list")
     assert out.splitlines()[0].startswith("DBM-Brawlers  ")  # nothing to say first
     brawlers = _line(out, "DBM-Brawlers")
-    assert "from Wago through WowUp, WowUp's record is out of date: it installed 12.1.11" in (
-        brawlers
-    )
+    assert (
+        "WowUp's Deadly Boss Mods (DBM) record (from Wago) no longer matches this folder: "
+        "it installed 12.1.11"
+    ) in brawlers
     assert "not here: DBM-Core, DBM-GUI" in brawlers
     challenges = _line(out, "DBM-Challenges")
     assert "it installed DBM-Dungeons-r264;" in challenges
@@ -229,7 +230,7 @@ def test_a_stale_record_and_folders_no_one_claims_constructed(forever: Path, hom
     }
     out = ok("addons", "list")
     assert _line(out, "Baganator").endswith(
-        "from Wago through WowUp, WowUp's record is out of date: it installed 829, "
+        "WowUp's Baganator record (from Wago) no longer matches this folder: it installed 829, "
         "the TOC here says 850"
     )
     assert _line(out, "Auctionator").endswith("not in WowUp's list")
@@ -330,13 +331,15 @@ def test_a_current_record_with_an_update_constructed(forever: Path, home: Path) 
     assert line.endswith("from Wago through WowUp, Pawn 2.13.16, update Pawn 2.13.17 available")
 
 
-def test_an_ignored_record_says_so_instead_of_the_update_constructed(
-    forever: Path, home: Path
-) -> None:
+def test_an_ignored_record_says_so_beside_the_update_constructed(forever: Path, home: Path) -> None:
+    # Domain review P6 (M22-25): what the ignore flag does is not confirmed, so
+    # it is said as the app's mark and hides nothing.
     _pawn(forever, isIgnored=True)
     line = _line(ok("addons", "list"), "Pawn")
-    assert line.endswith("from Wago through WowUp, Pawn 2.13.16, WowUp is set to leave it alone")
-    assert "update" not in line
+    assert line.endswith(
+        "from Wago through WowUp, Pawn 2.13.16, WowUp marks it ignored, "
+        "update Pawn 2.13.17 available"
+    )
 
 
 def test_an_unknown_provider_is_not_called_a_source_constructed(forever: Path, home: Path) -> None:

@@ -71,12 +71,14 @@ def test_curseforge_records_are_listed_beside_wowups_constructed(
     ]
     [auctionator] = [i for i in forever["items"] if i.startswith("Auctionator:")]
     assert auctionator == (
-        "Auctionator: from CurseForge, CurseForge installed Auctionator-352, CurseForge's record "
-        "is out of date (the TOC here says 346). Folders: Auctionator."
+        "Auctionator: from CurseForge, CurseForge installed file Auctionator-352.zip, "
+        "CurseForge's record no longer matches this folder (the TOC here says 346). "
+        "Folders: Auctionator."
     )
     [banter] = [i for i in forever["items"] if i.startswith("BanterBlocker:")]
     assert (
-        banter == "BanterBlocker: from CurseForge, version BanterBlocker. Folders: BanterBlocker."
+        banter == "BanterBlocker: from CurseForge, file BanterBlocker.zip names no version; "
+        "not compared. Folders: BanterBlocker."
     )
     # Baganator is in both lists.
     assert "In both WowUp's and CurseForge's lists (1)" in forever["what"]
@@ -124,3 +126,21 @@ def test_with_no_list_at_all_the_panel_names_both_apps_constructed(
         "wowlab found no WowUp or CurseForge list on this computer, so it cannot tell where "
         "these addons came from."
     ]
+
+
+def test_a_folder_another_record_installs_names_that_record_constructed(
+    server: Any, both: Path, tmp_path: Path
+) -> None:
+    _curseforge(both / FOREVER)
+    addons = both / FOREVER / "Interface" / "AddOns"
+    for name, version in (("Questie", "12.13.0"), ("QuestieTrace", "1.14.0")):
+        (addons / name).mkdir()
+        (addons / name / f"{name}.toc").write_bytes(f"## Version: {version}\n".encode())
+    forever, _ = _forever(server, tmp_path)
+    [trace] = [i for i in forever["items"] if i.startswith("QuestieTrace:")]
+    assert trace == (
+        "QuestieTrace: from CurseForge, CurseForge installed file QuestieTrace-v1.10.0.zip, "
+        "CurseForge's record no longer matches this folder (the TOC here says 1.14.0; "
+        "CurseForge's Questie record (file Questie-v12.13.0.zip) also installs this folder). "
+        "Folders: QuestieTrace."
+    )

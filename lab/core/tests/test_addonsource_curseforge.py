@@ -152,8 +152,10 @@ def test_the_real_records_are_read(home: Path) -> None:
     assert auctionator.name == "Auctionator" and auctionator.provider == "CurseForge"
     assert auctionator.external_id == "6124"
     assert auctionator.external_url == "https://www.curseforge.com/wow/addons/auctionator"
-    assert auctionator.installed_version == "Auctionator-352"
-    assert auctionator.latest_version == "Auctionator-352"
+    assert auctionator.installed_version == "Auctionator-352.zip"
+    assert auctionator.latest_version == "Auctionator-352.zip"
+    assert auctionator.installed_file_date == auctionator.latest_file_date
+    assert (auctionator.installed_file_date or "").startswith("2026-11-")
     assert auctionator.installed_file_id == auctionator.latest_file_id == 9761689
     assert auctionator.folders == ("Auctionator",)
     assert auctionator.ignored is False and auctionator.version_is_file_name
@@ -162,8 +164,8 @@ def test_the_real_records_are_read(home: Path) -> None:
     # Questie's file carries QuestieTrace too: two records list that folder.
     trace = [r for r in file.records if "QuestieTrace" in r.folders]
     assert sorted(r.installed_version or "" for r in trace) == [
-        "Questie-v12.13.0",
-        "QuestieTrace-v1.10.0",
+        "Questie-v12.13.0.zip",
+        "QuestieTrace-v1.10.0.zip",
     ]
 
 
@@ -361,9 +363,11 @@ def test_records_join_the_folder_their_instance_names_constructed(
     assert auctionator.stale_why == ("version_differs",)
     assert auctionator.update_available is False
     baganator = by_name["Baganator"]
-    assert baganator.installed_version == "Baganator-868" and baganator.stale
+    assert baganator.installed_version == "Baganator-868.zip" and baganator.stale
+    assert auctionator.version_is_file_name and auctionator.version_in_name is True
     banter = by_name["BanterBlocker"]
     assert banter.version_check == "unknown" and not banter.stale  # no version in its name
+    assert banter.version_in_name is False
     away = [m for m in sources.records if m.stale_why == ("no_folder_here",)]
     assert len(away) == 19
     assert [(f.folder, f.managers, f.unclaimed) for f in sources.folders] == [
@@ -379,10 +383,12 @@ def test_the_records_in_text_constructed(forever: Path, home: Path) -> None:
     (forever / "Interface" / "AddOns" / "ByHand" / "ByHand.toc").write_bytes(b"## Version: 1\n")
     out = ok("addons", "list")
     assert _line(out, "Auctionator").endswith(
-        "through the CurseForge app, CurseForge's record is out of date: it installed "
-        "Auctionator-352, the TOC here says 346"
+        "CurseForge's Auctionator record no longer matches this folder: it installed "
+        "file Auctionator-352.zip, the TOC here says 346"
     )
-    assert _line(out, "BanterBlocker").endswith("through the CurseForge app, BanterBlocker")
+    assert _line(out, "BanterBlocker").endswith(
+        "through the CurseForge app, file BanterBlocker.zip names no version; not compared"
+    )
     assert _line(out, "ByHand").endswith("not in CurseForge's list")
     assert "CurseForge also lists BroodBGs, QuestieTrace," in " ".join(out.split())
     when = out.splitlines()[-2]
@@ -428,8 +434,11 @@ def test_a_folder_both_managers_claim_says_so_constructed(forever: Path, home: P
     assert [c.manager for c in baganator.claims] == ["WowUp", "CurseForge"]
     assert folders["Auctionator"].managers == ("CurseForge",)
     line = _line(ok("addons", "list"), "Baganator")
-    assert "from Wago through WowUp, WowUp's record is out of date: it installed 829" in line
-    assert "through the CurseForge app, CurseForge's record is out of date" in line
+    assert (
+        "WowUp's Baganator record (from Wago) no longer matches this folder: it installed 829"
+        in (line)
+    )
+    assert "CurseForge's Baganator record no longer matches this folder: it installed file" in line
     assert line.endswith("both WowUp and CurseForge list it")
     raw = json.loads(ok("addons", "list", "--json"))
     assert raw["sources"]["judged_by"] == ["WowUp", "CurseForge"]
@@ -474,7 +483,7 @@ def test_a_record_naming_an_unlisted_instance_is_joined_by_name_constructed(
     assert scope.manages is None and scope.by_name == 1
     [match] = sources.records
     assert match.installation == "unknown" and match.version_check == "agrees"
-    assert match.update_available is True
+    assert match.update_available is None and match.other_file_listed  # no dates
     out = ok("addons", "list")
     assert out.splitlines()[0] == (
         "wowlab cannot tell which game folder CurseForge's list is for (1 record names a game "
@@ -482,7 +491,8 @@ def test_a_record_naming_an_unlisted_instance_is_joined_by_name_constructed(
         "folder name."
     )
     assert _line(out, "Baganator").endswith(
-        "through the CurseForge app, Baganator-850, update Baganator-851 available"
+        "through the CurseForge app, file Baganator-850.zip, CurseForge lists another file, "
+        "Baganator-851.zip"
     )
 
 
@@ -559,3 +569,82 @@ def test_live_this_machines_records_read_and_join_its_install() -> None:
         sources = addonsource.match_sources(list(lay.addons()), (file,), lay.flavor_path)
         joined += sum(1 for m in sources.records if m.installation == "this_folder")
     assert joined, "no record joined any flavor folder of this install"
+
+
+# ─── a folder another record installs, and the update rule (review round 1) ──
+
+
+def test_a_folder_another_record_installs_names_that_record_constructed(
+    forever: Path, home: Path
+) -> None:
+    """The owner's case: Questie's file carries QuestieTrace, and the folder
+    on disk is Questie's copy (1.14.0), not QuestieTrace's own (v1.10.0)."""
+    _curseforge(forever)
+    addons = forever / "Interface" / "AddOns"
+    for name, version in (("Questie", "12.13.0"), ("QuestieTrace", "1.14.0")):
+        (addons / name).mkdir()
+        (addons / name / f"{name}.toc").write_bytes(f"## Version: {version}\n".encode())
+    sources = _report().sources
+    by_name = {m.name: m for m in sources.records}
+    trace, questie = by_name["QuestieTrace"], by_name["Questie"]
+    assert trace.stale_why == ("version_differs",)
+    assert trace.also_installed_by == (questie.record_id,)
+    assert questie.also_installed_by == (trace.record_id,) and not questie.stale
+    line = _line(ok("addons", "list"), "QuestieTrace")
+    assert (
+        "CurseForge's QuestieTrace record no longer matches this folder: it installed file "
+        "QuestieTrace-v1.10.0.zip, the TOC here says 1.14.0; CurseForge's Questie record "
+        "(file Questie-v12.13.0.zip) also installs this folder  through the CurseForge app, "
+        "file Questie-v12.13.0.zip"
+    ) in line
+
+
+def _one_record(installed: dict[str, object], latest: dict[str, object]) -> bytes:
+    record = {
+        "name": "Baganator",
+        "gameInstanceID": "g",
+        "installedFile": {**installed, "modules": [{"foldername": "Baganator"}]},
+        "latestFile": latest,
+    }
+    return json.dumps([{"guid": "g", "installedAddons": [record]}]).encode()
+
+
+@pytest.mark.parametrize(
+    ("latest_date", "update", "other"),
+    [
+        ("2026-11-24T00:00:00Z", True, False),
+        ("2026-11-01T00:00:00Z", None, True),
+        (None, None, True),
+    ],
+    ids=["dated-later", "dated-earlier", "undated"],
+)
+def test_another_file_is_an_update_only_when_dated_later_constructed(
+    forever: Path, home: Path, latest_date: str | None, update: bool | None, other: bool
+) -> None:
+    installed = {"id": 1, "fileName": "Baganator-850.zip", "fileDate": "2026-11-10T00:00:00Z"}
+    latest: dict[str, object] = {"id": 2, "fileName": "Baganator-851.zip"}
+    if latest_date is not None:
+        latest["fileDate"] = latest_date
+    _curseforge(body=_one_record(installed, latest))
+    [match] = _report().sources.records
+    assert (match.update_available, match.other_file_listed) == (update, other)
+    line = _line(ok("addons", "list"), "Baganator")
+    if update:
+        assert line.endswith("update file Baganator-851.zip available")
+    else:
+        assert line.endswith("CurseForge lists another file, Baganator-851.zip")
+
+
+def test_the_same_file_is_no_update_constructed(forever: Path, home: Path) -> None:
+    same = {"id": 1, "fileName": "Baganator-850.zip", "fileDate": "2026-11-10T00:00:00Z"}
+    _curseforge(body=_one_record(same, same))
+    [match] = _report().sources.records
+    assert (match.update_available, match.other_file_listed) == (False, False)
+
+
+def test_an_ignored_record_is_said_as_the_apps_mark_constructed(forever: Path, home: Path) -> None:
+    body = json.loads(_one_record({"id": 1, "fileName": "Baganator-850.zip"}, {"id": 1}))
+    body[0]["installedAddons"][0]["preferenceIsIgnored"] = True
+    _curseforge(body=json.dumps(body).encode())
+    line = _line(ok("addons", "list"), "Baganator")
+    assert line.endswith("file Baganator-850.zip, CurseForge marks it ignored")

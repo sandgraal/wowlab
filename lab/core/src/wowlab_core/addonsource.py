@@ -59,25 +59,35 @@ The CurseForge app (M22-25) keeps one file for every game folder it
 manages, `agent/GameInstances/AddonGameInstance.json` under its own
 user-data folder (on macOS `~/Library/Application Support/CurseForge/`,
 seen 2026-11-24; on Windows `%APPDATA%\\CurseForge\\`, Electron's rule,
-**[verify]**), `docs/LAB_FORMATS.md` §16. It is opened with the same rules,
+**[verify]**, for the standalone app and the older Overwolf-hosted one alike;
+on Linux the same rule, **[verify]**), `docs/LAB_FORMATS.md` §16. It is opened with the same rules,
 and the two folders between are refused when they are links; nothing else
 there is opened (its cookies, local storage and `app.db` never are). The
 file is a list of game instances, each with its `guid` and `installPath`
 (the flavor folder itself), and its `installedAddons`. Each of those is a
 record: `instanceID` (the record's id), `name`, `addonID` (CurseForge's
-project id, which a TOC's `## X-Curse-Project-ID:` names),
+project id, which a TOC's `## X-Curse-Project-ID:` names when it gives one;
+many give none),
 `webSiteURL`, `gameInstanceID` (its instance's `guid`), `dateInstalled`,
-`preferenceIsIgnored`, and from `installedFile` and `latestFile` the `id`
-and `fileName` (no version is recorded, only the file name, such as
-`Auctionator-352.zip`, kept without its `.zip`), and from `installedFile`
-the `foldername` of each of its `modules`, the folders it claims. Its
-instances are its installations, each matched by `installPath` as WowUp's
-by location. An update is known when the latest file's `id` differs from
-the installed one's. A file name agrees with a TOC's version when that
-version stands in the name between separators (`file_name_has_version`:
-`ForeverLevelingBiS-v1.4.7-forever` and `v1.4.7` agree), or by
-`versions_agree`; a name with no digit in it (`LFGForever`) says nothing.
-A folder claimed by records of both managers says so (`FolderSource.managers`).
+`preferenceIsIgnored`, and from `installedFile` and `latestFile` the `id`,
+`fileName` and `fileDate` (no version is recorded, only the file name, such
+as `Auctionator-352.zip`), and from `installedFile` the `foldername` of each
+of its `modules`, the folders it claims. Its provider is always
+CurseForge (wowlab's own word: the file names none). Its instances are its
+installations, each matched by `installPath` (the flavor folder itself, in
+the one game folder seen) as WowUp's by location. When the latest file's
+`id` differs from the installed one's, an update is said only when the
+latest file's date is later; otherwise the app lists another file
+(`other_file_listed`). No difference has been seen yet, so the rule is
+**[verify]**. A file name agrees with a TOC's version when that version
+stands in the name between separators (`file_name_has_version`:
+`ForeverLevelingBiS-v1.4.7-forever.zip` and `v1.4.7` agree), or by
+`versions_agree`; a name with no digit in it (`LFGForever.zip`) names no
+version and is not compared (`version_in_name` False). A folder claimed by
+records of both managers says so (`FolderSource.managers`), and a record
+that no longer matches a folder another record of the same manager also
+installs names that record (`RecordMatch.also_installed_by`): the owner's
+QuestieTrace folder is Questie's copy, not QuestieTrace's own.
 """
 
 from __future__ import annotations
@@ -88,6 +98,7 @@ import re
 import stat
 import sys
 from collections.abc import Sequence
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Literal
 
@@ -142,9 +153,10 @@ CURSEFORGE_RECORDS = ("agent", "GameInstances", "AddonGameInstance.json")
 # The owner's file holds 22 records in 1.2 MB, almost all of it the path of
 # every file each addon installed; a file past this bound is not read.
 MAX_CURSEFORGE_BYTES = 64 * 1024 * 1024
-# The TOC directive naming an addon's project, per provider (seen: DBM-Core's
-# `## X-Wago-ID: qv633o6b`, its WowUp record's `externalId`; Auctionator's
-# `## X-Curse-Project-ID:` and the others', each its CurseForge `addonID`).
+# The TOC directive naming an addon's project, per provider, when the TOC
+# gives one (seen: DBM-Core's `## X-Wago-ID: qv633o6b`, its WowUp record's
+# `externalId`, and its `## X-Curse-Project-ID: 3358`, its CurseForge
+# `addonID`). Many TOCs give none (Auctionator's, Baganator's).
 _PROJECT_DIRECTIVES = {"wago": "X-Wago-ID", "curseforge": "X-Curse-Project-ID"}
 _UNKNOWN_PROVIDER = "unknown"
 
@@ -163,7 +175,9 @@ class ManagerRecord(_Model):
 
     id: str  # WowUp: the key the record is stored under; CurseForge: `instanceID`
     name: str | None
-    provider: str | None  # `providerName`: "Wago", "CurseForge", "GitHub", …
+    # WowUp: its `providerName` ("Wago", "CurseForge", "GitHub", …), as
+    # written; CurseForge: always "CurseForge", wowlab's own word.
+    provider: str | None
     external_id: str | None
     external_url: str | None
     installed_version: str | None
@@ -173,10 +187,13 @@ class ManagerRecord(_Model):
     installation_id: str | None  # WowUp's id of the game folder it installed into
     installed_at: str | None  # `installedAt` as written (ISO 8601 text)
     ignored: bool | None  # `isIgnored`: the player told WowUp to leave it alone
-    # CurseForge: the ids of the installed and latest files (an update is
-    # known when they differ), and its versions are file names.
+    # CurseForge: the ids and dates (`fileDate`, as written) of the installed
+    # and latest files, and its versions are file names (`fileName`, as
+    # written, `.zip` and all).
     installed_file_id: int | None = None
     latest_file_id: int | None = None
+    installed_file_date: str | None = None
+    latest_file_date: str | None = None
     version_is_file_name: bool = False
 
 
@@ -227,22 +244,31 @@ class RecordMatch(_Model):
     manager: Manager
     record_id: str
     name: str | None
-    provider: str | None  # as written
+    provider: str | None  # as the record gives it (ManagerRecord.provider)
     # False for WowUp's `Unknown`: an addon it lists but did not install.
     provider_known: bool
     external_url: str | None
     installed_version: str | None
     latest_version: str | None
-    # WowUp's own view when it last checked: its latest version differs from
-    # the one it installed. None when either is not recorded. Shown to a
-    # player only when the record is not ignored.
+    # True: `installed_version` and `latest_version` are file names
+    # (CurseForge's), shown as files.
+    version_is_file_name: bool = False
+    # For a file name: whether it names a version at all (False:
+    # `BanterBlocker.zip`, not compared); None for a version.
+    version_in_name: bool | None = None
+    # The app's own view when it last checked: its latest version differs
+    # from the one it installed (CurseForge: its latest file differs and is
+    # dated later). None when that cannot be told.
     update_available: bool | None
+    # CurseForge: its latest file differs from the installed one but is not
+    # dated later, so it is not called an update **[verify]**.
+    other_file_listed: bool = False
     ignored: bool | None
     # `this_folder`: the record's installation is this flavor folder;
     # `other_folder`: it is another game folder (`installation_folder`);
     # `unknown`: wowlab cannot tell, so the record is joined by name.
     installation: Literal["this_folder", "other_folder", "unknown"]
-    installation_folder: str | None  # the other game folder, as WowUp's location gives it
+    installation_folder: str | None  # the other game folder its installation names
     # Claimed folders present, as named on disk (empty for another folder's record).
     folders_here: tuple[FsText, ...]
     folders_missing: tuple[str, ...]  # claimed folders not present, as recorded
@@ -253,8 +279,12 @@ class RecordMatch(_Model):
     # `differs`: TOCs carry versions and none agrees; `unknown`: no TOC
     # carries one, no version was recorded, or the record is another folder's.
     version_check: Literal["agrees", "differs", "unknown"]
+    # `stale`: the record no longer matches the folders here (`stale_why`).
     stale: bool
     stale_why: tuple[StaleWhy, ...]
+    # Other records of the same manager that also install a folder this
+    # record claims here (QuestieTrace's folder is also Questie's), by id.
+    also_installed_by: tuple[str, ...] = ()
 
 
 class Claim(_Model):
@@ -539,11 +569,12 @@ def _int(value: Any) -> int | None:
     return value if isinstance(value, int) and not isinstance(value, bool) else None
 
 
-def _file_name(file: Any) -> str | None:
-    """A CurseForge file's name without its `.zip`, as its version."""
-    name = _text(file.get("fileName")) if isinstance(file, dict) else None
-    if name is None:
-        return None
+def _file_field(file: Any, key: str) -> str | None:
+    return _text(file.get(key)) if isinstance(file, dict) else None
+
+
+def _name_stem(name: str) -> str:
+    """A file name without its `.zip`, the part that may carry a version."""
     return name[:-4] if name.casefold().endswith(".zip") and len(name) > 4 else name
 
 
@@ -567,8 +598,8 @@ def _curseforge_record(entry: dict[str, Any], instance: str | None, at: int) -> 
         provider=CURSEFORGE_APP,
         external_id=None if addon is None else str(addon),
         external_url=_text(entry.get("webSiteURL")),
-        installed_version=_file_name(installed),
-        latest_version=_file_name(latest),
+        installed_version=_file_field(installed, "fileName"),
+        latest_version=_file_field(latest, "fileName"),
         folders=_modules(installed),
         client_type=None,
         installation_id=_text(entry.get("gameInstanceID")) or instance,
@@ -576,6 +607,8 @@ def _curseforge_record(entry: dict[str, Any], instance: str | None, at: int) -> 
         ignored=ignored if isinstance(ignored, bool) else None,
         installed_file_id=_int(installed.get("id")) if isinstance(installed, dict) else None,
         latest_file_id=_int(latest.get("id")) if isinstance(latest, dict) else None,
+        installed_file_date=_file_field(installed, "fileDate"),
+        latest_file_date=_file_field(latest, "fileDate"),
         version_is_file_name=True,
     )
 
@@ -691,7 +724,8 @@ def file_name_has_version(file_name: str, toc_version: str) -> bool | None:
     separator (`-`, `_`, a space or `+`) or a `v` that follows one, and
     before its end or a separator; or `versions_agree` says they agree.
     None when the name has no digit, so it names no version
-    (`LFGForever`)."""
+    (`LFGForever`). A trailing `.zip` is not part of the name compared."""
+    file_name = _name_stem(file_name)
     if not any(c.isdigit() for c in file_name):
         return None
     if versions_agree(toc_version, file_name):
@@ -760,7 +794,8 @@ def _versions(addons: list[layout.Addon]) -> tuple[TocVersion, ...]:
 
 
 def _inside(location: str, flavor: Path) -> bool:
-    """Whether WowUp's `location` is the flavor folder or inside it."""
+    """Whether an installation's `location` (WowUp's client, CurseForge's
+    folder) is the flavor folder or inside it."""
     try:
         where = Path(os.path.realpath(location))
         root = Path(os.path.realpath(flavor))
@@ -781,6 +816,17 @@ def _location_folder(installation: Installation) -> str:
     return str(Path(installation.location).parent)
 
 
+def _later(first: str | None, second: str | None) -> bool:
+    """Whether the ISO 8601 date `first` is later than `second`; False when
+    either cannot be read."""
+    if first is None or second is None:
+        return False
+    try:
+        return datetime.fromisoformat(first) > datetime.fromisoformat(second)
+    except (TypeError, ValueError):
+        return False
+
+
 def _match(
     manager: Manager,
     record: ManagerRecord,
@@ -799,12 +845,21 @@ def _match(
     provider_known = bool(record.provider) and (
         (record.provider or "").strip().casefold() != _UNKNOWN_PROVIDER
     )
+    other_file = False
     if record.installed_file_id is not None and record.latest_file_id is not None:
-        update: bool | None = record.installed_file_id != record.latest_file_id
+        update: bool | None = False
+        if record.installed_file_id != record.latest_file_id:
+            # Another file is an update only when it is dated later [verify].
+            newer = _later(record.latest_file_date, record.installed_file_date)
+            update = True if newer else None
+            other_file = not newer
     elif record.installed_version is None or record.latest_version is None:
         update = None
     else:
         update = record.installed_version.strip() != record.latest_version.strip()
+    in_name: bool | None = None
+    if record.version_is_file_name and record.installed_version is not None:
+        in_name = any(c.isdigit() for c in _name_stem(record.installed_version))
     common: dict[str, Any] = {
         "manager": manager,
         "record_id": record.id,
@@ -814,7 +869,10 @@ def _match(
         "external_url": record.external_url,
         "installed_version": record.installed_version,
         "latest_version": record.latest_version,
+        "version_is_file_name": record.version_is_file_name,
+        "version_in_name": in_name,
         "update_available": update,
+        "other_file_listed": other_file,
         "ignored": record.ignored,
         "installation": where,
         "installation_folder": other,
@@ -927,14 +985,29 @@ def match_sources(
         judges = file.state == "read" and scope.manages is not False
         if judges and file.manager not in judged_by:
             judged_by.append(file.manager)
+        own: list[RecordMatch] = []
         for record in file.records:
             key = record.installation_id
             where: Literal["this_folder", "other_folder", "unknown"] = (
                 place[key] if key is not None and key in place else "unknown"
             )
-            match = _match(file.manager, record, by_name, where, folder_of.get(key or ""))
+            own.append(_match(file.manager, record, by_name, where, folder_of.get(key or "")))
+        # Which other records of this manager install a folder each claims here.
+        holders: dict[str, list[str]] = {}
+        for match in own:
+            for folder in match.folders_here:
+                holders.setdefault(fold_name(folder), []).append(match.record_id)
+        for match in own:
+            others = [
+                r
+                for folder in match.folders_here
+                for r in holders.get(fold_name(folder), ())
+                if r != match.record_id
+            ]
+            if others:
+                match = match.model_copy(update={"also_installed_by": tuple(dict.fromkeys(others))})
             matches.append(match)
-            claim = Claim(manager=file.manager, record_id=record.id)
+            claim = Claim(manager=file.manager, record_id=match.record_id)
             for folder in match.folders_here:
                 claims.setdefault(fold_name(folder), []).append(claim)
             for folder in match.same_name_here:

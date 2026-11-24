@@ -6608,7 +6608,7 @@
   // --json`: the records of the addon managers wowlab reads (the WowUp
   // app's and, since M22-25, the CurseForge app's), joined to the addon
   // folders of their own game folder by the command. Every judgement
-  // (which game folder an app manages, a record out of date, an update, a
+  // (which game folder an app manages, a record that no longer matches, an update, a
   // folder in no list or in both) is the command's;
   // the page lays it out. Read the first time the Addons view is shown,
   // after the patch-day reads, one run at a time. Nothing here edits
@@ -6708,10 +6708,20 @@
     }).join(", ");
   }
 
+  // A version as said: CurseForge's is the name of a file, and one with
+  // no version in it is not compared.
+  function sourcesVersion(record, version) {
+    if (record.version_is_file_name !== true) return visible(version);
+    if (record.version_in_name === false && version === record.installed_version) {
+      return "file " + visible(version) + " names no version; not compared";
+    }
+    return "file " + visible(version);
+  }
+
   // One record as a line: its name, the site, the version its app
-  // installed, and the update the app knew of, that the app leaves it
-  // alone, or why the record is out of date.
-  function sourcesRecord(record) {
+  // installed, and the update the app knew of, that the app marks it
+  // ignored, or why the record no longer matches this folder.
+  function sourcesRecord(record, all) {
     const item = make("li");
     item.className = "sources-item";
     const app = sourcesApp(record);
@@ -6722,7 +6732,10 @@
     else if (hubStr(record.provider)) words.push("from " + visible(record.provider));
     const installed = hubStr(record.installed_version);
     const stale = record.stale === true;
-    if (installed) words.push((stale ? app + " installed " : "version ") + visible(installed));
+    if (installed) {
+      words.push((stale ? app + " installed " : record.version_is_file_name === true ? "" : "version ") +
+        sourcesVersion(record, record.installed_version));
+    }
     if (stale) {
       const why = texts(record.stale_why);
       const parts = [];
@@ -6732,11 +6745,23 @@
       if (why.includes("folders_missing") && texts(record.folders_missing).length) {
         parts.push("not here: " + texts(record.folders_missing).map(visible).join(", "));
       }
-      words.push(app + "'s record is out of date" + (parts.length ? " (" + parts.join("; ") + ")" : ""));
-    } else if (record.ignored === true) {
-      words.push(app + " is set to leave it alone");
-    } else if (record.update_available === true && hubStr(record.latest_version)) {
-      words.push("update " + visible(record.latest_version) + " available when " + app + " last checked");
+      // Another record of the same app that installs a folder this one claims.
+      for (const id of texts(record.also_installed_by)) {
+        const other = (all || []).find((r) => r.record_id === id && r.manager === record.manager);
+        if (!other) continue;
+        const otherName = hubStr(other.name) ? other.name : other.record_id;
+        parts.push(app + "'s " + visible(otherName) + " record" +
+          (hubStr(other.installed_version) ? " (" + sourcesVersion(other, other.installed_version) + ")" : "") +
+          " also installs this folder");
+      }
+      words.push(app + "'s record no longer matches this folder" + (parts.length ? " (" + parts.join("; ") + ")" : ""));
+    } else {
+      if (record.ignored === true) words.push(app + " marks it ignored");
+      if (record.update_available === true && hubStr(record.latest_version)) {
+        words.push("update " + sourcesVersion(record, record.latest_version) + " available when " + app + " last checked");
+      } else if (record.other_file_listed === true && hubStr(record.latest_version)) {
+        words.push(app + " lists another file, " + visible(record.latest_version));
+      }
     }
     item.appendChild(make("span", (words.length ? ": " + words.join(", ") : "") + "."));
     const here = texts(record.folders_here);
@@ -6820,9 +6845,9 @@
     for (const app of apps) {
       const own = records.filter((r) => sourcesApp(r) === app);
       sourcesList(item, "In " + app + "'s list",
-        own.filter((r) => texts(r.folders_here).length > 0).map(sourcesRecord));
+        own.filter((r) => texts(r.folders_here).length > 0).map((r) => sourcesRecord(r, records)));
       sourcesList(item, "In " + app + "'s list, with none of their folders here",
-        own.filter((r) => texts(r.folders_here).length === 0).map(sourcesRecord));
+        own.filter((r) => texts(r.folders_here).length === 0).map((r) => sourcesRecord(r, records)));
     }
     const both = read.folders.filter((f) => texts(f.managers).length > 1);
     if (both.length) {
@@ -6839,7 +6864,8 @@
     }
     if (anyRead && managed) {
       sourcesLine(item, "sources-note",
-        "An out-of-date record means the addon changed after its app last wrote its list, by hand or by another app.");
+        "A record that no longer matches this folder means the folder changed after the app installed it: " +
+        "by another of the app's records that carries the same folder, by hand, or by another app.");
     }
     return item;
   }
