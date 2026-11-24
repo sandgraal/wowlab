@@ -139,7 +139,7 @@ def test_the_links_href_is_the_reports_url(server: Any, forever: Path, tmp_path:
     assert report["purist"]["left_out"] == []
     out = _drive(tmp_path / "node", scenario)
     view = out["steps"][-1]
-    assert view["linkHidden"] is False and view["href"] == url == view["hrefAttr"]
+    assert view["linkHidden"] is False and view["href"] == url
     assert view["linkText"] == "See my look"
     assert view["linkTitle"] == "Opens Purist in a new tab; wowlab sends nothing"
     assert view["note"] == ""
@@ -238,5 +238,8 @@ def test_a_later_pick_clears_the_link(server: Any, forever: Path, tmp_path: Path
     _set_report(scenario, DANGLING, report)
     out = _drive(tmp_path / "node", scenario)
     first, last = out["steps"][1], out["steps"][3]
-    assert first["linkHidden"] is False and first["hrefAttr"] is not None
+    assert (
+        first["linkHidden"] is False
+        and first["href"] == _report(scenario, SANGRAAL)["purist"]["url"]
+    )
     assert last["linkHidden"] is True and last["hrefAttr"] is None and last["note"] == ""
