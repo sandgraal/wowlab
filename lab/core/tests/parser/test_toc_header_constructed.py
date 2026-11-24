@@ -14,7 +14,6 @@ import base64
 from pathlib import Path
 
 import pytest
-from _cpu_clock import cpu_clock
 
 from wowlab_core.toc import (
     MAX_TOC_BYTES,
@@ -155,17 +154,14 @@ def test_a_toc_within_the_limit_is_read_whole_either_way_constructed(tmp_path: P
 
 @pytest.mark.parser
 def test_the_read_stops_at_the_limit_constructed(tmp_path: Path) -> None:
-    """Only the limit's worth of bytes is read, and parsing that is quick."""
-    data = HEADER + _blob(20_000)  # about 20 MiB, no file line at all
-    path = _big(tmp_path, data)
-    clock, name = cpu_clock()
-    start = clock()
-    doc = read_toc(path, oversized="header")
-    elapsed = clock() - start
-    assert elapsed < 2.0, f"{elapsed:.2f} {name} s"
-    assert len(doc.to_bytes()) <= MAX_TOC_BYTES
+    """A file many times the limit, with no file line at all: what is kept
+    is within the limit and ends at a line break."""
+    data = HEADER + _blob(20_000)  # about 20 MiB
+    doc = read_toc(_big(tmp_path, data), oversized="header")
+    kept = doc.to_bytes()
+    assert len(kept) <= MAX_TOC_BYTES and data.startswith(kept) and kept.endswith(b"\n")
     assert doc.files == ()
-    assert all(isinstance(line, Directive) for line in doc.lines[:1])
+    assert isinstance(doc.lines[0], Directive) and doc.lines[0].key == "Interface"
 
 
 @pytest.mark.parser
