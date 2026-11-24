@@ -50,7 +50,7 @@ from _crew_build import FLAVOR, KEY_A, KEY_B, KEY_C, KEY_D, book, match, player
 _TEMPLATES = Path(ui.__file__).resolve().parent / "templates"
 ARMORY = "https://worldofwarcraft.blizzard.com/en-us/forever/us/armory/character/"
 JOURNEY = "https://wofwforever.com/en/tools/one-shot-manager/?region=us&"
-RULESET = "the character's ruleset (normal, PvP, RP or RP PvP) is not known"
+RULESET = "the character's ruleset (Normal, PvP, Roleplay or Roleplay PvP) is not known"
 
 _VIEW = r"""
 // Node's own URL parser, as `test_ui_dressing.py` gives it: the page's

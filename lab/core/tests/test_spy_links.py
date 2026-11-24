@@ -29,7 +29,7 @@ from wowlab_core import cli, links
 ARMORY = "https://worldofwarcraft.blizzard.com/en-us/forever/us/armory/character/"
 JOURNEY = "https://wofwforever.com/en/tools/one-shot-manager/?region=us&"
 SITES = ["armory_character", "journey", "raiderio"]
-RULESET = "the character's ruleset (normal, PvP, RP or RP PvP) is not known"
+RULESET = "the character's ruleset (Normal, PvP, Roleplay or Roleplay PvP) is not known"
 
 
 def _by_link(made: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
