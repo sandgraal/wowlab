@@ -221,6 +221,7 @@
 <button id="crew-world-show" type="button">Show the open-world fights</button>
 <button id="crew-scan-log" type="button">Read the combat logs not read before</button>
 </div>
+<p id="crew-rule" class="crew-words" hidden></p>
 <p id="crew-status" role="status"></p>
 <div id="crew-table" class="panel hub-table" role="region" aria-label="Crew" tabindex="0"></div>
 <ul id="crew-unread" class="crew-unread" hidden></ul>
@@ -252,11 +253,30 @@
 </div>
 <pre id="crew-act-said" class="plan-lines" hidden></pre>
 </section>
+<section id="spy-panel" class="panel crew-player" aria-labelledby="spy-title">
+<h3 id="spy-title" tabindex="-1">Seen by Spy</h3>
+<p class="crew-words">The players the Spy addon saw, with the character that saw them, as of your last logout or /reload. Spy's files are only read.</p>
+<div class="toolbar">
+<label>Find <input id="spy-search" type="search" placeholder="part of a name or guild" autocomplete="off" spellcheck="false"></label>
+<label>Show <select id="spy-filter"></select></label>
+<label>Order <select id="spy-sort"></select></label>
+<button id="spy-show" type="button">Show what Spy saw</button>
+</div>
+<p id="spy-status" role="status"></p>
+<ul id="spy-warnings" class="crew-unread" hidden></ul>
+<div id="spy-table" class="hub-table" role="region" aria-label="Seen by Spy" tabindex="0" hidden></div>
+<section id="spy-player" class="crew-player" aria-labelledby="spy-player-title" hidden>
+<h4 id="spy-player-title" tabindex="-1"></h4>
+<ul id="spy-player-lines" class="crew-lines"></ul>
+</section>
+</section>
 <details class="about"><summary>About this data</summary>
-<p class="intro">The crew book is the lab-addon's list of the players you grouped with, read with <code>wowlab crew list</code>; picking a player shows what <code>wowlab crew show</code> prints, and the match history is what <code>wowlab crew matches</code> prints. Names, guilds, notes, instance and map names are other people's text and are shown exactly as text, never as a link. Changing a rating or a note, or forgetting a player, runs <code>wowlab crew rate</code>, <code>wowlab crew note</code> or <code>wowlab crew forget</code>: each shows its plan first and changes nothing until you press Confirm; the game must be closed, a snapshot is taken first, and <code>wowlab undo</code> puts back what was there. Confirm runs only the plan shown: if the crew book's files changed after the plan, it is refused and nothing is written. For a player only wowlab's crew database keeps (the game's list dropped them), a rating or note changes that database alone: the plan says so, it cannot be undone, and Confirm is refused if their rating or note there changed after the plan.</p>
+<p class="intro">The crew book is the lab-addon's list of the players you grouped with, read with <code>wowlab crew list</code>; picking a player shows what <code>wowlab crew show</code> prints, and the match history is what <code>wowlab crew matches</code> prints. Seen by Spy reads the Spy addon's saved files with <code>wowlab spy list</code>, and picking a player there shows what <code>wowlab spy show</code> prints; nothing in Spy's files is changed. Names, guilds, notes, instance and map names are other people's text and are shown exactly as text, never as a link. Changing a rating or a note, or forgetting a player, runs <code>wowlab crew rate</code>, <code>wowlab crew note</code> or <code>wowlab crew forget</code>: each shows its plan first and changes nothing until you press Confirm; the game must be closed, a snapshot is taken first, and <code>wowlab undo</code> puts back what was there. Confirm runs only the plan shown: if the crew book's files changed after the plan, it is refused and nothing is written. For a player only wowlab's crew database keeps (the game's list dropped them), a rating or note changes that database alone: the plan says so, it cannot be undone, and Confirm is refused if their rating or note there changed after the plan.</p>
 <div id="crew-about" class="crew-about">
 <p id="crew-keeps"></p>
 <ul id="crew-notes" class="crew-notes"></ul>
+<h3>Seen by Spy</h3>
+<ul id="spy-notes" class="crew-notes"></ul>
 </div>
 </details>
 </section>
