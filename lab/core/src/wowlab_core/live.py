@@ -27,13 +27,19 @@ is a map a match was kept on, or a player fought you there. Who you fought
 is read by `worldpvp`'s own fight rule, counted inside that place
 (`place=`); your killing blows are the `PARTY_KILL` lines by you or a unit
 the log marks as yours whose target is a player, your deaths the
-`UNIT_DIED` lines of your GUID. The match is over when the log left the
-place (a later zone line, or a newer log), or showed the arena's end line.
-The result comes from the arena's end line (the winning team against your
-team on its start line, not yet confirmed), else from the crew book's match
-on the same map near the same time, which the lab-addon saves only at
-`/reload` or logout. That a battleground writes a zone line whose difficulty
-is not 0, and which lines end a battleground, are not yet confirmed.
+`UNIT_DIED` lines of your GUID; both are unknown (None) when the stay
+holds no line but its zone and header lines (the log was off). A zone line
+right after a `COMBAT_LOG_VERSION` header that names the same place again
+is the log switched back on there, not a new stay: the stay goes on, and
+its `log_gaps` count those. The match is over when the log left the place
+(a later zone line, or a newer log), or showed the arena's end line, and it
+ends at that line. The result comes from the arena's end line (the winning
+team against your team on its start line, not yet confirmed), else from the
+crew book's match on the same map nearest the match's end, from
+`_RESULT_BEFORE` before its start to `_RESULT_AFTER` after its end; the
+lab-addon saves the book only at `/reload` or logout. Which places are the
+open world is `worldpvp.in_open_world`'s to decide; which lines end a
+battleground is not yet confirmed.
 
 **The session recap** (`session_recap`): the character's lab-addon record
 against the save before it (`charhistory`: gear, currencies, level), the
@@ -106,6 +112,10 @@ _MAX_STAYS = 8  # places not the open world a match recap looks at, newest first
 _RESULT_BEFORE = 120  # seconds before a stay's start a book match may be from
 _RESULT_AFTER = 900  # and after its end (the addon reads the scoreboard at the end)
 _ZONE_EVENTS = frozenset({"ZONE_CHANGE", "ARENA_MATCH_START", "ARENA_MATCH_END"})
+_HEADER = "COMBAT_LOG_VERSION"
+_STAY_EVENTS = _ZONE_EVENTS | {_HEADER}
+# Lines that say nothing of a fight: a stay holding only these was not logged.
+_NOT_LOGGED = frozenset({"ZONE_CHANGE", "MAP_CHANGE", _HEADER})
 _MATCH_EVENTS = worldpvp.WORLD_EVENTS
 _SV_SUFFIX = ".lua"
 
@@ -137,7 +147,7 @@ class LogWatch(_Model):
     watch began on this log (`zone_changes`, `match_ends`; a log read from
     a point before its end counts from there). `in_world` is the open-world
     rule on where the log is, without the maps a match was kept on (None
-    before any zone line)."""
+    before any zone line); `zone_at` when that zone line was written."""
 
     name: str
     size: int
@@ -149,6 +159,7 @@ class LogWatch(_Model):
     in_world: bool | None = None
     zone_changes: int = 0
     match_ends: int = 0
+    zone_at: int | None = None  # seconds since the epoch of that zone line
 
 
 class LiveWatch(_Model):
@@ -246,6 +257,7 @@ class _LogState:
     state: worldpvp.ZoneState
     zone_changes: int = 0
     match_ends: int = 0
+    zone_at: int | None = None
 
 
 def _zone_state(fields: tuple[object, ...]) -> worldpvp.ZoneState:
@@ -327,6 +339,7 @@ class Watcher:
                 in_world=worldpvp.in_open_world(s) if known else None,
                 zone_changes=held.zone_changes,
                 match_ends=held.match_ends,
+                zone_at=held.zone_at,
             ),
             read,
         )
@@ -372,6 +385,7 @@ def _watch_line(held: _LogState, rec: Record) -> None:
     if rec.event == "ZONE_CHANGE":
         held.state = _zone_state(rec.fields)
         held.zone_changes += 1
+        held.zone_at = worldpvp.seconds_of(rec.timestamp)
     elif rec.event == "ARENA_MATCH_START":
         held.state = held.state.model_copy(update={"arena": True})
     elif rec.event == "ARENA_MATCH_END":
@@ -411,15 +425,19 @@ class MatchRecap(_Model):
     """The latest match the combat logs show.
 
     `log`: the log's file name. `zone`, `instance_id`, `difficulty`: from
-    the zone line that began it. `start`, `end`: seconds since the epoch of
-    its first and last line. `over`: the log left the place, or showed the
-    arena's end line; `ended_by` says which (`left`, `match_end`, `new_log`,
-    or None while it goes on). `arena`: an arena start line was read.
-    `opponents`: who fought you, most hits first. `killing_blows`,
-    `deaths`: yours, from the log. `result` (`won`, `lost` or None) and
-    `result_from` (`log`, `crew_book`, or None). `book_foes`: the crew
-    book's scoreboard of that match, when it was found. `fights`: damage
-    lines between you and a player there; `lines`: lines read."""
+    the zone line that began it. `start`: seconds since the epoch of that
+    line; `end`: of the line that ended it (the next zone line, or the
+    newer log's first line), else of its last line. `over`: the log left
+    the place, or showed the arena's end line; `ended_by` says which
+    (`left`, `match_end`, `new_log`, or None while the log shows no end).
+    `arena`: an arena start line was read. `opponents`: who fought you, most
+    hits first. `killing_blows`, `deaths`: yours, from the log; None when
+    the stay holds no line but zone and header lines (`logged` is 0: the log
+    was off). `log_gaps`: how many times the log was switched on again
+    inside the stay. `result` (`won`, `lost` or None) and `result_from`
+    (`log`, `crew_book`, or None). `book_foes`: the crew book's scoreboard
+    of that match, when it was found. `fights`: damage lines between you
+    and a player there; `lines`: lines read."""
 
     log: str
     zone: str | None
@@ -431,8 +449,10 @@ class MatchRecap(_Model):
     ended_by: Literal["left", "match_end", "new_log"] | None
     arena: bool
     opponents: list[MatchOpponent]
-    killing_blows: int
-    deaths: int
+    killing_blows: int | None
+    deaths: int | None
+    logged: int = 0
+    log_gaps: int = 0
     result: Literal["won", "lost"] | None
     result_from: Literal["log", "crew_book"] | None
     book_map: str | None = None
@@ -454,30 +474,47 @@ class _Stay:
     winner: int | None = None  # ARENA_MATCH_END's winning team
     match_end: bool = False
     left: bool = False
+    ended_at: int | None = None  # the time of the line that ended it
+    gaps: int = 0  # the log switched on again inside it
+
+
+def _same_place(a: worldpvp.ZoneState, b: worldpvp.ZoneState) -> bool:
+    return (a.instance_id, a.zone, a.difficulty) == (b.instance_id, b.zone, b.difficulty)
 
 
 def _stays(log: Path) -> list[_Stay]:
-    """Every zone stay of a log, oldest first, read from its zone and arena
-    lines only."""
+    """Every zone stay of a log, oldest first, read from its header, zone
+    and arena lines only. A zone line right after a header that names the
+    stay's own place is the log switched on again there: the stay goes on."""
     stays: list[_Stay] = []
     open_: _Stay | None = None
     last_end = 0
-    for entry in combatlog.read_log(log, events=_ZONE_EVENTS):
+    after_header = False
+    for entry in combatlog.read_log(log, events=_STAY_EVENTS):
         if entry.ending == "":
             break
         last_end = entry.offset + _length(entry)
         if not isinstance(entry, Record):
+            after_header = False
             continue
         when = worldpvp.seconds_of(entry.timestamp)
+        header = after_header
+        after_header = entry.event == _HEADER
         if entry.event == "ZONE_CHANGE":
+            place = _zone_state(entry.fields)
+            if open_ is not None and header and _same_place(open_.state, place):
+                open_.gaps += 1
+                open_.stop = last_end
+                continue
             if open_ is not None:
                 open_.stop = entry.offset
                 open_.left = True
+                open_.ended_at = when
             open_ = _Stay(
                 log=log,
                 begin=entry.offset,
                 stop=last_end,
-                state=_zone_state(entry.fields),
+                state=place,
                 start=when,
             )
             stays.append(open_)
@@ -509,12 +546,15 @@ class _Tally:
     deaths: int = 0
     last: int | None = None
     lines: int = 0
+    logged: int = 0  # lines other than zone, map and header lines
 
     def see(
         self, entries: Iterable[Record | Unparsed | Skipped]
     ) -> Iterator[Record | Unparsed | Skipped]:
         for entry in entries:
             self.lines += 1
+            if isinstance(entry, Unparsed) or entry.event not in _NOT_LOGGED:
+                self.logged += 1
             if isinstance(entry, Record):
                 when = worldpvp.seconds_of(entry.timestamp)
                 if when is not None:
@@ -560,12 +600,14 @@ class _Tally:
 def _book_match(
     stay: _Stay, end: int | None, book: Sequence[crewbook.CrewMatch]
 ) -> crewbook.CrewMatch | None:
-    """The crew book's match on the stay's map nearest its end, within
-    `_RESULT_BEFORE` before its start and `_RESULT_AFTER` after its end."""
+    """The crew book's match on the stay's map whose time is nearest
+    `end` (the match's end), within `_RESULT_BEFORE` before its start and
+    `_RESULT_AFTER` after `end`."""
     if stay.start is None:
         return None
+    end = end if end is not None else stay.start
     low = stay.start - _RESULT_BEFORE
-    high = (end if end is not None else stay.start) + _RESULT_AFTER
+    high = end + _RESULT_AFTER
     best: crewbook.CrewMatch | None = None
     for m in book:
         if not low <= m.at <= high:
@@ -579,9 +621,19 @@ def _book_match(
             or m.map.casefold() != stay.state.zone.casefold()
         ):
             continue
-        if best is None or abs(m.at - high) < abs(best.at - high):
+        if best is None or abs(m.at - end) < abs(best.at - end):
             best = m
     return best
+
+
+def _first_time(log: Path) -> int | None:
+    """The time of a log's first line, or None."""
+    try:
+        _, head = combatlog.head(log)
+    except OSError:
+        return None
+    stamp = head.split(b"  ", 1)[0].decode("ascii", "replace")
+    return worldpvp.seconds_of(stamp)
 
 
 def match_recap(
@@ -591,12 +643,14 @@ def match_recap(
     pvp_maps: Iterable[int] = (),
     book: Sequence[crewbook.CrewMatch] = (),
     max_bytes: int = RECAP_MAX_BYTES,
+    notes: list[str] | None = None,
 ) -> MatchRecap | None:
     """The latest match in `logs` (oldest first, as `combatlog.find_logs`
     gives them; the newest `RECAP_LOGS` are read, within `max_bytes`) for
     your characters' GUIDs `owners`, or None when they show none.
     `pvp_maps`: the instance ids a match was kept on; `book`: the crew
-    book's matches, for the result of a battleground."""
+    book's matches, for the result of a battleground. A log not read
+    because it is past `max_bytes` is said in `notes`, when given."""
     maps = frozenset(pvp_maps)
     upper = frozenset(g.upper() for g in owners)
     chosen = list(logs)[-RECAP_LOGS:]
@@ -609,6 +663,13 @@ def match_recap(
         except OSError:
             continue
         if size > budget:
+            if notes is not None:
+                which = "newest" if index == len(chosen) - 1 else "next older"
+                notes.append(
+                    f"the {which} combat log ({size // (1024 * 1024):,} MiB) is too large to "
+                    f"read for a match recap (more than {max_bytes // (1024 * 1024):,} MiB "
+                    "in all)"
+                )
             break
         budget -= size
         try:
@@ -621,7 +682,8 @@ def match_recap(
             looked += 1
             if looked > _MAX_STAYS:
                 return None
-            recap = _recap(stay, owners, upper, maps, book, newer=index < len(chosen) - 1)
+            newer = chosen[index + 1] if index < len(chosen) - 1 else None
+            recap = _recap(stay, owners, upper, maps, book, newer=newer)
             if recap is not None:
                 return recap
     return None
@@ -634,7 +696,7 @@ def _recap(
     maps: frozenset[int],
     book: Sequence[crewbook.CrewMatch],
     *,
-    newer: bool,
+    newer: Path | None,
 ) -> MatchRecap | None:
     tally = _Tally(upper)
     here = stay.state
@@ -684,7 +746,7 @@ def _recap(
         ended_by = "match_end"
     elif stay.left:
         ended_by = "left"
-    elif newer:
+    elif newer is not None:
         ended_by = "new_log"
     else:
         ended_by = None
@@ -693,6 +755,10 @@ def _recap(
     if stay.match_end and stay.winner is not None and stay.team is not None:
         result, result_from = ("won" if stay.winner == stay.team else "lost"), "log"
     end = tally.last if tally.last is not None else stay.start
+    if ended_by == "left" and stay.ended_at is not None:
+        end = stay.ended_at
+    elif ended_by == "new_log" and newer is not None:
+        end = _first_time(newer) or end
     found = _book_match(stay, end, book) if ended_by is not None else None
     if found is not None and result is None and found.won is not None:
         result, result_from = ("won" if found.won else "lost"), "crew_book"
@@ -707,8 +773,10 @@ def _recap(
         ended_by=ended_by,
         arena=stay.arena,
         opponents=opponents,
-        killing_blows=tally.killing_blows,
-        deaths=tally.deaths,
+        killing_blows=tally.killing_blows if tally.logged else None,
+        deaths=tally.deaths if tally.logged else None,
+        logged=tally.logged,
+        log_gaps=stay.gaps,
         result=result,
         result_from=result_from,
         book_map=found.map if found is not None else None,
@@ -826,9 +894,12 @@ def _walk_items(value: object, found: dict[int, _Held], depth: int = 0) -> None:
 
 
 def syndicator_items(data: bytes, names: Iterable[str]) -> list[ItemCount] | str:
-    """The items Syndicator's saved file lists for the character it keys by
+    """The items Syndicator's saved file lists for the character named by
     one of `names` (compared without case), or why there are none: the file
-    cannot be read, or holds no such character. Every table under the
+    cannot be read, or holds no such character, or more than one. An entry
+    whose key is one of `names` comes first; then one whose details' name
+    and realm, joined by `-`, are; then, only when no other entry has it,
+    one whose key before its last `-`, or its details' name, is. Every table under the
     character that has an `itemID` counts as one stack (`itemCount`, 1 when
     absent); the layout is read from one capture (not yet confirmed)."""
     try:
@@ -839,16 +910,42 @@ def syndicator_items(data: bytes, names: Iterable[str]) -> list[ItemCount] | str
     if not isinstance(chars, dict):
         return "Syndicator's file lists no characters"
     wanted = {n.casefold() for n in names}
+    entries = [(k, v) for k, v in chars.items() if isinstance(k, str) and isinstance(v, dict)]
     picked: object = None
-    for key, value in chars.items():
-        if isinstance(key, str) and key.casefold() in wanted:
+    # 1. The key itself, as Syndicator writes it (`Name-Realm`, or on Forever
+    # `First Second-<realm>`).
+    for key, value in entries:
+        if key.casefold() in wanted:
             picked = value
             break
-        details = value.get("details") if isinstance(value, dict) else None
-        named = details.get("character") if isinstance(details, dict) else None
-        if isinstance(named, str) and named.casefold() in wanted:
-            picked = value
-            break
+    # 2. The name and realm its details give, joined as a key would be.
+    if picked is None:
+        for _key, value in entries:
+            details = value.get("details")
+            if not isinstance(details, dict):
+                continue
+            named = details.get("character")
+            realms = {details.get("realm"), details.get("realmNormalized")}
+            if isinstance(named, str) and any(
+                isinstance(r, str) and r and f"{named}-{r}".casefold() in wanted for r in realms
+            ):
+                picked = value
+                break
+    # 3. The name alone (a realm wowlab cannot tell): only when one entry has it.
+    if picked is None:
+        alike = []
+        for key, value in entries:
+            details = value.get("details")
+            named = details.get("character") if isinstance(details, dict) else None
+            short = key.rsplit("-", 1)[0] if "-" in key else key
+            if short.casefold() in wanted or (
+                isinstance(named, str) and named.casefold() in wanted
+            ):
+                alike.append(value)
+        if len(alike) > 1:
+            return "Syndicator lists more than one character of this name"
+        if alike:
+            picked = alike[0]
     if not isinstance(picked, dict):
         return "Syndicator lists no character of this name"
     found: dict[int, _Held] = {}

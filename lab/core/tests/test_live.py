@@ -101,6 +101,7 @@ def test_the_watcher_reads_the_real_log_and_writes_nothing() -> None:
         0,
     )
     assert first.log.in_world is True and first.log.zone_changes == 1
+    assert first.log.zone_at == worldpvp.seconds_of("4/1/2026 02:16:30.666-4")
     assert first.log_bytes_read == REAL_LOG.stat().st_size
     assert first.saved.files == 9 and first.saved.newest is not None
     assert first.saved.newest.endswith(".lua")
@@ -263,7 +264,8 @@ def test_a_battleground_left_is_recapped_with_the_books_result_constructed(tmp_p
     assert recap is not None
     assert (recap.zone, recap.instance_id, recap.arena) == (BG_NAME, BG, False)
     assert recap.over and recap.ended_by == "left"
-    assert recap.start == BASE + 100 and recap.end == BASE + 112
+    assert recap.start == BASE + 100 and recap.end == BASE + 200, "ends at the zone line out"
+    assert recap.logged > 0 and recap.log_gaps == 0
     assert [o.key for o in recap.opponents] == ["Inventedd-Otherfakerealm", "Inventedb-Fakerealm"]
     d = recap.opponents[0]
     assert d.killed_by_you and d.killed_you and d.unit_name == FOE_D[1]
@@ -438,3 +440,88 @@ def test_place_counts_fights_where_the_caller_says_constructed() -> None:
     assert (plain.fights, plain.outside_world) == (0, 1)
     inside = worldpvp.scan_entries(entries, OWNERS, place=lambda s: s.instance_id == BG)
     assert (inside.fights, inside.outside_world) == (1, 0)
+
+
+# ─── fix round 1 (reviews of M22-05) ─────────────────────────────────────────
+
+
+def test_a_log_switched_on_again_in_the_same_place_is_one_stay_constructed(
+    tmp_path: Path,
+) -> None:
+    """A switch-on appends a header and zone lines to the same file (seen on
+    the owner's install, 2026-11-23): the match is not cut in two."""
+    data = log(
+        zone(100, instance=BG, name=BG_NAME, difficulty=34),
+        you_hit(FOE_D, 105),
+        HEADER.replace("02:16:30.666", "02:18:30.000"),
+        zone(120, instance=BG, name=BG_NAME, difficulty=34),
+        you_kill(FOE_D, 130),
+        zone(200),
+    )
+    recap = live.match_recap([_write(_flavor(tmp_path), data)], OWNERS)
+    assert recap is not None and recap.start == BASE + 100 and recap.end == BASE + 200
+    assert recap.log_gaps == 1 and recap.killing_blows == 1
+    # The same zone line with no header before it is a new stay.
+    again = log(
+        zone(100, instance=BG, name=BG_NAME, difficulty=34),
+        you_hit(FOE_D, 105),
+        zone(120, instance=BG, name=BG_NAME, difficulty=34),
+        you_hit(FOE_D, 130),
+    )
+    second = live.match_recap([_write(_flavor(tmp_path / "b"), again)], OWNERS)
+    assert second is not None and second.start == BASE + 120 and second.log_gaps == 0
+
+
+def test_a_match_the_log_was_off_for_has_unknown_blows_and_deaths_constructed(
+    tmp_path: Path,
+) -> None:
+    data = log(zone(100, instance=BG, name=BG_NAME), zone(1420))
+    recap = live.match_recap([_write(_flavor(tmp_path), data)], OWNERS, pvp_maps=[BG])
+    assert recap is not None and recap.logged == 0
+    assert recap.killing_blows is None and recap.deaths is None
+
+
+def test_a_newer_log_ends_the_match_at_its_first_line_constructed(tmp_path: Path) -> None:
+    flavor = _flavor(tmp_path)
+    old = _write(flavor, _battleground(leave=False, difficulty=34))
+    later = HEADER.replace("02:16:30.666", "02:40:00.000")
+    new = _write(flavor, (later + "\r\n" + zone(1500) + "\r\n").encode(), "WoWCombatLog-b.txt")
+    recap = live.match_recap([old, new], OWNERS)
+    assert recap is not None and recap.ended_by == "new_log"
+    assert recap.end == worldpvp.seconds_of("4/1/2026 02:40:00.000-4")
+
+
+def test_a_log_too_large_to_read_is_said_constructed(tmp_path: Path) -> None:
+    path = _write(_flavor(tmp_path), _battleground(difficulty=34))
+    notes: list[str] = []
+    assert live.match_recap([path], OWNERS, max_bytes=100, notes=notes) is None
+    assert len(notes) == 1 and notes[0].startswith("the newest combat log (0 MiB) is too large")
+
+
+_TWO_REALMS = b"""
+SYNDICATOR_DATA = {
+["Characters"] = {
+["Sandgraal Rizzen-RPPvP"] = {
+["details"] = {["character"] = "Sandgraal Rizzen", ["realm"] = "RP PvP", ["realmNormalized"] = "RPPvP",},
+["bags"] = {{{["itemID"] = 1, ["itemCount"] = 1,},},},
+},
+["Sandgraal Rizzen-Other"] = {
+["details"] = {["character"] = "Sandgraal Rizzen", ["realm"] = "Other", ["realmNormalized"] = "Other",},
+["bags"] = {{{["itemID"] = 2, ["itemCount"] = 1,},},},
+},
+},
+}
+"""
+
+
+def test_syndicator_picks_by_key_then_realm_then_a_unique_name_constructed() -> None:
+    """The owner's launch install keys `First Second-<realmNormalized>`;
+    with the name on two realms and no realm known, nothing is picked."""
+    one = _TWO_REALMS.split(b'["Sandgraal Rizzen-Other"]')[0] + b"},\n}\n"
+    got = live.syndicator_items(one, ["Sandgraal-Rizzen", "Sandgraal Rizzen"])
+    assert not isinstance(got, str) and [i.item_id for i in got] == [1]
+    assert live.syndicator_items(_TWO_REALMS, ["Sandgraal Rizzen"]) == (
+        "Syndicator lists more than one character of this name"
+    )
+    keyed = live.syndicator_items(_TWO_REALMS, ["Sandgraal Rizzen", "Sandgraal Rizzen-Other"])
+    assert not isinstance(keyed, str) and [i.item_id for i in keyed] == [2]

@@ -3647,8 +3647,12 @@
     const parts = [];
     const log = watch.log;
     if (log) {
-      const where = typeof log.zone === "string" && log.zone ? visible(log.zone) : "a place the log has not named yet";
-      parts.push("Combat log: " + visible(String(log.name)) + ", now in " + where);
+      let where = "the log has not named a place yet";
+      if (typeof log.zone === "string" && log.zone) {
+        where = "the log last showed " + visible(log.zone);
+        if (typeof log.zone_at === "number") where += " (at " + new Date(log.zone_at * 1000).toLocaleTimeString() + ")";
+      }
+      parts.push("Combat log: " + visible(String(log.name)) + "; " + where);
     } else {
       parts.push("No combat log yet: type /combatlog in game to start one");
     }
@@ -3684,7 +3688,10 @@
       announce(byId("live-status"), "Read at " + new Date().toLocaleTimeString() + ".", false);
     } finally {
       liveState.running = false;
-      if (liveState.again && seq === liveState.seq) {
+      // Asked again while it ran, or the view was left and opened again
+      // meanwhile (this run's reply was dropped): read once more while the
+      // view is open, so what it shows is never left behind.
+      if (liveState.started && (liveState.again || seq !== liveState.seq)) {
         liveState.again = false;
         liveRecap();
       }
@@ -3734,6 +3741,7 @@
     liveState.started = false;
     liveState.seq += 1;
     liveState.seen = null;
+    liveState.again = false;
     if (liveState.timer !== null) clearTimeout(liveState.timer);
     liveState.timer = null;
   }

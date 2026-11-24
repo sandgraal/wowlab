@@ -193,6 +193,8 @@ def test_the_text_says_what_the_json_says_and_is_player_copy_constructed(
     assert "Your killing blows: 1; your deaths: 1." in text
     assert "Meaty Bat Wing: 2 to 5" in text
     assert "1 match: 1 won, 0 lost." in text
+    assert "Your last save (" in text and "against your last backup (" in text
+    assert "  gear: slot " in text, "gear lines are char history's own words"
     says = PlayerCopyInstall.of(env.root)
     problems: list[str] = []
     for args in (("live", "recap"), ("live", "recap", "--notes"), ("live", "recap", "--help")):
@@ -220,7 +222,7 @@ def test_a_match_under_way_waits_for_its_result_constructed(make: Any, owner: An
     m = _json(env)["match"]
     assert m["over"] is False and m["result"] is None
     text = env.run("live", "recap").stdout
-    assert "still going on" in text
+    assert "the log shows no end yet" in text
 
 
 def test_the_recap_reads_and_writes_nothing_in_the_install_constructed(

@@ -7440,26 +7440,43 @@ an arena line, is on a map a match was kept on (wowlab's crew database or
 the book), or holds a fight with a player. Who you fought is `worldpvp`'s
 fight rule counted inside that place (`scan_entries(place=)`); killing
 blows are `PARTY_KILL` lines by you or a unit flagged yours on a player;
-deaths are `UNIT_DIED` lines of your GUID. It is over when a later zone
-line, the arena's end line or a newer log follows. The result is the
-arena's end line against the team on its start line, else the crew book's
-match on that map from 120 s before the stay to 900 s after its last line;
+deaths are `UNIT_DIED` lines of your GUID; both are unknown when the stay
+holds nothing but zone and header lines (the log was off). A zone line
+right after a `COMBAT_LOG_VERSION` header naming the same place is the log
+switched on again inside the stay (a switch-on appends a header and zone
+lines to the same file, confirmed on the owner's install), not a new stay.
+It is over when a later zone line, the arena's end line or a newer log
+follows, and ends at that line (the newer log's first line). The result is
+the arena's end line against the team on its start line, else the crew
+book's match on that map nearest the match's end, from 120 s before its
+start to 900 s after its end;
 the book is saved only at `/reload` or logout, and the view says so. **The
 session recap** compares the newest save of the character's `WowLab.lua`
 with the one before it (`charhistory`: level, gear, currencies), the items
 Syndicator lists for the character (every table under its entry with an
-`itemID`, `itemCount` or 1; keyed `First Second`, the folder name or
-`Name-Realm`) against the copy in the snapshot holding that earlier save,
+`itemID`, `itemCount` or 1) against the copy in the snapshot holding that
+earlier save. Syndicator keys a character `Name-Realm`; on the owner's
+launch install `First Second-<realmNormalized>` (`Sandgraal Rizzen-RPPvP`,
+2026-11-23), while the committed beta capture keys `First Second` with an
+empty realm. The entry is the one whose key is the folder name, `First
+Second` or `Name-Realm` (under a realm-name folder); else whose details'
+name and realm join to one of those; else, only when one entry alone has
+it, whose key before its last `-` or details' name is one of them,
 the book's matches since then, and the open-world encounters of the logs
 written since (256 MiB at most). Measured: a poll of the owner's install
 (83 SavedVariables files, a 1.2 MB log) took 25 ms the first time and
 3.4 ms after; a constructed flavor with 402 files and a 4.8 MB log, on the
 external test volume, 84 ms and 19 ms (Apple silicon, 2026-11-23). **The
 lab-addon switches the log off in an instance** (M20-19), so a battleground
-shows its fights only when the player logs it with `/combatlog`; the recap
-says so when a match holds no fight. Not yet confirmed: a battleground's
-zone line difficulty, the lines that end a battleground, the arena lines'
-fields, Syndicator's layout beyond one capture.
+shows its fights only when the player logs it: `/combatlog` is a toggle,
+so the advice is to type it after WowLab's chat line says the log is off,
+and the game then answers that combat is being logged. That advice changes
+when M22-15 lets the addon log battlegrounds itself. Which places are the
+open world stays `worldpvp.in_open_world`'s (difficulty 0 is not enough:
+Shadowfang Keep logs 0; M22-22 decides it by the Map table). Not yet
+confirmed: the lines that end a battleground, the arena lines' fields,
+Syndicator's layout beyond these two installs, whether an expired auction
+returned by mail counts twice, whether Feign Death logs `UNIT_DIED`.
 
 ### 21.4 The terms of ADR-0036, for the new store
 

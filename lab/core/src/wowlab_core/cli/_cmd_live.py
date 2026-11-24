@@ -27,7 +27,7 @@ from wowlab_core import (
     snapshot,
     worldpvp,
 )
-from wowlab_core.cli._cmd_char import _history_item, _history_names
+from wowlab_core.cli._cmd_char import _gear_change_words, _history_names
 from wowlab_core.cli._cmd_crew import _owner_guids
 from wowlab_core.cli._cmd_log import _logs_dir
 from wowlab_core.cli._common import (
@@ -61,12 +61,17 @@ _LIVE_NOTES = [
     "The game saves addon data, the crew book included, only at /reload or logout. The "
     "match recap reads the combat log, which the game writes as you play, a little at a time.",
     "A match shows its fights only when the combat log was on during it. The lab-addon turns "
-    "the log off in instances; type /combatlog in a battleground to log it yourself.",
-    "Gear, currency and level changes compare the newest save with the one before it that "
+    "the log off in instances. To log a battleground, wait for WowLab's chat line that says the "
+    "combat log is off, then type /combatlog: the game answers that combat is being logged. "
+    "/combatlog switches the log, so typing it while the log is on turns it off.",
+    "Gear, currency and level changes compare your last save with the save before it that "
     "your backups hold: take a backup after you play (wowlab snap create) to compare the next "
     "session with it.",
+    "New items count everything Syndicator lists for the character: bags, bank, mail, "
+    "auctions and what you wear. An item moved from one to another is not new.",
     "Not yet confirmed: how a battleground and its end show in the combat log, the arena's "
-    "result line, and the layout of Syndicator's saved file.",
+    "result line, the layout of Syndicator's saved file, whether an expired auction coming "
+    "back by mail is counted twice, and whether a hunter's Feign Death is logged as a death.",
 ]
 
 
@@ -94,16 +99,33 @@ class LiveRecapReport(_Out):
     notes: list[str]
 
 
-def _live_book(lay: layout.Layout, account: str) -> tuple[list[crewbook.CrewMatch], str | None]:
-    """The crew book's matches of the account, and why there are none."""
+class _LiveBook:
+    """The account's crew book as the recap needs it: its matches, why
+    there are none (`note`), whether it is on, and when it was saved."""
+
+    def __init__(
+        self,
+        matches: list[crewbook.CrewMatch],
+        note: str | None = None,
+        on: bool = False,
+        saved_ns: int | None = None,
+    ) -> None:
+        self.matches = matches
+        self.note = note
+        self.on = on
+        self.saved_ns = saved_ns
+
+
+def _live_book(lay: layout.Layout, account: str) -> _LiveBook:
+    """The crew book of the account."""
     files = [f for f in lay.saved_variables("account") if f.account == account and _is_lab_file(f)]
     if not files:
-        return [], None
+        return _LiveBook([])
     try:
         book = crewbook.parse_book(_listed(labaddon.read_file_bytes, lay, files[0].path))
     except _LIVE_READ_ERRORS as exc:
-        return [], f"the crew book could not be read: {exc}"
-    return list(book.matches), None
+        return _LiveBook([], note=f"the crew book could not be read: {exc}")
+    return _LiveBook(list(book.matches), on=book.state == "on", saved_ns=files[0].mtime_ns)
 
 
 def _live_syndicator(lay: layout.Layout, account: str) -> layout.SavedVariablesFile | None:
@@ -119,14 +141,17 @@ def _live_syndicator(lay: layout.Layout, account: str) -> layout.SavedVariablesF
 
 
 def _live_names(target: layout.SavedVariablesFile) -> list[str]:
-    """How Syndicator may key the character: `First Second` for a
-    `First-Second` folder, the folder name, and `Name-Realm`."""
+    """How Syndicator may name the character: the folder name; `First
+    Second` for a `First-Second` folder (the in-game form); and
+    `Name-Realm` under a realm-name folder (a digits-only folder names no
+    realm)."""
     folder = target.character_folder or ""
     out = [folder]
     if "-" in folder:
         out.append(folder.replace("-", " ", 1))
-    if target.realm_folder:
-        out.append(f"{folder}-{target.realm_folder}")
+    realm = target.realm_folder or ""
+    if realm and not (realm.isascii() and realm.isdigit()):
+        out.append(f"{folder}-{realm}")
     return out
 
 
@@ -159,29 +184,51 @@ def _live_when(seconds: int | None) -> str:
     return _local_time(seconds * 1_000_000_000) if seconds is not None else "an unknown time"
 
 
-def _live_match_lines(m: live.MatchRecap) -> list[str]:
+def _live_result_words(m: live.MatchRecap, book: _LiveBook) -> str:
+    """Where the result is when neither the log nor the book gave it."""
+    if not book.on:
+        return (
+            "  Result: not in the combat log, and the crew book is not on (turn it on in game "
+            "with /wowlab crew on)."
+        )
+    if book.saved_ns is not None and m.end is not None and book.saved_ns // 10**9 > m.end:
+        return (
+            "  Result: not in the combat log, and the crew book saved after this match holds no "
+            "match on this map near that time."
+        )
+    return "  Result: not in the combat log; the crew book saves it at your next /reload or logout."
+
+
+def _live_match_lines(m: live.MatchRecap, book: _LiveBook) -> list[str]:
     where = m.zone or "a place the log did not name"
     ended = {
         "left": "over: you left it",
         "match_end": "over: the log shows its end",
         "new_log": "over: a newer combat log began after it",
-        None: "still going on",
+        None: "the log shows no end yet",
     }[m.ended_by]
     kind = "Arena" if m.arena else "Match"
     lines = [f"{kind}: {where}, from {_live_when(m.start)} to {_live_when(m.end)}, {ended}."]
     if m.result is not None:
         source = "the combat log" if m.result_from == "log" else "the crew book"
         lines.append(f"  Result: {m.result} (from {source}).")
-    elif m.over:
+    else:
+        lines.append(_live_result_words(m, book))
+    if m.killing_blows is None or m.deaths is None:
         lines.append(
-            "  Result: not in the combat log; the crew book saves it at your next /reload or "
-            "logout."
+            "  Your killing blows and deaths: not known. The combat log holds nothing of this "
+            "match but its zone line: it was off."
         )
-    lines.append(f"  Your killing blows: {m.killing_blows}; your deaths: {m.deaths}.")
+    else:
+        lines.append(f"  Your killing blows: {m.killing_blows}; your deaths: {m.deaths}.")
+    if m.log_gaps:
+        lines.append(
+            "  The combat log was switched off and on again during this match, so it holds only "
+            "part of it."
+        )
     if not m.opponents:
-        lines.append(
-            "  The combat log shows no fight with another player there: it was probably off."
-        )
+        if m.logged:
+            lines.append("  The combat log shows no fight with another player there.")
     else:
         lines.append(f"  Who you fought ({len(m.opponents)}):")
         for o in m.opponents:
@@ -199,12 +246,13 @@ def _live_match_lines(m: live.MatchRecap) -> list[str]:
 def _live_session_lines(s: live.SessionRecap) -> list[str]:
     if s.since_ns is None:
         return [
-            f"Since your last save ({_local_time(s.saved_at_ns)}): "
+            f"Your last save ({_local_time(s.saved_at_ns)}): "
             f"{s.not_compared or 'nothing to compare'}."
         ]
-    snap = f" (backup {s.since_snapshot})" if s.since_snapshot else ""
+    snap = f", backup {s.since_snapshot}" if s.since_snapshot else ""
     lines = [
-        f"Since your save of {_local_time(s.since_ns)}{snap}, to {_local_time(s.saved_at_ns)}:"
+        f"Your last save ({_local_time(s.saved_at_ns)}), against your last backup "
+        f"({_local_time(s.since_ns)}{snap}):"
     ]
     if s.level_before is not None and s.level_after is not None:
         if s.level_after != s.level_before:
@@ -213,9 +261,7 @@ def _live_session_lines(s: live.SessionRecap) -> list[str]:
             lines.append(f"  Level {s.level_after}, no change.")
     if s.gear_not_compared is not None:
         lines.append(f"  Gear not compared: {s.gear_not_compared}.")
-    for g in s.gear_changes:
-        slot = g.slot_name or f"slot {g.slot}"
-        lines.append(f"  Gear, {slot}: {_history_item(g.before)} to {_history_item(g.after)}")
+    lines += [_gear_change_words(g) for g in s.gear_changes]
     if s.currencies_not_compared is not None:
         lines.append(f"  Currencies not compared: {s.currencies_not_compared}.")
     for c in s.currency_changes:
@@ -261,7 +307,7 @@ def _live_session_lines(s: live.SessionRecap) -> list[str]:
 
 @live_app.command(
     "recap",
-    short_help="Your latest match, and what changed since your last save.",
+    short_help="Your latest match, and your last save against your last backup.",
 )
 @_handled
 def live_recap(
@@ -274,8 +320,8 @@ def live_recap(
 ) -> None:
     """The latest battleground or arena the combat log shows: who you
     fought, your killing blows and deaths, and the result when the log or
-    the crew book has it. Then what changed since the character's save
-    before the newest one that wowlab has: level, gear and currencies from
+    the crew book has it. Then the character's last save against the
+    save before it that your backups hold: level, gear and currencies from
     the lab-addon's record, new items from Syndicator, and the players you
     met. Without --character, the character whose lab-addon file was
     written last. Reads only; the Live view of wowlab ui shows the same and
@@ -288,8 +334,12 @@ def live_recap(
     owners, _without = _owner_guids(lay, acct.folder)
     folder = _logs_dir(lay)
     logs = combatlog.find_logs(folder)[-_LIVE_MAX_LOGS:] if folder is not None else []
-    matches, book_note = _live_book(lay, acct.folder)
-    maps = crewdb.world_maps(chosen.folder, acct.folder)
+    book = _live_book(lay, acct.folder)
+    matches, book_note = book.matches, book.note
+    try:
+        maps = crewdb.world_maps(chosen.folder, acct.folder)
+    except crewdb.CrewDbError:
+        maps = set()  # the book's own maps still count
     maps |= {m.map_id for m in matches if m.map_id is not None}
 
     match: live.MatchRecap | None = None
@@ -302,8 +352,14 @@ def live_recap(
     elif not logs:
         match_words = "No combat log: type /combatlog in game to start one."
     else:
-        match = live.match_recap(logs, owners, pvp_maps=maps, book=matches)
-        match_words = None if match is not None else "The combat logs show no match."
+        unread: list[str] = []
+        match = live.match_recap(logs, owners, pvp_maps=maps, book=matches, notes=unread)
+        if match is not None:
+            match_words = None
+        elif unread:
+            match_words = unread[0][0].upper() + unread[0][1:] + "."
+        else:
+            match_words = "The combat logs show no match."
 
     files = [f for f in lay.saved_variables() if f.account == acct.folder and _is_lab_file(f)]
     session: live.SessionRecap | None = None
@@ -324,7 +380,7 @@ def live_recap(
             session_words = book_note
 
     lines: list[str] = []
-    lines += _live_match_lines(match) if match is not None else [match_words or ""]
+    lines += _live_match_lines(match, book) if match is not None else [match_words or ""]
     lines.append("")
     if session is not None:
         lines += _live_session_lines(session)
