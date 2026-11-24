@@ -32,6 +32,7 @@ from wowlab_core import (
     region,
     simexport,
     snapshot,
+    talentlink,
     twink,
     wtfconfig,
 )
@@ -1408,6 +1409,11 @@ class CharGearReport(_Out):
     # link set`), each checked again as it is read; empty for a character
     # kept only in a backup.
     saved_links: list[CharLinkRow] = Field(default_factory=list)
+    # "Open my talents" (M21-07): WoW Forever Builds' talent calculator with
+    # the record's class talents, or no link and why, placed with the
+    # game's talent tables in wowlab's cache (never fetched here; when they
+    # are not cached, `download` names the tables `db2 fetch` downloads).
+    talents: talentlink.TalentsLink
     # The flavor folder read, as the other `char` reports name it; just
     # before `dressing`, which stays last (M16-114).
     flavor_folder: str
@@ -1533,6 +1539,23 @@ def _header_lines(report: CharGearReport) -> list[str]:
     ]
 
 
+def _talents_line(talents: talentlink.TalentsLink) -> str:
+    """`char gear`'s line for "Open my talents" (M21-07): the address, or why
+    there is none and, when the game's talent tables are missing, where to
+    get them. The table names stay in `--json` (`talents.download`)."""
+    made = talents.link
+    head = f"Talents on {made.site_name}" if made.site_name else "Talents"
+    if isinstance(made, links.Link):
+        return f"{head}: {made.url}"
+    line = f"{head}: no link: {made.why}"
+    if talents.download:
+        line += (
+            "; the Character tab of wowlab ui downloads them with one click, or wowlab db2 "
+            "fetch downloads each table --json lists"
+        )
+    return line
+
+
 def _no_gear(record: labaddon.CharDB, path: str) -> str | None:
     """Why `record` has no gear to show, or None when it has."""
     section = record.gear
@@ -1642,6 +1665,7 @@ def _gear_report(
         game_name=charname.game_name(first, second),
         region=reading.region,
         region_absent=reading.absent,
+        talents=talentlink.talents_link(record, version=version),
         dressing=dressing.build(identity, filled, version=version, level=level),
     )
 
@@ -1719,6 +1743,9 @@ def char_gear(
     _say(_region_text(report.region, report.region_absent))
     for row in report.saved_links:
         _say(f"{row.label}: {row.url}")
+    _say(_talents_line(report.talents))
+    if report.talents.table_note is not None:
+        _note("{}", report.talents.table_note)
     for line in _header_lines(report):
         _say(line)
     _say(

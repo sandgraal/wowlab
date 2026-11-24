@@ -155,9 +155,11 @@ def test_the_link_is_static_markup_with_no_href(server: Any) -> None:
     page = (_TEMPLATES / "page.html").read_text(encoding="utf-8")
     anchors = re.findall(r"<a\b[^>]*>", page)
     # M21-03 added the three links of the addresses the player saved, graded
-    # in test_ui_links.py, and M22-06 the Twink panel's two, graded in
-    # test_ui_twink.py.
+    # in test_ui_links.py, M22-06 the Twink panel's two, graded in
+    # test_ui_twink.py, and M21-07 Open my talents, graded in
+    # test_ui_talents.py.
     saved = [
+        "char-talents-link",
         "char-saved-ft-profile",
         "char-saved-ft-build",
         "char-saved-wcl-report",
@@ -173,7 +175,7 @@ def test_the_link_is_static_markup_with_no_href(server: Any) -> None:
         ),
     ]
     body = _page(server).body.decode("utf-8")
-    assert body.count('target="_blank" rel="noopener noreferrer"') == 6
+    assert body.count('target="_blank" rel="noopener noreferrer"') == 7
     assert "See it dressed</a>" in body
 
 

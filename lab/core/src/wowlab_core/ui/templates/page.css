@@ -495,6 +495,10 @@ pre:empty { display: none; }
 .sim-button:hover:enabled { background: var(--hover); }
 .sim-button:disabled { cursor: progress; color: var(--faint); background: var(--bar); border-color: var(--line); }
 .char-sim { flex-basis: 100%; max-width: 60rem; }
+/* Open my talents (M21-07) */
+.char-talents { flex-basis: 100%; max-width: 60rem; margin: var(--space-2) 0 0; display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2) var(--space-3); }
+.talents-why { color: var(--muted); font-size: 13px; overflow-wrap: anywhere; }
+.talents-why:empty { display: none; }
 /* the addresses the player saved (M21-03) */
 .char-saved { flex-basis: 100%; max-width: 60rem; }
 .char-saved-links { margin: var(--space-2) 0 0; display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2) var(--space-3); }

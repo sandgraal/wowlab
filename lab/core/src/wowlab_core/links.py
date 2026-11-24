@@ -20,6 +20,12 @@ nothing to share but an origin would only churn it. The page checks the
 dressing room's address against the Wowhead origin listed here, and a test
 keeps the two files' origins equal.
 
+M21-07 adds the `talents` kind, WoW Forever Builds' talent calculator: its
+class and race words by the game's ids and its own check of a talent code
+are `[talents]` of the same file, and a template may mark a placeholder
+`optional` (the race), whose query pair is then left out when its value is
+not known. The code itself is `talentlink`'s.
+
 Every builder is a pure function: no network, no file but the shipped one.
 It fails closed: a name holding anything the site's rule does not allow, a
 region the site has no pages for, a client with no room, or an id out of
@@ -66,6 +72,7 @@ __all__ = [
     "profiles",
     "raiderio",
     "room_of",
+    "talents",
     "wowhead_item",
     "wowhead_spell",
 ]
@@ -87,7 +94,12 @@ _PLACEHOLDER = re.compile(r"\{([a-z_]{1,16})\}")
 _TAIL = re.compile(r"(?:[A-Za-z0-9._~/?=&-]|%[0-9A-F]{2})*")
 _TEMPLATE_TEXT = re.compile(r"(?:[A-Za-z0-9._~/?=&-]|%[0-9A-F]{2})*")
 _MAX_PASTED = 512
-_FIXED = ("region", "locale", "ruleset", "id")
+# Placeholders the builder fills itself, never from a slug rule: `class`
+# and `race` from `[talents]`'s ids (M21-07), `ranks` a talent code checked
+# against `[talents] ranks`.
+_FIXED = ("region", "locale", "ruleset", "id", "class", "race", "ranks")
+_SLUG = re.compile(r"[a-z0-9]+(?:-[a-z0-9]+)*")
+_GAME_ID = re.compile(r"[1-9][0-9]{0,8}")
 _APOSTROPHES = ("'", chr(0x2019))  # the typewriter and the typographic apostrophe
 
 
@@ -168,10 +180,36 @@ class SlugRule(_Model):
 class Template(_Model):
     site: str
     label: str = Field(min_length=1, max_length=64)
-    kind: Literal["profile", "guild", "item", "spell", "dungeon"]
+    kind: Literal["profile", "guild", "item", "spell", "dungeon", "talents"]
     regions: list[str] | None = None
     fields: dict[str, str] = {}
     rooms: dict[str, str]
+    # Placeholders that may be unknown: each stands alone as the value of a
+    # query pair after the first (`&race={race}`), and the pair is left out
+    # of the address when its value is not known (M21-07).
+    optional: list[str] = []
+
+
+class Talents(_Model):
+    """`[talents]` (M21-07): a site's words for the game's classes and races,
+    by the game's ids (`ChrClasses` and `ChrRaces`), and the check its own
+    script makes of a talent code."""
+
+    classes: dict[str, str]
+    races: dict[str, str]
+    ranks: str = Field(min_length=2, max_length=128)
+
+    @model_validator(mode="after")
+    def _plain(self) -> Talents:
+        for what, table in (("class", self.classes), ("race", self.races)):
+            for key, slug in table.items():
+                if not _GAME_ID.fullmatch(key) or not _SLUG.fullmatch(slug) or len(slug) > 32:
+                    raise ValueError(f"talents {what} {key!r}: {slug!r}")
+        try:
+            re.compile(self.ranks)
+        except re.error as exc:
+            raise ValueError(f"talents ranks {self.ranks!r} ({exc})") from None
+        return self
 
 
 class Pasted(_Model):
@@ -204,6 +242,7 @@ class LinkSites(_Model):
     slugs: dict[str, SlugRule]
     links: dict[str, Template]
     pasted: dict[str, Pasted]
+    talents: Talents | None = None
     example: list[Example]
 
     @model_validator(mode="after")
@@ -234,8 +273,17 @@ class LinkSites(_Model):
                     raise ValueError(f"link {key!r}: {path!r} has an unknown placeholder")
                 if ("region" in names or "locale" in names) and t.regions is None:
                     raise ValueError(f"link {key!r}: a region in the address and no regions")
+                if names & {"class", "race"} and self.talents is None:
+                    raise ValueError(
+                        f"link {key!r}: a class or race in the address and no [talents]"
+                    )
                 if not _TEMPLATE_TEXT.fullmatch(_PLACEHOLDER.sub("", path)):
                     raise ValueError(f"link {key!r}: {path!r} holds text a URL parser changes")
+                for name in t.optional:
+                    if name not in names or len(_optional_pairs(path, name)) != 1:
+                        raise ValueError(
+                            f"link {key!r}: optional {name!r} is not one query pair after the first"
+                        )
         for key, p in self.pasted.items():
             if not _KEY.fullmatch(key) or p.site not in self.sites:
                 raise ValueError(f"pasted {key!r} names no listed site")
@@ -265,6 +313,16 @@ class LinkSites(_Model):
         if missing:
             raise ValueError(f"no example for {', '.join(sorted(missing))}")
         return self
+
+
+def _optional_pairs(path: str, name: str) -> list[str]:
+    """Each query pair `&<key>={name}` of `path` after its `?`, or none when
+    `{name}` is anywhere else in it too."""
+    pattern = r"&[a-z][a-z0-9_]{0,31}=\{" + re.escape(name) + r"\}(?=&|$)"
+    pairs = [m for m in re.finditer(pattern, path) if 0 <= path.find("?") < m.start()]
+    if len(pairs) != path.count("{" + name + "}"):
+        return []
+    return [m.group(0) for m in pairs]
 
 
 def parse_link_sites(text: str) -> LinkSites:
@@ -396,12 +454,18 @@ def build(
     ruleset: str | None = None,
     id: int | None = None,
     names: Mapping[str, str | None] | None = None,
+    class_id: int | None = None,
+    race_id: int | None = None,
+    ranks: str | None = None,
     sites: LinkSites | None = None,
 ) -> Link | NoLink:
     """The address of one link kind (a key of `[links]`), or why there is
     none. Never raises. `version` is the client's (it picks the room);
     `names` holds the template's name fields (`first`, `second`, `guild`,
-    `dungeon`). `sites` is the shipped file unless a test gives another."""
+    `dungeon`); `class_id` and `race_id` are the game's ids, written as
+    `[talents]` names them, and `ranks` a talent code `[talents] ranks`
+    accepts (M21-07). `sites` is the shipped file unless a test gives
+    another."""
     if sites is None:
         try:
             sites = load_link_sites()
@@ -443,6 +507,7 @@ def build(
             if type(id) is not int or not 1 <= id <= sites.limits.id:
                 raise _RefusedError("the id is not one the game uses")
             values["id"] = str(id)
+        path = _talent_values(path, t, sites, values, class_id, race_id, ranks, site.name)
         given = names or {}
         for name, rule in t.fields.items():
             value = given.get(name)
@@ -455,6 +520,50 @@ def build(
     if not _checked(url, site.origin):
         return none("its address did not check out")
     return Link(link=link, site=t.site, site_name=site.name, label=t.label, url=url)
+
+
+def _game_slug(table: Mapping[str, str], value: int | None) -> str | None:
+    if type(value) is not int or not 1 <= value <= 999_999_999:
+        return None
+    return table.get(str(value))
+
+
+def _talent_values(
+    path: str,
+    t: Template,
+    sites: LinkSites,
+    values: dict[str, str],
+    class_id: int | None,
+    race_id: int | None,
+    ranks: str | None,
+    site_name: str,
+) -> str:
+    """Fill `values` with the class, race and talent code `path` holds, and
+    return `path` without an optional pair whose value is not known. Raises
+    `_RefusedError`."""
+    talents = sites.talents
+    if talents is None:  # the file's check: no template here then holds one
+        return path
+    if "{class}" in path:
+        slug = _game_slug(talents.classes, class_id)
+        if slug is None and class_id is None:
+            raise _RefusedError("the character's class is not known")
+        if slug is None:
+            raise _RefusedError(f"{site_name} has no page for the character's class")
+        values["class"] = slug
+    if "{race}" in path:
+        slug = _game_slug(talents.races, race_id)
+        if slug is not None:
+            values["race"] = slug
+        elif "race" in t.optional:
+            path = path.replace(_optional_pairs(path, "race")[0], "", 1)
+        else:
+            raise _RefusedError("the character's race is not known to the site")
+    if "{ranks}" in path:
+        if not isinstance(ranks, str) or not re.fullmatch(talents.ranks, ranks):
+            raise _RefusedError(f"the talent code is not one {site_name} takes")
+        values["ranks"] = ranks
+    return path
 
 
 _UNUSABLE = "the shipped list of sites cannot be used"
@@ -528,6 +637,16 @@ def wowhead_spell(spell_id: int | None, *, version: str | None) -> Link | NoLink
 def keystone_dungeon(name: str | None, *, version: str | None) -> Link | NoLink:
     """A dungeon's map on Keystone.guru, by the dungeon's name."""
     return build("keystone_dungeon", version=version, names={"dungeon": name})
+
+
+def talents(
+    class_id: int | None, race_id: int | None, ranks: str | None, *, version: str | None
+) -> Link | NoLink:
+    """A character's talents in WoW Forever Builds' talent calculator, from
+    the talent code `talentlink` makes (M21-07). A race the site does not
+    name is left out of the address; a class it does not name gives no
+    link."""
+    return build("talents", version=version, class_id=class_id, race_id=race_id, ranks=ranks)
 
 
 def profiles(

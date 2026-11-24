@@ -54,6 +54,13 @@ origin = "https://forever.warcraftlogs.com"
 name = "Keystone.guru"
 origin = "https://keystone.guru"
 
+# WoW Forever Builds: its talent calculator (M21-07). Its terms (read
+# 2026-11-24, "Last updated September 15, 2026"): "Linking to any page and
+# sharing build links is welcome"; scraping at high volume is not.
+[sites.wowforeverbuilds]
+name = "WoW Forever Builds"
+origin = "https://wowforeverbuilds.com"
+
 # ForeverTwinking: linked to only with an address the player pasted for one
 # of their own characters (its addresses carry the site's own character
 # number and server-made build codes, so none can be built; owner,
@@ -205,6 +212,60 @@ kind = "dungeon"
 fields = { dungeon = "dungeon" }
 rooms = { forever = "/explore/forever/{dungeon}" }
 
+# A character's talents in WoW Forever Builds' calculator (M21-07):
+# `{class}` and `{race}` from [talents], `{ranks}` the talent code
+# `talentlink` makes. A race the site does not name is left out (its
+# script then shows no race); a class it does not name gives no link.
+[links.talents]
+site = "wowforeverbuilds"
+label = "Open my talents"
+kind = "talents"
+optional = ["race"]
+rooms = { forever = "/talents/{class}?b={ranks}&race={race}" }
+
+# ─── the talent calculator's words (M21-07) ─────────────────────────────────
+#
+# Read by hand by the M21-07 agent on 2026-11-24 from the site's own pages
+# (each class's `/talents/<class>` page: the calculator's props, whose
+# `cls.slug` and `races[].slug`/`clientName` give these words) and its
+# script (`/_astro/summary.CzJQ1we6.js`, the calculator's data at client
+# 1.60.1.70862): the address is `/talents/<class>?b=<code>&race=<race>`;
+# the code is, per tree in the page's order, one digit per talent (its
+# rank) with the talents sorted by row and then column, trailing zeros cut,
+# trees joined with `-`, and empty trees at the end dropped; the script
+# refuses a code that fails `ranks` below, or that is not a legal build
+# (51 points, 5 per row before the next, each talent's prerequisites), or
+# that it would not write back the same. The page's tree order is the
+# game's left to right. Its race words for ChrRaces' names: Human, Orc,
+# Dwarf, Night Elf, Undead, Tauren, Gnome, Troll, and "High Order
+# Skyborne" and "Windshaper Skyborne" (ids 95 and 96 at 1.60.1.70888).
+# A race the class cannot be is dropped by the site's script, not here.
+[talents]
+ranks = '[0-9]{0,40}(?:-[0-9]{0,40}){0,2}'
+
+[talents.classes]
+1 = "warrior"
+2 = "paladin"
+3 = "hunter"
+4 = "rogue"
+5 = "priest"
+7 = "shaman"
+8 = "mage"
+9 = "warlock"
+11 = "druid"
+
+[talents.races]
+1 = "human"
+2 = "orc"
+3 = "dwarf"
+4 = "night-elf"
+5 = "undead"
+6 = "tauren"
+7 = "gnome"
+8 = "troll"
+95 = "skyborne-alliance"
+96 = "skyborne-horde"
+
 # ─── addresses the player pastes ────────────────────────────────────────────
 #
 # Each: the site, the kind, the words the page shows, and the path the
@@ -294,6 +355,18 @@ link = "keystone_dungeon"
 recorded = "2026-11-23: opened by the M21-03 agent (`zul-farrak` is not a page)"
 given = { dungeon = "Zul'Farrak", version = "1.60.1.70888" }
 address = "https://keystone.guru/explore/forever/zulfarrak"
+
+[[example]]
+link = "talents"
+recorded = "[verify]: built by the M21-07 agent from the owner's Sandgraal Rizzen record (the macos-70888 capture: an undead warlock, 2 in Suppression and 2 in Improved Corruption) by the format read from the site's script on 2026-11-24; the owner opens it (M21-O2)"
+given = { class_id = 9, race_id = 5, ranks = "022", version = "1.60.1.70888" }
+address = "https://wowforeverbuilds.com/talents/warlock?b=022&race=undead"
+
+[[example]]
+link = "talents"
+recorded = "[verify]: as above, with a race the site does not name (the pair is left out)"
+given = { class_id = 9, race_id = 9, ranks = "022", version = "1.60.1.70888" }
+address = "https://wowforeverbuilds.com/talents/warlock?b=022"
 
 [[example]]
 pasted = "forevertwinking_profile"

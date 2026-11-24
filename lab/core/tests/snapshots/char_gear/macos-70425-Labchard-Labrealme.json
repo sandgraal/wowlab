@@ -359,6 +359,21 @@
   "region": null,
   "region_absent": "there is no WTF/Config.wtf",
   "saved_links": [],
+  "talents": {
+    "link": {
+      "link": "talents",
+      "site": "wowforeverbuilds",
+      "site_name": "WoW Forever Builds",
+      "label": "Open my talents",
+      "why": "the character's class is not known"
+    },
+    "ranks": null,
+    "tables_build": null,
+    "record_build": "1.60.1.70425",
+    "table_note": null,
+    "download": [],
+    "download_build": null
+  },
   "flavor_folder": "_classic_beta_",
   "dressing": {
     "items": [
