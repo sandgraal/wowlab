@@ -264,6 +264,13 @@ main > section { display: flex; flex-direction: column; gap: var(--space-4); min
 .badge.badge-link::before { content: "\2197" / ""; }
 .badge-server { color: var(--blight); background: var(--blight-bg); border-color: var(--blight-border); border-style: dashed; }
 .badge-server::before { content: "\2248" / ""; }
+/* The crew book's two marks (M22-03): Nemesis (killing blows) and Rival team
+   (match results). Void and Blight, not Ruin, since red is for errors. */
+.badge-nemesis, .badge-rival { margin-left: var(--space-2); }
+.badge-nemesis { color: var(--void); background: var(--void-bg); border-color: var(--void-border); }
+.badge-nemesis::before { content: "\2694" / ""; }
+.badge-rival { color: var(--blight); background: var(--blight-bg); border-color: var(--blight-border); }
+.badge-rival::before { content: "\2691" / ""; }
 .marks { display: inline-flex; flex-wrap: wrap; gap: var(--space-1); flex: none; }
 
 /* ─── the detail pane ─── */

@@ -3887,20 +3887,29 @@
     key: null, // the stored key of the player shown
     pending: null, // the plan Confirm would run: { command, params, token }
     searchTimer: null,
+    // The Matches filter just changed (M22-03): the next read sends no order,
+    // so the command uses that view's own, and the Order box then shows it.
+    viewOrder: false,
   };
   const CREW_RATED = [["", "Everyone"], ["good", "Rated good"], ["bad", "Rated bad"], ["any", "Rated either way"]];
   const CREW_SORT = [
     ["last", "Last grouped, newest first"], ["met", "Most groups first"], ["name", "By name"],
     ["faced", "Most matches against you first"], ["allied", "Most matches with you first"],
+    ["world", "Latest open-world fight first"],
+    ["deaths", "Most killed by them"], ["team_losses", "Most team losses to them"],
   ];
   // `crew list --faced` and `--allied` (M20-09): players met in a match.
   // `crew list --world` (M20-18): players met in the open world, from a combat log.
+  // `crew list --nemeses` and `--rivals` (M22-03): your nemeses (by killing
+  // blows), and rival teams (by battleground and arena results).
   const CREW_PVP = [
     ["", "Everyone"], ["faced", "Against you in a match"], ["allied", "With you in a match"],
-    ["world", "Met in the open world"],
+    ["world", "Met in the open world"], ["nemeses", "Your nemeses"], ["rivals", "Rival teams"],
   ];
   const CREW_RATE = [["good", "good"], ["bad", "bad"], ["none", "none (take it away)"]];
-  const CREW_COLUMNS = ["Player", "Class", "Groups", "Last grouped", "Last instance", "Your rating", "Your note"];
+  const CREW_COLUMNS = [
+    "Player", "Class", "Record against them", "Groups", "Last grouped", "Last instance", "Your rating", "Your note",
+  ];
 
   function fillSelect(select, choices) {
     select.replaceChildren();
@@ -3951,6 +3960,20 @@
     return visible(text.charAt(0).toUpperCase() + text.slice(1).toLowerCase());
   }
 
+  // The record against them (M22-03), as `crew list --json` adds it up,
+  // its two parts apart: killing blows each way, then team results; "none"
+  // with no fight kept.
+  function crewRecord(record) {
+    const r = record && typeof record === "object" ? record : {};
+    const fights = hubNum(r.fights);
+    if (fights === null || fights === 0) return "none";
+    const me = r.personal && typeof r.personal === "object" ? r.personal : {};
+    const team = r.team && typeof r.team === "object" ? r.team : {};
+    return pluralWord(fights, " fight") +
+      "; they killed you " + (hubNum(me.deaths) || 0) + ", you killed them " + (hubNum(me.kills) || 0) +
+      "; team won " + (hubNum(team.wins) || 0) + ", lost " + (hubNum(team.losses) || 0);
+  }
+
   function crewCells(p) {
     const level = hubNum(p.level);
     const klass = crewClass(p.class_token);
@@ -3960,6 +3983,7 @@
     const met = hubNum(p.met);
     return [
       who || NOT_RECORDED,
+      crewRecord(p.record),
       met === null ? NOT_RECORDED : String(met),
       crewDay(p.last) || NOT_RECORDED,
       hubStr(p.where) ? visible(p.where) : "none",
@@ -3983,6 +4007,19 @@
     open.className = "hub-open";
     open.title = "Show everything the crew book keeps about this player";
     name.appendChild(open);
+    // The two badges (M22-03), each Python's verdict, never the page's:
+    // Nemesis from killing blows, Rival team from match results.
+    const record = p.record && typeof p.record === "object" ? p.record : {};
+    if (record.personal && record.personal.nemesis === true) {
+      const badge = make("span", "Nemesis");
+      badge.className = "badge badge-nemesis";
+      name.appendChild(badge);
+    }
+    if (record.team && record.team.rival === true) {
+      const badge = make("span", "Rival team");
+      badge.className = "badge badge-rival";
+      name.appendChild(badge);
+    }
     tr.appendChild(name);
     for (const text of crewCells(p)) tr.appendChild(make("td", text));
     tr.addEventListener("click", () => openCrewPlayer(p.key));
@@ -4002,6 +4039,14 @@
     notes.replaceChildren(...(Array.isArray(report.notes) ? report.notes : [])
       .filter((n) => typeof n === "string").map((n) => make("li", visible(n))));
     byId("crew-tools").hidden = !on;
+    // The nemeses and rival-team views say the rule they apply, in Python's
+    // words (M22-03).
+    const rule = byId("crew-rule");
+    const rules = [];
+    if (report.nemeses === true) rules.push(hubStr(report.nemesis_rule) || "");
+    if (report.rivals === true) rules.push(hubStr(report.rival_rule) || "");
+    rule.textContent = on ? visible(rules.filter(Boolean).join(" ")) : "";
+    rule.hidden = !rule.textContent;
     const box = byId("crew-table");
     const players = Array.isArray(report.players) ? report.players.filter((p) => p && typeof p.key === "string") : [];
     const unread = Array.isArray(report.unread) ? report.unread.filter((u) => u && typeof u.key === "string") : [];
@@ -4047,13 +4092,15 @@
     if (search.trim() !== "") params.search = search;
     const rated = byId("crew-rated").value;
     if (rated) params.rated = rated;
-    params.sort = byId("crew-sort").value || "last";
+    if (!crew.viewOrder) params.sort = byId("crew-sort").value || "last";
     // The match filters (M20-09): each the command's own option, sent only
     // when set, so the matching is Python's.
     const pvp = byId("crew-pvp").value;
     if (pvp === "faced") params.faced = true;
     if (pvp === "allied") params.allied = true;
     if (pvp === "world") params.world = true;
+    if (pvp === "nemeses") params.nemeses = true;
+    if (pvp === "rivals") params.rivals = true;
     const map = byId("crew-map").value;
     if (map.trim() !== "") params.map_text = map;
     const since = byId("crew-since").value;
@@ -4078,6 +4125,9 @@
       return;
     }
     crew.report = report;
+    // The Order box shows the order the command used (M22-03).
+    crew.viewOrder = false;
+    if (CREW_SORT.some(([value]) => value === report.sort)) byId("crew-sort").value = report.sort;
     drawCrew();
     // A history on show is read again: a forget or a sync may have changed it.
     if (!byId("crew-matches").hidden) showCrewMatches(false, crew.world);
@@ -4095,7 +4145,10 @@
   });
   byId("crew-rated").addEventListener("change", () => loadCrew());
   byId("crew-sort").addEventListener("change", () => loadCrew());
-  byId("crew-pvp").addEventListener("change", () => loadCrew());
+  byId("crew-pvp").addEventListener("change", () => {
+    crew.viewOrder = true;
+    loadCrew();
+  });
   byId("crew-since").addEventListener("change", () => loadCrew());
   byId("crew-map").addEventListener("input", () => {
     if (crew.searchTimer !== null) clearTimeout(crew.searchTimer);
