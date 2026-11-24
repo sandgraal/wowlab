@@ -40,6 +40,11 @@ def test_the_tab_sits_under_characters_and_starts_hidden() -> None:
     assert '<h2 class="page-title">Practice</h2>' in view
     assert '<p id="practice-status" role="status"></p>' in view
     assert re.search(r'<div id="practice-offer" class="names-offer" hidden>', view)
+    # The offer says what the fallback does, as the command's note does.
+    assert (
+        "Until then every cast, auto-repeat shots included, is taken as a 1.5 s global "
+        "cooldown, and cooldown use is not shown."
+    ) in view
 
 
 def test_the_view_registers_itself_and_draws_only_its_own_elements() -> None:
