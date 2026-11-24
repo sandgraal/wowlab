@@ -14,7 +14,8 @@ name: Release
 # 2026-11-24, owner decision, M22-24), so a release carries the wheel, the
 # sdist, SHA256SUMS and the macOS app only, and builds no Windows asset. The
 # jobs stay in the file, unchanged but for the `if`, so resuming is deleting
-# the three `if: false` lines (tests/packaging/test_windows_app.py and
+# the three `if: false` lines and .github/actionlint.yaml, which lets them
+# past actionlint (tests/packaging/test_windows_app.py and
 # tests/scripts/test_release.py pin the paused state). The release
 # never waits on an app, and neither app waits on the other: a failed app
 # build fails its own job and leaves the release as published. The
