@@ -111,10 +111,11 @@ def test_constructed_without_the_table_the_old_rule_holds_and_says_so(
     _write_log(env, _dungeon_then_world())
     result = _scan(env)
     assert result.exit_code == 0, result.output
+    text = " ".join(result.stdout.split())
     assert (
-        f"The game's map table for {_version(env)} is not downloaded, so a dungeon whose zone "
-        "line looks like the open world's may be counted: "
-        f"wowlab db2 fetch Map --flavor {FLAVOR} downloads it" in result.stdout
+        f"The game's map table for {_version(env)} is not downloaded, so fights in a dungeon, "
+        "raid or battleground whose zone line looks like the open world's may be counted: "
+        f"wowlab db2 fetch Map --flavor {FLAVOR} downloads it from wago.tools" in text
     )
     assert _encounters(env) == [("Shadowfang Keep", 33, 0), ("Silverpine Forest", 0, 0)]
     # Once the table is cached, the next read checks what was kept.
@@ -123,9 +124,11 @@ def test_constructed_without_the_table_the_old_rule_holds_and_says_so(
     assert again["recheck"] == {
         "checked": 2,
         "removed": 1,
+        "removed_unknown": 0,
         "players_removed": 1,
         "skipped": False,
     }
+    assert again["map_table_state"] == "read" and again["map_table"] is True
     assert _encounters(env) == [("Silverpine Forest", 0, 1)]
     keys = {k for (k,) in _rows(env, "SELECT player_key FROM players")}
     assert KEY_A in keys and KEY_D not in keys  # D was held only by the dungeon fight
@@ -146,7 +149,10 @@ def test_constructed_a_schema_5_database_is_copied_then_rechecked(make: Any, own
     assert result.exit_code == 0, result.output
     assert (
         "Checked 2 open-world encounters an earlier read kept against the game's map table: "
-        "removed 1 that was in a dungeon, raid, battleground or arena." in result.stdout
+        "removed 1 that was in a dungeon, raid, battleground or arena, and 1 player only those "
+        "fights held. They no longer count in the open-world record or toward Nemesis; the "
+        "copies wowlab keeps beside its crew database still hold them."
+        in " ".join(result.stdout.split())
     )
     copy = env.db().with_name(env.db().name + ".before-schema-5")
     assert len(copy.read_bytes()) == len(before)  # a whole copy (SQLite's backup)
@@ -221,7 +227,7 @@ def test_constructed_the_recheck_never_removes_a_crew_book_player(make: Any, own
     assert _encounters(env) == []
 
 
-def test_constructed_a_map_the_table_does_not_name_is_left_for_a_later_table(
+def test_constructed_a_map_the_table_does_not_name_is_removed_and_said_apart(
     make: Any, owner: Any
 ) -> None:
     env = make(_book())
@@ -229,8 +235,47 @@ def test_constructed_a_map_the_table_does_not_name_is_left_for_a_later_table(
     _write_log(env, _dungeon_then_world())
     _scan(env)
     got = crewdb.recheck_world(env.target(), {0: 0})  # map 33 not in this table
-    assert (got.checked, got.removed) == (1, 0)
-    assert _encounters(env) == [("Shadowfang Keep", 33, 0), ("Silverpine Forest", 0, 1)]
+    assert (got.checked, got.removed, got.removed_unknown) == (2, 0, 1)
+    assert _encounters(env) == [("Silverpine Forest", 0, 1)]
+
+
+def test_constructed_an_unknown_map_is_said_in_the_text(make: Any, owner: Any) -> None:
+    env = make(_book())
+    env.sync()
+    _cache_map_table(env)
+    _write_log(
+        env,
+        log(
+            zone(5, instance=4242, name="Invented Hold", difficulty=0),
+            you_hit(FOE_D, 10),
+            zone(400, instance=0, name="Silverpine Forest", difficulty=0),
+            you_hit(FOE_A, 1000),
+        ),
+    )
+    result = _scan(env)
+    assert result.exit_code == 0, result.output
+    assert (
+        "Not counted: 1 fight on a map the game's map table does not hold (id 4242), so wowlab "
+        "cannot tell whether it was in the open world." in " ".join(result.stdout.split())
+    )
+    report = _json(_scan(env, "--json"))  # nothing new: the counts of this read are 0
+    assert report["scan"]["unknown_map"] == 0
+
+
+def test_constructed_a_read_that_fails_after_a_recheck_says_what_it_removed(
+    make: Any, owner: Any, tmp_path: Path
+) -> None:
+    env = make(_book())
+    env.sync()
+    _write_log(env, _dungeon_then_world())
+    _scan(env)
+    _cache_map_table(env)
+    gone = tmp_path / "WoWCombatLog-gone.txt"  # a PATH that cannot be read
+    result = _scan(env, str(gone))
+    assert result.exit_code != 0
+    assert "removed 1 that was in a dungeon, raid, battleground or arena" in " ".join(
+        result.stderr.split()
+    )
 
 
 def test_constructed_no_database_no_recheck(make: Any) -> None:

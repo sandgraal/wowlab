@@ -303,10 +303,9 @@ _SQL_CREATE: tuple[str, ...] = (
 # table, which is build-keyed and fetched by the caller, so the step only
 # marks them, after the `.before-schema-5` copy. `recheck_world`, run by
 # `crew scan-log` once the table is cached, then removes each marked
-# encounter whose instance id the table names as an instance (a dungeon,
-# raid, battleground or arena) and marks the rest of those it names as
-# checked; one the table does not name stays as it is. Running it again
-# changes nothing. An encounter a read keeps while the table is missing is
+# encounter that the rule with the table says is not the open world (its
+# map an instance, or a map the table does not hold) and marks the rest as
+# checked. Running it again changes nothing. An encounter a read keeps while the table is missing is
 # marked the same way, so it is checked once the table is there.
 #
 # Keyed by (schema it starts from, order within the step); each value one
@@ -3054,8 +3053,7 @@ _SQL_WORLD_INSERT = (
 # The 5 -> 6 re-check of stored encounters against the map table
 # (`recheck_world`, M22-22).
 _SQL_RECHECK_PENDING = (
-    "SELECT encounter_id, instance_id FROM world_encounters"
-    " WHERE by_map = 0 AND instance_id IS NOT NULL ORDER BY encounter_id"
+    "SELECT encounter_id, instance_id FROM world_encounters WHERE by_map = 0 ORDER BY encounter_id"
 )
 _SQL_RECHECK_PART_KEYS = (
     "SELECT DISTINCT player_key FROM world_encounter_players WHERE encounter_id = ?"
@@ -3221,7 +3219,9 @@ class WorldOutcome(_Model):
     this book exists for another install root or flavor folder: `crew sync
     --adopt`). `read_from` and `read_to` are the log's offsets; the counts
     are of this scan: fights counted, fights in a battleground, arena or
-    instance (`outside_world`), before the log's first zone line
+    instance (`outside_world`), on a map the game's map table does not
+    hold (`unknown_map`, not counted; `unknown_maps` their instance ids, at
+    most `worldpvp.MAX_UNKNOWN_MAPS`), before the log's first zone line
     (`no_zone`) or with a time that could not be read (`no_time`); the
     encounters kept and left out (past the cap, or a time out of range);
     the opponents and allies in them, the players added to the database,
@@ -3241,6 +3241,8 @@ class WorldOutcome(_Model):
     read_to: int
     fights: int = 0
     outside_world: int = 0
+    unknown_map: int = 0
+    unknown_maps: list[int] = Field(default_factory=list)
     no_zone: int = 0
     no_time: int = 0
     bad_lines: int = 0
@@ -3432,6 +3434,8 @@ def record_world(
         "read_to": scan.end,
         "fights": scan.fights,
         "outside_world": scan.outside_world,
+        "unknown_map": scan.unknown_map,
+        "unknown_maps": scan.unknown_maps,
         "no_zone": scan.no_zone,
         "no_time": scan.no_time,
         "bad_lines": scan.bad_lines,
@@ -3616,33 +3620,36 @@ def _record_open(
 class WorldRecheck(_Model):
     """What `recheck_world` did (M22-22): how many stored encounters it
     checked against the game's map table (`checked`), how many of them it
-    removed because their instance id is a dungeon, raid, battleground or
-    arena there (`removed`), and how many players it removed with them
-    (`players_removed`: held by nothing else). `skipped`: another wowlab
-    was writing the database, so nothing was checked (the next scan does
-    it)."""
+    removed because their map is a dungeon, raid or battleground there
+    (`removed`; any type but the open world's: that 4 is an arena is not
+    yet confirmed), how many because the table does not hold their map
+    (`removed_unknown`: not taken for the open world either), and how many
+    players it removed with them (`players_removed`: held by nothing
+    else). `skipped`: another wowlab was writing the database, so nothing
+    was checked (the next read does it)."""
 
     checked: int = 0
     removed: int = 0
+    removed_unknown: int = 0
     players_removed: int = 0
     skipped: bool = False
 
 
 def recheck_world(target: Target, maps: Mapping[int, int]) -> WorldRecheck:
     """The 5 -> 6 step's re-check (M22-22): each stored open-world
-    encounter not yet checked against the game's map table (`by_map` 0)
-    whose instance id `maps` names (`worldpvp.map_types`) is checked by
-    `worldpvp.in_open_world`'s rule. One whose map is not the open world
-    is removed with its players' parts, and so is each of those players'
-    rows that nothing else holds (never in the game's list, no group, no
-    match, no rating or note, no other encounter) and its `log_names` row;
-    no other row is touched, so a player in the crew book, rated or noted is
-    never removed. Every other one `maps` names is marked checked; one it
-    does not name stays as it is, for a later table. One transaction under
-    the write lock, after today's copy; the `.before-schema-5` copy the
-    migration kept holds every encounter as it was. Running it again
-    changes nothing. No database, a database for another install root, or
-    nothing to check: nothing is written."""
+    encounter not yet checked against the game's map table (`by_map` 0) is
+    checked by `worldpvp.in_open_world`'s rule with the table (`maps`,
+    `worldpvp.map_types`). One that is not the open world (its map an
+    instance there, or a map the table does not hold) is removed with its
+    players' parts, and so is each of those players' rows that nothing else
+    holds (never in the game's list, no group, no match, no rating or note,
+    no other encounter) and its `log_names` row; no other row is touched,
+    so a player in the crew book, rated or noted is never removed. Every
+    other one is marked checked. One transaction under the write lock,
+    after today's copy; the `.before-schema-5` copy the migration kept
+    holds every encounter as it was. Running it again changes nothing. No
+    database, a database for another install root, or nothing to check:
+    nothing is written."""
     path = database_path(target.flavor_folder, target.account)
     if not os.path.lexists(path):
         return WorldRecheck()
@@ -3661,7 +3668,7 @@ def recheck_world(target: Target, maps: Mapping[int, int]) -> WorldRecheck:
         if not conn.execute(_SQL_RECHECK_PENDING).fetchone():
             return WorldRecheck()
         ident = _ident(path)
-        checked = removed = players_removed = 0
+        checked = removed = unknown = players_removed = 0
         with _transaction(conn):
             _still(path, ident)
             pending = conn.execute(_SQL_RECHECK_PENDING).fetchall()
@@ -3669,11 +3676,10 @@ def recheck_world(target: Target, maps: Mapping[int, int]) -> WorldRecheck:
                 _daily_copy(conn, path)
             held: set[str] = set()
             for encounter_id, instance_id in pending:
-                kind = maps.get(int(instance_id))
-                if kind is None:
-                    continue
                 checked += 1
-                state = worldpvp.ZoneState(instance_id=int(instance_id))
+                state = worldpvp.ZoneState(
+                    instance_id=None if instance_id is None else int(instance_id)
+                )
                 if worldpvp.in_open_world(state, maps=maps):
                     conn.execute(_SQL_RECHECK_MARK, (encounter_id,))
                     continue
@@ -3682,11 +3688,19 @@ def recheck_world(target: Target, maps: Mapping[int, int]) -> WorldRecheck:
                 )
                 conn.execute(_SQL_RECHECK_DROP_PARTS, (encounter_id,))
                 conn.execute(_SQL_RECHECK_DROP_ENCOUNTER, (encounter_id,))
-                removed += 1
+                if worldpvp.unknown_map(state, maps):
+                    unknown += 1
+                else:
+                    removed += 1
             for key in sorted(held):
                 players_removed += conn.execute(_SQL_REQUEUE_DROP_LOG_ONLY_PLAYER, (key,)).rowcount
                 conn.execute(_SQL_RECHECK_DROP_ORPHAN_NAMES, (key,))
-        return WorldRecheck(checked=checked, removed=removed, players_removed=players_removed)
+        return WorldRecheck(
+            checked=checked,
+            removed=removed,
+            removed_unknown=unknown,
+            players_removed=players_removed,
+        )
     except _Replaced:
         return WorldRecheck(skipped=True)
     except sqlite3.OperationalError as exc:

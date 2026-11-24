@@ -155,8 +155,9 @@ class LogWatch(_Model):
     way, and how many zone lines and arena end lines were read since the
     watch began on this log (`zone_changes`, `match_ends`; a log read from
     a point before its end counts from there). `in_world` is the open-world
-    rule on where the log is, without the maps a match was kept on (None
-    before any zone line); `zone_at` when that zone line was written."""
+    rule on where the log is, with the game's map table when the poll was
+    given it and without the maps a match was kept on (None before any zone
+    line); `zone_at` when that zone line was written."""
 
     name: str
     size: int
@@ -174,13 +175,18 @@ class LogWatch(_Model):
 class LiveWatch(_Model):
     """One poll: the flavor folder, its SavedVariables and its newest log
     (None when it has none), and what the poll cost: microseconds and the
-    bytes of log read."""
+    bytes of log read. `map_table` is the state of the game's map table the
+    caller read for the open-world rule (`read`, `missing`, `unreadable`,
+    `no_version`; None when the caller gave none), and `map_words` what to
+    say when it was not read (M22-22)."""
 
     flavor_folder: str
     saved: SavedWatch
     log: LogWatch | None
     cost_us: int
     log_bytes_read: int
+    map_table: str | None = None
+    map_words: str | None = None
 
 
 def _child(folder: Path, name: str) -> Path | None:
@@ -298,11 +304,22 @@ class Watcher:
         self._log: _LogState | None = None
         self._tail = tail_bytes
 
-    def poll(self, flavor_path: Path, flavor_folder: str) -> LiveWatch:
+    def poll(
+        self,
+        flavor_path: Path,
+        flavor_folder: str,
+        *,
+        maps: Mapping[int, int] | None = None,
+        map_table: str | None = None,
+        map_words: str | None = None,
+    ) -> LiveWatch:
+        """One poll. `maps`: the game's map table (`worldpvp.map_types`),
+        for the open-world rule (M22-22); `map_table` and `map_words` its
+        state and what to say when it was not read, passed through."""
         with self._lock:
             began = time.perf_counter_ns()
             saved = saved_watch(flavor_path)
-            log, read = self._log_watch(flavor_path)
+            log, read = self._log_watch(flavor_path, maps)
             cost = (time.perf_counter_ns() - began) // 1000
             return LiveWatch(
                 flavor_folder=flavor_folder,
@@ -310,9 +327,13 @@ class Watcher:
                 log=log,
                 cost_us=cost,
                 log_bytes_read=read,
+                map_table=map_table,
+                map_words=map_words,
             )
 
-    def _log_watch(self, flavor_path: Path) -> tuple[LogWatch | None, int]:
+    def _log_watch(
+        self, flavor_path: Path, maps: Mapping[int, int] | None = None
+    ) -> tuple[LogWatch | None, int]:
         folder = logs_folder(flavor_path)
         newest = combatlog.newest_log(folder) if folder is not None else None
         if newest is None:
@@ -345,7 +366,7 @@ class Watcher:
                 instance_id=s.instance_id,
                 difficulty=s.difficulty,
                 arena=s.arena,
-                in_world=worldpvp.in_open_world(s) if known else None,
+                in_world=worldpvp.in_open_world(s, maps=maps) if known else None,
                 zone_changes=held.zone_changes,
                 match_ends=held.match_ends,
                 zone_at=held.zone_at,
@@ -681,6 +702,7 @@ def match_recap(
     max_bytes: int = RECAP_MAX_BYTES,
     notes: list[str] | None = None,
     second_names: bool = False,
+    maps: Mapping[int, int] | None = None,
 ) -> MatchRecap | None:
     """The latest match in `logs` (oldest first, as `combatlog.find_logs`
     gives them; the newest `RECAP_LOGS` are read, within `max_bytes`) for
@@ -689,8 +711,10 @@ def match_recap(
     book's matches, for the result of a battleground. A log not read
     because it is past `max_bytes` is said in `notes`, when given.
     `second_names`: the flavor's characters have second names, so a
-    player's key is `First-Second` (`worldpvp`)."""
-    maps = frozenset(pvp_maps)
+    player's key is `First-Second` (`worldpvp`). `maps`: the game's map
+    table (`worldpvp.map_types`), so a stay is the open world as `crew
+    scan-log` judges it (M22-22); None decides by the difficulty."""
+    pvp = frozenset(pvp_maps)
     upper = frozenset(g.upper() for g in owners)
     chosen = list(logs)[-RECAP_LOGS:]
     budget = max_bytes
@@ -716,13 +740,13 @@ def match_recap(
         except OSError:
             continue
         for stay in reversed(stays):
-            if worldpvp.in_open_world(stay.state, maps) and not stay.arena:
+            if worldpvp.in_open_world(stay.state, pvp, maps=maps) and not stay.arena:
                 continue
             looked += 1
             if looked > _MAX_STAYS:
                 return None
             newer = chosen[index + 1] if index < len(chosen) - 1 else None
-            recap = _recap(stay, owners, upper, maps, book, newer=newer, second_names=second_names)
+            recap = _recap(stay, owners, upper, pvp, book, newer=newer, second_names=second_names)
             if recap is not None:
                 return recap
     return None
@@ -1114,10 +1138,12 @@ def world_since(
     pvp_maps: Iterable[int] = (),
     max_bytes: int = SESSION_LOG_BYTES,
     second_names: bool = False,
+    maps: Mapping[int, int] | None = None,
 ) -> tuple[list[worldpvp.WorldEncounter], str | None]:
     """The open-world encounters of the logs written since `since_ns`
     (oldest first), within `max_bytes` (the newest first), and what was
-    not read, in words, or None."""
+    not read, in words, or None. `maps`: the game's map table, as `crew
+    scan-log` reads with it (M22-22)."""
     budget = max_bytes
     picked: list[Path] = []
     skipped = 0
@@ -1135,12 +1161,12 @@ def world_since(
         picked.append(log)
     found: list[worldpvp.WorldEncounter] = []
     unreadable = 0
-    maps = list(pvp_maps)
+    pvp = list(pvp_maps)
     for log in reversed(picked):
         try:
             found.extend(
                 worldpvp.read_world(
-                    log, owners, pvp_maps=maps, second_names=second_names
+                    log, owners, pvp_maps=pvp, second_names=second_names, maps=maps
                 ).encounters
             )
         except OSError:

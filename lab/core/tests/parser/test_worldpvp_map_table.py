@@ -198,14 +198,52 @@ def test_constructed_an_arena_span_on_a_map_the_table_does_not_hold_is_not_world
 
 
 @pytest.mark.parser
-def test_constructed_a_map_the_table_does_not_hold_falls_back_to_the_difficulty() -> None:
+def test_constructed_a_map_the_table_does_not_hold_is_not_the_open_world() -> None:
     maps = _maps()
     assert 4242 not in maps
     world = worldpvp.ZoneState(zone="Invented", instance_id=4242, difficulty=0)
-    instance = worldpvp.ZoneState(zone="Invented", instance_id=4242, difficulty=1)
-    assert worldpvp.in_open_world(world, maps=maps) is True
-    assert worldpvp.in_open_world(instance, maps=maps) is False
-    assert not worldpvp.decided_by_map(world, maps)
+    assert worldpvp.in_open_world(world, maps=maps) is False
+    assert worldpvp.unknown_map(world, maps) and not worldpvp.decided_by_map(world, maps)
+    # Without a table the difficulty decides, as before.
+    assert worldpvp.in_open_world(world) is True
+    assert not worldpvp.unknown_map(world, None)
+
+
+@pytest.mark.parser
+def test_constructed_fights_on_a_map_the_table_does_not_hold_are_counted_apart() -> None:
+    data = log(
+        zone(5, instance=4242, name="Invented Hold", difficulty=0),
+        you_hit(FOE_A, 10),
+        hits_you(FOE_A, 11),
+        zone(30, instance=33, name="Shadowfang Keep", difficulty=0),
+        you_hit(FOE_A, 40),
+    )
+    scan = _scan(data, maps=_maps())
+    assert (scan.fights, scan.outside_world, scan.unknown_map) == (0, 1, 2)
+    assert scan.unknown_maps == [4242]
+    assert scan.encounters == []
+    plain = _scan(data)
+    assert (plain.fights, plain.unknown_map, plain.unknown_maps) == (3, 0, [])
+
+
+@pytest.mark.parser
+def test_constructed_at_most_so_many_unknown_map_ids_are_named() -> None:
+    lines: list[str] = []
+    for n in range(worldpvp.MAX_UNKNOWN_MAPS + 5):
+        lines += [
+            zone(10 * n, instance=5000 + n, name="Invented", difficulty=0),
+            you_hit(FOE_A, 10 * n + 1),
+        ]
+    scan = _scan(log(*lines), maps=_maps())
+    assert scan.unknown_map == worldpvp.MAX_UNKNOWN_MAPS + 5
+    assert scan.unknown_maps == [5000 + n for n in range(worldpvp.MAX_UNKNOWN_MAPS)]
+
+
+@pytest.mark.parser
+def test_constructed_a_place_given_by_the_caller_decides_over_the_table() -> None:
+    data = log(zone(5, instance=33, name="Shadowfang Keep", difficulty=0), you_hit(FOE_A, 10))
+    scan = _scan(data, maps=_maps(), place=lambda s: s.instance_id == 33)
+    assert (scan.fights, scan.unknown_map) == (1, 0)
 
 
 @pytest.mark.parser

@@ -248,3 +248,41 @@ def test_the_recap_reads_and_writes_nothing_in_the_install_constructed(
     _json(env)
     env.run("live", "recap")
     assert state() == before
+
+
+# ─── the game's map table (M22-22) ───────────────────────────────────────────
+
+
+def test_the_recap_says_when_the_map_table_is_not_downloaded_constructed(
+    make: Any, owner: Any
+) -> None:
+    env = make(_book())
+    _session(env)
+    data = _json(env)
+    assert data["map_table"] == "missing" and data["map_version"] is not None
+    words = data["map_words"]
+    assert words is not None and words.startswith(
+        f"The game's map table for {data['map_version']} is not downloaded"
+    )
+    assert words in data["lines"]
+    text = env.run("live", "recap")
+    assert text.exit_code == 0 and "is not downloaded" in " ".join(text.stdout.split())
+
+
+def test_with_the_map_table_the_recap_says_nothing_of_it_constructed(make: Any, owner: Any) -> None:
+    import shutil
+
+    from wowlab_core import gamedata, install
+
+    env = make(_book())
+    _session(env)
+    (flavor,) = install.discover(env.root).flavors
+    assert flavor.version is not None
+    dest = gamedata.default_cache_dir() / "tables" / flavor.version / "Map.csv"
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(FIXTURES / "wago" / "Map.1.60.1.71037.csv", dest)
+    data = _json(env)
+    assert (data["map_table"], data["map_words"]) == ("read", None)
+    # The open-world fight of the log (map 0) is still met; the battleground's are not.
+    met = {o["key"] for o in data["session"]["opponents"]}
+    assert "Inventeda-Fakerealm" in met and "Inventedd-Otherfakerealm" not in met

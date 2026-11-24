@@ -43,6 +43,8 @@ from wowlab_core.cli._common import (
     _lab_char_file,
     _listed,
     _local_time,
+    _map_table,
+    _map_table_line,
     _open_char,
     _Out,
     _plural,
@@ -82,7 +84,9 @@ class LiveRecapReport(_Out):
     says why), for one game account. `characters` counts your characters
     the combat log can name (their game id is in the lab-addon's file);
     `logs` how many combat logs were looked at. `lines` are the lines the
-    text output prints."""
+    text output prints. `map_table`, `map_version` and `map_words`: the
+    game's map table the open-world rule read, as `crew scan-log` reads it
+    (M22-22)."""
 
     flavor_folder: str
     account: str
@@ -96,6 +100,12 @@ class LiveRecapReport(_Out):
     session_words: str | None
     lines: list[str]
     notes: list[str]
+    # M22-22: the game's map table the open-world rule read (`read`,
+    # `missing`, `unreadable` or `no_version`), the game version it was
+    # looked for under, and what the text says when it was not read.
+    map_table: Literal["read", "missing", "unreadable", "no_version"] = "no_version"
+    map_version: str | None = None
+    map_words: str | None = None
 
 
 class _LiveBook:
@@ -361,10 +371,14 @@ def live_recap(
     second = layout.has_second_names(lay)
     matches, book_note = book.matches, book.note
     try:
-        maps = crewdb.world_maps(chosen.folder, acct.folder)
+        pvp_maps = crewdb.world_maps(chosen.folder, acct.folder)
     except crewdb.CrewDbError:
-        maps = set()  # the book's own maps still count
-    maps |= {m.map_id for m in matches if m.map_id is not None}
+        pvp_maps = set()  # the book's own maps still count
+    pvp_maps |= {m.map_id for m in matches if m.map_id is not None}
+    # M22-22: the open world as `crew scan-log` tells it, by the game's map
+    # table for this flavor's version when it is cached.
+    table = _map_table(chosen.version)
+    map_words = _map_table_line(table, chosen.folder)
 
     match: live.MatchRecap | None = None
     match_words: str | None
@@ -378,7 +392,13 @@ def live_recap(
     else:
         unread: list[str] = []
         match = live.match_recap(
-            logs, owners, pvp_maps=maps, book=matches, notes=unread, second_names=second
+            logs,
+            owners,
+            pvp_maps=pvp_maps,
+            book=matches,
+            notes=unread,
+            second_names=second,
+            maps=table.usable(),
         )
         if match is not None:
             match_words = None
@@ -407,9 +427,10 @@ def live_recap(
             target,
             logs,
             owners,
-            maps,
+            pvp_maps,
             matches,
             second,
+            table.usable(),
         )
         if book_note is not None and session is not None:
             session_words = book_note
@@ -421,6 +442,8 @@ def live_recap(
         lines += _live_session_lines(session)
     if session_words is not None:
         lines.append(session_words)
+    if map_words is not None and owners and logs:
+        lines.append(map_words)
     report = LiveRecapReport(
         flavor_folder=chosen.folder,
         account=acct.folder,
@@ -434,6 +457,9 @@ def live_recap(
         session_words=session_words,
         lines=lines,
         notes=_LIVE_NOTES,
+        map_table=table.state,
+        map_version=table.version,
+        map_words=map_words,
     )
     if json_out:
         _emit(report)
@@ -453,9 +479,10 @@ def _live_session(
     target: layout.SavedVariablesFile,
     logs: Sequence[Path],
     owners: dict[str, str | None],
-    maps: set[int],
+    pvp_maps: set[int],
     matches: Sequence[crewbook.CrewMatch],
     second_names: bool = False,
+    maps: dict[int, int] | None = None,
 ) -> tuple[live.SessionRecap | None, str | None]:
     try:
         table = gear.load_slot_table()
@@ -511,7 +538,12 @@ def _live_session(
     world_note: str | None = None
     if before is not None and owners:
         world, world_note = live.world_since(
-            logs, owners, before.saved_at_ns, pvp_maps=maps, second_names=second_names
+            logs,
+            owners,
+            before.saved_at_ns,
+            pvp_maps=pvp_maps,
+            second_names=second_names,
+            maps=maps,
         )
     elif before is not None:
         world_note = "the open world: wowlab does not know which characters are yours yet"

@@ -24,7 +24,7 @@ import re
 import time
 from collections.abc import Callable, Sequence
 from pathlib import Path
-from typing import Annotated, Literal
+from typing import TYPE_CHECKING, Annotated, Literal, NoReturn
 
 import pydantic
 import typer
@@ -34,7 +34,6 @@ from wowlab_core import (
     crewbook,
     crewdb,
     crewedit,
-    gamedata,
     guard,
     install,
     labaddon,
@@ -45,6 +44,9 @@ from wowlab_core import (
     snapshot,
     worldpvp,
 )
+
+if TYPE_CHECKING:
+    from wowlab_core import maptable
 from wowlab_core.cli._common import (
     CREW_BOOK_SENTENCE,
     EXIT_ERROR,
@@ -65,6 +67,8 @@ from wowlab_core.cli._common import (
     _handled,
     _is_lab_file,
     _listed,
+    _map_table,
+    _map_table_line,
     _Out,
     _plural,
     _region_fields,
@@ -1317,10 +1321,13 @@ _WORLD_NOTES = [
     "you: your own hits always, other players' only near you. The game writes it in chunks, so "
     "a read while you play lags behind.",
     "Only damage counts: a player who only stunned, feared or missed you is not counted yet.",
-    "Fights in dungeons, raids, battlegrounds and arenas are left out by the game's map table, "
-    "which says which of the maps the log names are instances; without that table, by the "
-    "zone line alone, which a dungeon's can share with the open world's. A map wowlab keeps a "
-    "battleground or arena match on is always left out.",
+    "Dungeons, raids and battlegrounds are left out by the game's map table, and a map it does "
+    "not hold is not counted either. An arena is left out by the log's arena-match lines or a "
+    "match wowlab keeps on its map; how the table classes this game's arenas is not yet "
+    "confirmed. Without the table, the zone line decides, and a dungeon's, raid's or "
+    "battleground's can look like the open world's.",
+    "The map table is the one for the game version installed now; a log written before a patch "
+    "is judged by it too.",
     "A duel cannot be told from the log, so one fought in the open world counts as a fight.",
     "Which flags the game writes for a hostile player, a group member, a pet and a guardian is "
     "not yet confirmed.",
@@ -1356,6 +1363,11 @@ class CrewScanLogFile(_Out):
 
     def unreadable_text(self) -> str:
         return self.unreadable or "not read"
+
+
+MapTableState = Literal["read", "missing", "unreadable", "no_version"]
+"""As `maptable.MapTableState` (kept here: `crew` loads the game-data
+client only when a combat log is read)."""
 
 
 class CrewScanLogReport(_Out):
@@ -1400,61 +1412,81 @@ class CrewScanLogReport(_Out):
     logs_kept_old_keys: int = 0
     marks_carried: int = 0
     marks_not_carried: int = 0
-    # M22-22: whether the game's map table told the open world from the
-    # instances (`map_table`), the game version whose table was read or is
-    # missing (`map_version`, None when the version is unknown), and what
-    # the re-check of earlier reads against it did.
+    # M22-22: the game's map table for the flavor's version: `map_table`
+    # true when it was read (`map_table_state` `read`; `missing`: not
+    # downloaded; `unreadable`: downloaded but it cannot be read, so
+    # downloading it again changes nothing; `no_version`), `map_version`
+    # the game version whose table was looked for (None when unknown),
+    # `map_lines` the lines the text says about it, and what the re-check of
+    # earlier reads against it did.
     map_table: bool = False
+    map_table_state: MapTableState = "no_version"
     map_version: str | None = None
+    map_lines: list[str] = pydantic.Field(default_factory=list)
     recheck: crewdb.WorldRecheck = pydantic.Field(default_factory=crewdb.WorldRecheck)
 
 
-def _map_types(version: str | None) -> dict[int, int] | None:
-    """Each map's instance type from the game's map table cached for
-    `version` (M22-22), or None when it is not cached or cannot be read.
-    Never fetches: `db2 fetch Map` downloads it."""
-    if version is None:
+def _recheck_line(recheck: crewdb.WorldRecheck) -> str | None:
+    """What the re-check of earlier reads against the map table did, or
+    None when it checked nothing."""
+    if recheck.skipped:
+        return (
+            "The open-world encounters an earlier read kept were not checked against the game's "
+            "map table: another wowlab was writing the crew database; the next read checks them."
+        )
+    if not recheck.checked:
         return None
-    try:
-        rows = gamedata.cached_rows(worldpvp.MAP_TABLE, version)
-        if rows is None:
-            return None
-        found = worldpvp.map_types(rows)
-    except (ValueError, OSError, gamedata.GameDataError):
-        return None
-    return found or None
+    parts = [
+        f"removed {recheck.removed:,} that {'was' if recheck.removed == 1 else 'were'} in a "
+        "dungeon, raid, battleground or arena"
+    ]
+    if recheck.removed_unknown:
+        parts.append(
+            f"{recheck.removed_unknown:,} on a map the table does not hold, which wowlab cannot "
+            "tell from an instance"
+        )
+    gone = recheck.removed + recheck.removed_unknown
+    tail = ""
+    if gone:
+        players = (
+            f", and {_plural(recheck.players_removed, 'player')} only those fights held"
+            if recheck.players_removed
+            else ""
+        )
+        tail = (
+            f"{players}. They no longer count in the open-world record or toward Nemesis; the "
+            "copies wowlab keeps beside its crew database still hold them"
+        )
+    return (
+        f"Checked {_plural(recheck.checked, 'open-world encounter')} an earlier read kept "
+        f"against the game's map table: {'; '.join(parts)}{tail}."
+    )
 
 
 def _map_lines(
-    maps: dict[int, int] | None, version: str | None, folder: str, recheck: crewdb.WorldRecheck
+    table: "maptable.MapTable",
+    folder: str,
+    recheck: crewdb.WorldRecheck,
+    unknown: list[int],
+    count: int,
 ) -> list[str]:
-    """What the text says about the map table: that it was missing, or how
-    many encounters an earlier read kept were removed by it."""
-    if maps is None:
-        fetch = f"wowlab db2 fetch {worldpvp.MAP_TABLE} --flavor {folder}"
-        if version is None:
-            return [
-                "  wowlab cannot tell this game's version, so it told dungeons from the open "
-                "world by the zone line alone, which a dungeon's can share."
-            ]
-        return [
-            f"  The game's map table for {version} is not downloaded, so a dungeon whose zone "
-            f"line looks like the open world's may be counted: {fetch} downloads it, and the "
-            "next read removes what it shows was in an instance."
-        ]
-    if recheck.checked:
-        return [
-            f"  Checked {_plural(recheck.checked, 'open-world encounter')} an earlier read kept "
-            f"against the game's map table: removed {recheck.removed:,} that "
-            f"{'was' if recheck.removed == 1 else 'were'} in a dungeon, raid, battleground or "
-            "arena."
-        ]
-    if recheck.skipped:
-        return [
-            "  The open-world encounters an earlier read kept were not checked against the game's "
-            "map table: another wowlab was writing the crew database; the next read checks them."
-        ]
-    return []
+    """What the text says about the map table: why it was not used, the
+    fights on maps it does not hold, and what the re-check removed."""
+    lines: list[str] = []
+    said = _map_table_line(table, folder)
+    if said is not None:
+        lines.append(f"  {said}")
+    if count:
+        ids = ", ".join(str(i) for i in unknown)
+        lines.append(
+            f"  Not counted: {_plural(count, 'fight')} on a map the game's map table does not "
+            f"hold ({'id' if len(unknown) == 1 else 'ids'} {ids}), so wowlab cannot tell whether "
+            f"{'it was' if count == 1 else 'they were'} in the open world."
+        )
+    done = _recheck_line(recheck)
+    if done is not None:
+        lines.append(f"  {done}")
+    return lines
 
 
 def _owner_guids(lay: layout.Layout, account: str) -> tuple[dict[str, str | None], int]:
@@ -1502,8 +1534,8 @@ def _scan_lines(out: crewdb.WorldOutcome, without: int) -> list[str]:
     parts = f", in {out.parts:,} parts" if out.parts > 1 else ""
     lines = [f"  Read {how} (bytes {out.read_from:,} to {out.read_to:,}{parts})."]
     lines.append(
-        f"  Fights with players in the open world: {out.fights:,}; in a battleground, arena "
-        f"or dungeon, not counted: {out.outside_world:,}."
+        f"  Fights with players in the open world: {out.fights:,}; in a dungeon, raid, "
+        f"battleground or arena, not counted: {out.outside_world:,}."
     )
     if out.no_zone or out.no_time or out.bad_lines or out.pet_hits_no_owner:
         lines.append(
@@ -1532,6 +1564,7 @@ def _scan_lines(out: crewdb.WorldOutcome, without: int) -> list[str]:
 _SUMMED = (
     "fights",
     "outside_world",
+    "unknown_map",
     "no_zone",
     "no_time",
     "bad_lines",
@@ -1545,10 +1578,20 @@ _SUMMED = (
 )
 
 
+def _ids_joined(*lists: list[int]) -> list[int]:
+    """The instance ids of several reads, each once, in order, at most
+    `worldpvp.MAX_UNKNOWN_MAPS`."""
+    out: list[int] = []
+    for ids in lists:
+        out += [i for i in ids if i not in out]
+    return out[: worldpvp.MAX_UNKNOWN_MAPS]
+
+
 def _joined(first: crewdb.WorldOutcome, later: crewdb.WorldOutcome) -> crewdb.WorldOutcome:
     """Two parts of one read as one outcome: counts added up, from the
     first part's start to the later part's end."""
     update: dict[str, object] = {k: getattr(first, k) + getattr(later, k) for k in _SUMMED}
+    update["unknown_maps"] = _ids_joined(first.unknown_maps, later.unknown_maps)
     state = later.state
     if state == "unchanged" and first.state == "scanned":
         state = "scanned"
@@ -1644,17 +1687,33 @@ def crew_scan_log(
         raise CliError(_NO_OWNER.format(account=target.account))
     # M22-22: the open world is told from the instances by the game's map
     # table for this flavor's version, when it is cached; the encounters an
-    # earlier read kept are checked against it first.
-    map_version = chosen_flavor.version
-    maps = _map_types(map_version)
-    recheck = crewdb.recheck_world(target, maps) if maps is not None else crewdb.WorldRecheck()
+    # earlier read kept are checked against it once a log is found to read
+    # (`_recheck`), and what that removed is said whatever the read does.
+    table = _map_table(chosen_flavor.version)
+    maps = table.usable()
+    rechecked: list[crewdb.WorldRecheck] = []
+
+    def recheck() -> None:
+        if maps is not None and not rechecked:
+            rechecked.append(crewdb.recheck_world(target, maps))
+
+    def said_if_failed(exc: CliError) -> NoReturn:
+        line = _recheck_line(rechecked[0]) if rechecked else None
+        if line is not None:
+            _say_err(line)
+        raise exc
+
     # M21-02: four-part unit names are first and second name only where the
     # flavor's characters have second names (read from the folders, L6).
     second_names = layout.has_second_names(lay)
     assert opened.place is not None
     place = _place_words(opened.place)
     if path is not None:
-        outcome = _read_log_parts(target, path, owners, second_names, maps)
+        recheck()
+        try:
+            outcome = _read_log_parts(target, path, owners, second_names, maps)
+        except CliError as exc:
+            said_if_failed(exc)
         label = _log_label(lay, path)
         words = f"{outcome.words} ({place}, {label})"
         lines = _scan_lines(outcome, without) if outcome.state in ("scanned", "unchanged") else []
@@ -1672,8 +1731,12 @@ def crew_scan_log(
                 f"no combat log in {lay.flavor_path}: turn logging on in game with /combatlog, "
                 "fight, then run this again"
             )
+        recheck()
         if len(found) == 1:
-            outcome = _read_log_parts(target, found[0], owners, second_names, maps)
+            try:
+                outcome = _read_log_parts(target, found[0], owners, second_names, maps)
+            except CliError as exc:
+                said_if_failed(exc)
             label = _log_label(lay, found[0])
             files = [CrewScanLogFile(log=label, scan=outcome)]
             words = f"{outcome.words} ({place}, {label})"
@@ -1700,9 +1763,11 @@ def crew_scan_log(
                     break
             read_any = [f for f in files if f.scan is not None]
             if not read_any:
-                raise CliError(
-                    f"none of the {len(found)} combat logs in the Logs folder could be read: "
-                    + files[-1].unreadable_text()
+                said_if_failed(
+                    CliError(
+                        f"none of the {len(found)} combat logs in the Logs folder could be read: "
+                        + files[-1].unreadable_text()
+                    )
                 )
             last = read_any[-1]
             assert last.scan is not None
@@ -1743,8 +1808,12 @@ def crew_scan_log(
             "more than one player, or the full name already has a rating or note; both rows "
             "are kept."
         )
-    if outcome.state not in ("skipped", "elsewhere"):
-        lines += _map_lines(maps, map_version, target.flavor_folder, recheck)
+    done = rechecked[0] if rechecked else crewdb.WorldRecheck()
+    unknown = _ids_joined(*(o.unknown_maps for o in scans))
+    map_lines = _map_lines(
+        table, target.flavor_folder, done, unknown, sum(o.unknown_map for o in scans)
+    )
+    lines += map_lines
     report = CrewScanLogReport(
         flavor_folder=target.flavor_folder,
         account=target.account,
@@ -1764,15 +1833,19 @@ def crew_scan_log(
         logs_kept_old_keys=kept_old,
         marks_carried=carried,
         marks_not_carried=not_carried,
-        map_table=maps is not None,
-        map_version=map_version,
-        recheck=recheck,
+        map_table=table.state == "read",
+        map_table_state=table.state,
+        map_version=table.version,
+        map_lines=[line.strip() for line in map_lines],
+        recheck=done,
     )
     failed = outcome.state in ("skipped", "elsewhere")
     if json_out:
         _emit(report)
     elif failed:
         _say_err(words)
+        for line in map_lines:  # what the re-check removed is said all the same
+            _say_err(line.strip())
     else:
         _say(words)
         for line in lines:
