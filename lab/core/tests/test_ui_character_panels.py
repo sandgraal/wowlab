@@ -978,8 +978,12 @@ def test_the_tab_offers_no_edit_control_and_says_so() -> None:
         named.append((tag, ident.group(1), kind.group(1) if kind else ""))
     named.sort()
     # Since M22-06, the Twink panel's two pickers and Show the gaps, which
-    # run the read `char twink` (test_ui_twink.py).
+    # run the read `char twink` (test_ui_twink.py). Since M22-11, the Blizzard
+    # profile panel's two buttons, which run `blizzard show` and `blizzard
+    # fetch` and change nothing in the game folder (test_ui_bnet.py).
     assert named == [
+        ("button", "bnet-char-fetch", "button"),
+        ("button", "bnet-char-show", "button"),
         ("button", "char-back", "button"),
         ("button", "char-sim-button", "button"),
         ("button", "char-twink-show", "button"),
