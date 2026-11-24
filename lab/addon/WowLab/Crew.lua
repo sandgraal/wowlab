@@ -1021,8 +1021,9 @@ local function readMember(unit)
 end
 
 -- M21-12: the book's region, once per book: the text GetCurrentRegionName()
--- gives ("US" on the owner's launch client, 2026-11-23), kept as given. A
--- secret or empty answer stores nothing and is asked again at the next pass.
+-- gives ("US" on the owner's launch client, 2026-11-23), kept as given, with
+-- the time() it was recorded (`region_at`). A secret or empty answer stores
+-- nothing and is asked again at the next pass.
 local function readRegion()
     if not crewOn() then
         return
@@ -1042,6 +1043,10 @@ local function readRegion()
     end
     if not secret(region) and type(region) == "string" and region ~= "" then
         WowLabCrewDB.region = ns.String(region)
+        -- Fix round 1: when it was recorded, so the desk can date it.
+        if type(time) == "function" then
+            WowLabCrewDB.region_at = ns.Number(time())
+        end
     end
 end
 

@@ -60,7 +60,9 @@ READ_REGION = (
     "local region = GetCurrentRegionName ( ) "
     "if secret ( region ) then addSkipped ( ) end "
     'if not secret ( region ) and type ( region ) == "string" and region ~= "" then '
-    "WowLabCrewDB . region = ns . String ( region ) end end"
+    "WowLabCrewDB . region = ns . String ( region ) "
+    'if type ( time ) == "function" then WowLabCrewDB . region_at = ns . Number ( time ( ) ) end '
+    "end end"
 )
 RESOLVE_NAMES = (
     f"function resolveNames ( ) {GATE} "
@@ -186,6 +188,7 @@ def pin_problems(crew: Path = CREW) -> list[str]:
     # The region and the name fields are stored only by the pinned two.
     for stored, owner, count in (
         ("WowLabCrewDB . region", "readRegion", 1),
+        ("WowLabCrewDB . region_at", "readRegion", 1),
         ("entry . resolved_name", "resolveNames", 1),
         ("entry . resolved_realm", "resolveNames", 1),
         ("entry . resolved_eighth", "resolveNames", 1),
@@ -340,11 +343,12 @@ class Book:
 
     on: bool = True
     region: Any = None
+    region_at: int | None = None
     skipped: int = 0
     players: dict[str, dict[str, Any]] = field(default_factory=dict)
 
 
-def read_region(book: Book, c: Client) -> None:
+def read_region(book: Book, c: Client, now: int | None = 1_800_000_000) -> None:
     """readRegion, line for line."""
     if not book.on or c.in_combat:
         return
@@ -357,6 +361,7 @@ def read_region(book: Book, c: Client) -> None:
         book.skipped += 1
     if not _is_secret(region) and isinstance(region, str) and region != "":
         book.region = region
+        book.region_at = now
 
 
 def _number(value: Any) -> int | float | None:
@@ -477,8 +482,8 @@ def test_m21_12_the_owners_answer_is_kept_as_given() -> None:
         "resolved_eighth": 22,
         "resolved_at": T,
     }
-    read_region(book, client)
-    assert book.region == "US"
+    read_region(book, client, now=T)
+    assert (book.region, book.region_at) == ("US", T)
 
 
 def test_m21_12_nothing_is_asked_in_combat() -> None:

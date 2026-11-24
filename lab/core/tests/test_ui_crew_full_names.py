@@ -16,6 +16,7 @@ gave is the owner's own test character's, as the owner gave it in session.
 from __future__ import annotations
 
 import sys
+import time
 from pathlib import Path
 from typing import Any
 
@@ -26,11 +27,22 @@ sys.path.insert(0, str(Path(__file__).resolve().parent / "parser"))
 from _crew_build import KEY_A, T1, book, player
 
 TAY = "Tay-Soulrend"
+ASKED = T1 + 100
+REGION_AT = T1 + 50
+
+
+def _day(seconds: int) -> str:
+    return time.strftime("%Y-%m-%d", time.localtime(seconds))
+
+
 NAME_LINE = (
     "Name in game: Tay Soulrend (first name Tay, second name Soulrend; "
-    "as the game gave it for the character's id)"
+    f"as the game gave it for the character's id on {_day(ASKED)})"
 )
-REGION_LINE = "Region: US (from the game, as the crew book recorded it)"
+REGION_LINE = (
+    f"Region: US (your region as the game gave it to the crew book on {_day(REGION_AT)}; "
+    "wowlab assumes every player is in your region, not yet confirmed)"
+)
 
 
 def _book() -> bytes:
@@ -39,10 +51,10 @@ def _book() -> bytes:
         resolved_name="Tay Soulrend",
         resolved_realm="",
         resolved_eighth=22,
-        resolved_at=T1 + 100,
+        resolved_at=ASKED,
         last=T1 + 200,
     )
-    return book({TAY: tay, KEY_A: player()}, schema=3, matches=[], region="US")
+    return book({TAY: tay, KEY_A: player()}, schema=3, matches=[], region="US", region_at=REGION_AT)
 
 
 def test_the_rows_and_the_opened_player_carry_the_names_and_their_source_constructed(

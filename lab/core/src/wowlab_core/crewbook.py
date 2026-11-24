@@ -32,11 +32,14 @@ book. A schema 1 book is read exactly as before: a schema 2 field in it is
 a key this reader does not know.
 
 Schema 3 (M21-12) is schema 2 with the book's region (`region`, the text
-the client's `GetCurrentRegionName()` gave, kept as given) and, per player,
-the name the client gave for their GUID (`resolved_name`, `<First> <Second>`
-on Forever), the realm with it (`resolved_realm`, empty on Forever), its
-eighth value (`resolved_eighth`, probably the level, [verify]) and when it
-was asked (`resolved_at`). Each is left out until the lab-addon read it. At
+the client's `GetCurrentRegionName()` gave, kept as given, and `region_at`,
+when it was recorded) and, per player, the name the client gave for their
+GUID (`resolved_name`, `<First> <Second>` on Forever), the realm with it
+(`resolved_realm`: empty for the player checked on 2026-11-23; retail leaves
+it empty for your own realm, [verify]), its eighth value (`resolved_eighth`,
+probably the level, [verify]), when it was asked (`resolved_at`), and, for a
+player the client gave no name, when it was last asked
+(`resolve_tried_at`). Each is left out until the lab-addon wrote it. At
 schema 1 and 2 they are keys this reader does not know.
 
 Everything read from the file other than numbers is other people's text
@@ -105,6 +108,7 @@ _FIELD_WORDS = {
     "matched": "record of the match last counted",
     "warned": "time of the last nearly-full line",
     "region": "region",
+    "region_at": "time the region was recorded",
 }
 
 
@@ -178,14 +182,18 @@ class CrewPlayer(_Model):
     score: CrewScore | None = None
     # Schema 3 (M21-12): what the client's GetPlayerInfoByGUID gave for the
     # player's GUID, asked by the lab-addon out of combat: the name in the
-    # in-game form (`<First> <Second>` on Forever), the realm (empty on
-    # Forever), the eighth value (22 for a level-22 character on the owner's
-    # check of 2026-11-23, so probably the level; not yet confirmed) and the
-    # time it was asked. None until the client answered.
+    # in-game form (`<First> <Second>` on Forever), the realm (empty for the
+    # player checked on 2026-11-23; retail leaves it empty for your own
+    # realm, not yet confirmed), the eighth value (22 for a level-22
+    # character on the owner's check of 2026-11-23, so probably the level;
+    # not yet confirmed) and the time it was asked. None until the client
+    # answered. `resolve_tried_at`: when the lab-addon last asked and the
+    # client gave no name (fix round 1); None once named.
     resolved_name: str | None = None
     resolved_realm: str | None = None
     resolved_eighth: int | None = None
     resolved_at: int | None = None
+    resolve_tried_at: int | None = None
     # Whether the key is in the book's saved `current` set: counted in the
     # group the player was in at the last save.
     in_current_group: bool = False
@@ -284,8 +292,10 @@ class CrewBook(_Model):
     probe_pvp: list[list[ProbeItem]] = Field(default_factory=list)
     # Schema 3 (M21-12): the client's region as `GetCurrentRegionName()`
     # gave it when the lab-addon first asked ("US" on the owner's launch
-    # client), kept as stored; None when the book holds none.
+    # client), kept as stored, and when it recorded it; None when the book
+    # holds none.
     region: str | None = None
+    region_at: int | None = None
 
     def match_keys(self) -> list[str]:
         """Every key the read matches name in `team` or `foes`, once each, in
@@ -440,7 +450,8 @@ _M20_11_FIELDS = frozenset({*_M20_11_TEXTS, "honor_level", "score"})
 
 # Schema 3 (M21-12): the name by GUID, two texts, a whole number and a time.
 _RESOLVED_TEXTS = ("resolved_name", "resolved_realm")
-_RESOLVED_FIELDS = frozenset({*_RESOLVED_TEXTS, "resolved_eighth", "resolved_at"})
+_RESOLVED_TIMES = ("resolved_at", "resolve_tried_at")
+_RESOLVED_FIELDS = frozenset({*_RESOLVED_TEXTS, *_RESOLVED_TIMES, "resolved_eighth"})
 
 
 def _resolved_field(name: str, item: object, fields: dict[str, Any]) -> str | None:
@@ -449,10 +460,10 @@ def _resolved_field(name: str, item: object, fields: dict[str, Any]) -> str | No
         if not isinstance(item, str):
             return f"{name} is not text"
         fields[name] = item
-    elif name == "resolved_at":
+    elif name in _RESOLVED_TIMES:
         number = _whole(item, 0, TIME_MAX)
         if number is None:
-            return "resolved_at is not a time"
+            return f"{name} is not a time"
         fields[name] = number
     else:
         number = _whole(item, -(2**31), 2**31 - 1)
@@ -606,6 +617,7 @@ def load_book(value: object) -> CrewBook:
         more["pvp"] = counters
     if schema >= 3:
         more["region"] = _region(value)
+        more["region_at"] = _top_number(value, "region_at", TIME_MAX)
     return CrewBook(
         state="on" if on is True else "off",
         schema_number=schema,

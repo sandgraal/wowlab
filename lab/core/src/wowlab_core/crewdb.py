@@ -439,6 +439,8 @@ _SQL_KEYS_ON_MAP = (
 
 # The `meta` row that keeps the region the lab-addon's book recorded (M21-12).
 BOOK_REGION_META = "book_region"
+# ... and when the book first recorded it (fix round 1).
+BOOK_REGION_AT_META = "book_region_at"
 
 # ─── errors and models ───────────────────────────────────────────────────────
 
@@ -554,6 +556,13 @@ class CrewRow(crewbook.CrewPlayer):
     # The stored key the names or the region were borrowed from (M21-12);
     # None when nothing was borrowed.
     borrowed_from: str | None = None
+    # When the crew book first recorded the region (fix round 1), for a
+    # region from the book or borrowed from it; None otherwise.
+    region_recorded_at: int | None = None
+    # The book's region and the settings' region when they differ (fix
+    # round 1): then `region` is None for a row whose region would come from
+    # either, since wowlab cannot tell which is right. Empty otherwise.
+    region_conflict: list[Region] = Field(default_factory=list)
 
 
 class CrewMatchRow(_Model):
@@ -1166,6 +1175,8 @@ class _Naming:
     region: Region | None = None
     region_from: RegionFrom | None = None
     borrowed_from: str | None = None
+    region_recorded_at: int | None = None
+    region_conflict: tuple[Region, ...] = ()
 
 
 def _own_names(
@@ -1225,12 +1236,19 @@ def _namings(
     region: Region | None,
     book_region: Region | None,
     second_names: bool,
+    book_region_at: int | None = None,
 ) -> dict[str, _Naming]:
     """Each row's names and region with their sources (M21-12): its own
     (`_own_names`; the region from a log name, else the book's for a player
     the game's list gave), then, for a combat-log-only player whose own
     names are only its key's, what the row with the same GUID has
-    (`_lender`), then the flavor's settings for the region."""
+    (`_lender`), then the flavor's settings for the region. When the book's
+    region and the settings' both name a region and differ (fix round 1),
+    a row whose region would come from either has none, and says both
+    (`region_conflict`): wowlab cannot tell which is right."""
+    conflict: tuple[Region, ...] = ()
+    if book_region is not None and region is not None and book_region != region:
+        conflict = (book_region, region)
     by_key = {r.key: r for r in rows}
     own: dict[str, tuple[charname.KeyNames, NamesFrom, Region | None, RegionFrom | None]] = {}
     for r in rows:
@@ -1265,7 +1283,13 @@ def _namings(
                 borrowed_from = lender.key
         if got is None and region is not None:
             got, got_from = region, "settings"
-        out[r.key] = _Naming(names, names_from, got, got_from, borrowed_from)
+        if conflict and got_from != "log":
+            out[r.key] = _Naming(
+                names, names_from, None, None, borrowed_from, book_region_at, conflict
+            )
+            continue
+        at = book_region_at if got_from in ("book", "borrowed") else None
+        out[r.key] = _Naming(names, names_from, got, got_from, borrowed_from, at)
     return out
 
 
@@ -1329,6 +1353,7 @@ def _public(
         resolved_realm=row.resolved_realm,
         resolved_eighth=row.resolved_eighth,
         resolved_at=row.resolved_at,
+        resolve_tried_at=held.resolve_tried_at if held is not None else None,
         game_name=names.game_name,
         realm=names.realm,
         first_name=names.first_name,
@@ -1337,6 +1362,8 @@ def _public(
         region_from=naming.region_from,
         names_from=naming.names_from,
         borrowed_from=naming.borrowed_from,
+        region_recorded_at=naming.region_recorded_at,
+        region_conflict=list(naming.region_conflict),
     )
 
 
@@ -1383,8 +1410,12 @@ def read(
         rows = list(_rows(conn).values())
         aliases = _aliases(rows)
         world = _world_parts(conn)
-        book_region = region_of(_text(_meta(conn).get(BOOK_REGION_META)))
-        namings = _namings(rows, aliases, _log_names(conn), region, book_region, second_names)
+        meta = _meta(conn)
+        book_region = region_of(_text(meta.get(BOOK_REGION_META)))
+        book_region_at = _number(meta.get(BOOK_REGION_AT_META))
+        namings = _namings(
+            rows, aliases, _log_names(conn), region, book_region, second_names, book_region_at
+        )
         records = _records(conn, world)
         return [_public(r, book, aliases, world, namings[r.key], records) for r in rows]
     except sqlite3.Error as exc:
@@ -1503,6 +1534,7 @@ _TIMES = (
     ("first", "first-grouped time"),
     ("last", "last-grouped time"),
     ("resolved_at", "time the game was asked for the name"),
+    ("resolve_tried_at", "time the game was last asked for a name it did not give"),
 )
 
 
@@ -2167,7 +2199,11 @@ def _elsewhere(path: Path, root: object, flavor_folder: object, account: str) ->
 
 
 def _meta_rows(
-    target: Target, book: crewbook.CrewBook, data: bytes, journal: str | None
+    target: Target,
+    book: crewbook.CrewBook,
+    data: bytes,
+    journal: str | None,
+    kept: dict[str, object] | None = None,
 ) -> dict[str, object]:
     rows: dict[str, object] = {
         "schema": SCHEMA,
@@ -2184,6 +2220,12 @@ def _meta_rows(
     book_region = region_of(book.region)
     if book_region is not None:
         rows[BOOK_REGION_META] = book_region
+        # When the book recorded it; a book from before fix round 1 names no
+        # time, so the first sync that saw this region stands for it.
+        before = kept or {}
+        same = before.get(BOOK_REGION_META) == book_region
+        kept_at = _number(before.get(BOOK_REGION_AT_META)) if same else None
+        rows[BOOK_REGION_AT_META] = book.region_at or kept_at or rows["last_sync"]
     return rows
 
 
@@ -2419,7 +2461,7 @@ def _sync_open(
         added, updated, plan = _changes(rows, book, mode, now, unsynced)
         games = _new_matches(conn, book)
         plan = plan.model_copy(update={"matches_added": len(games)})
-        _write(conn, added, updated, _meta_rows(target, book, data, newest), games)
+        _write(conn, added, updated, _meta_rows(target, book, data, newest, meta), games)
     total = len(rows) + len(added)
     return SyncOutcome(
         state="synced",

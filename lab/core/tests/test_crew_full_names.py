@@ -25,6 +25,7 @@ from __future__ import annotations
 import json
 import sqlite3
 import sys
+import time
 from pathlib import Path
 from typing import Any
 
@@ -35,7 +36,7 @@ from wowlab_core import crewbook, crewdb
 sys.path.insert(0, str(Path(__file__).resolve().parent / "parser"))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from _crew_build import KEY_A, KEY_B, T1, book, match, player
+from _crew_build import ACCOUNT, KEY_A, KEY_B, T1, book, match, player
 from _world_lines import log, you_hit
 from test_crew_world import _scan, _write_log, owner  # noqa: F401 - the fixture
 from test_crewdb import Env, make  # noqa: F401 - the fixture
@@ -58,12 +59,23 @@ def _tay(**more: Any) -> dict[str, Any]:
     return player(**fields)
 
 
+REGION_AT = T1 + 50  # when the lab-addon recorded the region
+
+
 def _book3(players: dict[str, Any], **more: Any) -> bytes:
-    """A schema 3 book: schema 2's fields and, unless given, region "EU"
-    (not the settings' US, so the two sources tell apart)."""
-    more.setdefault("region", "EU")
+    """A schema 3 book: schema 2's fields and, unless given, region "US",
+    the captured settings' own (`region_from` tells the two apart),
+    recorded at REGION_AT."""
+    more.setdefault("region", "US")
+    if more["region"] is not None:
+        more.setdefault("region_at", REGION_AT)
     more.setdefault("matches", [])
     return book(players, schema=3, **more)
+
+
+def _day(seconds: int) -> str:
+    """A time as `crew show` prints it (the computer's local date)."""
+    return time.strftime("%Y-%m-%d", time.localtime(seconds))
 
 
 def _rows(env: Env) -> dict[str, dict[str, Any]]:
@@ -78,7 +90,7 @@ def _rows(env: Env) -> dict[str, dict[str, Any]]:
 def test_the_reader_reads_schema_3_constructed(make: Any) -> None:
     env = make(_book3({TAY: _tay(), KEY_A: player(guid="Player-9998-0000000A")}))
     read = env.book()
-    assert read.schema_number == 3 and read.region == "EU"
+    assert read.schema_number == 3 and (read.region, read.region_at) == ("US", REGION_AT)
     players = {p.key: p for p in read.players}
     tay = players[TAY]
     assert (tay.resolved_name, tay.resolved_realm) == ("Tay Soulrend", "")
@@ -148,7 +160,8 @@ def test_a_named_player_has_the_games_names_and_the_books_region_constructed(
     tay = rows[TAY]
     assert (tay["first_name"], tay["second_name"], tay["realm"]) == ("Tay", "Soulrend", None)
     assert tay["game_name"] == "Tay Soulrend" and tay["names_from"] == "game"
-    assert (tay["region"], tay["region_from"]) == ("eu", "book")
+    assert (tay["region"], tay["region_from"]) == ("us", "book")
+    assert tay["region_recorded_at"] == REGION_AT and tay["region_conflict"] == []
     assert (tay["resolved_name"], tay["resolved_eighth"], tay["resolved_at"]) == (
         "Tay Soulrend",
         22,
@@ -162,7 +175,7 @@ def test_a_named_player_has_the_games_names_and_the_books_region_constructed(
         "Fakerealm",
         "key",
     )
-    assert (a["region"], a["region_from"]) == ("eu", "book")
+    assert (a["region"], a["region_from"]) == ("us", "book")
 
 
 def test_a_book_with_no_region_leaves_the_settings_region_constructed(make: Any) -> None:
@@ -173,9 +186,14 @@ def test_a_book_with_no_region_leaves_the_settings_region_constructed(make: Any)
 
 def test_the_book_region_is_kept_when_a_later_book_has_none_constructed(make: Any) -> None:
     env = make(_book3({TAY: _tay()}))
-    assert _rows(env)[TAY]["region"] == "eu"
+    assert _rows(env)[TAY]["region_from"] == "book"
     env.save(_book3({TAY: _tay(met=4)}, region=None))
-    assert (_rows(env)[TAY]["region"], _rows(env)[TAY]["region_from"]) == ("eu", "book")
+    tay = _rows(env)[TAY]
+    assert (tay["region"], tay["region_from"], tay["region_recorded_at"]) == (
+        "us",
+        "book",
+        REGION_AT,
+    )
 
 
 def test_an_unknown_region_is_not_kept_constructed(make: Any) -> None:
@@ -234,7 +252,7 @@ def test_a_log_only_player_borrows_from_the_book_row_with_the_same_guid_construc
     assert met["game_name"] == "Tay Soulrend"
     assert met["realm"] == "Otherfakerealm"  # its own key's, as the log gave it
     assert (met["names_from"], met["borrowed_from"]) == ("borrowed", TAY)
-    assert (met["region"], met["region_from"]) == ("eu", "borrowed")
+    assert (met["region"], met["region_from"]) == ("us", "borrowed")
     # The book row is as it was.
     assert (rows[TAY]["names_from"], rows[TAY]["borrowed_from"]) == ("game", None)
 
@@ -313,16 +331,23 @@ def test_crew_show_says_where_the_names_and_region_came_from_constructed(
     lines = shown["lines"]
     assert (
         "  Name in game: Tay Soulrend (first name Tay, second name Soulrend; "
-        "as the game gave it for the character's id)"
+        f"as the game gave it for the character's id on {_day(ASKED)})"
     ) in lines
-    assert "  Region: EU (from the game, as the crew book recorded it)" in lines
+    assert (
+        f"  Region: US (your region as the game gave it to the crew book on {_day(REGION_AT)}; "
+        "wowlab assumes every player is in your region, not yet confirmed)"
+    ) in lines
     assert shown["player"]["names_from"] == "game"
     met = json.loads(env.run("crew", "show", LOG_KEY, "--json").stdout)["lines"]
     assert (
         "  Name in game: Tay Soulrend (first name Tay, second name Soulrend, realm "
         f"Otherfakerealm; from {TAY}, the same character by the game's id)"
     ) in met
-    assert f"  Region: EU (from {TAY}, the same character by the game's id)" in met
+    assert (
+        f"  Region: US (from {TAY}, the same character by the game's id: your region as the "
+        f"game gave it to the crew book on {_day(REGION_AT)}; wowlab assumes every player is "
+        "in your region, not yet confirmed)"
+    ) in met
     text = env.run("crew", "show", KEY_A)
     assert text.exit_code == 0
     assert (
@@ -370,6 +395,80 @@ def test_a_forget_keeps_the_schema_3_book_and_its_region_constructed(make: Any) 
     result = env.run("crew", "forget", TAY, "--yes")
     assert result.exit_code == 0, result.output
     read = env.book()
-    assert read.schema_number == 3 and read.region == "EU"
+    assert read.schema_number == 3 and read.region == "US"
     assert [p.key for p in read.players] == [KEY_A]
     assert b"Tay Soulrend" not in env.data()
+
+
+# ─── fix round 1 ─────────────────────────────────────────────────────────────
+
+
+def test_a_book_and_settings_naming_different_regions_say_both_constructed(
+    make: Any, owner: Any
+) -> None:
+    """The book recorded EU, the settings name US: no region for a player
+    whose region would come from either, and both said; a region a combat
+    log's four-part name gave is kept."""
+    env = make(_book3({TAY: _tay(), KEY_A: player()}, region="EU"))
+    _write_log(env, log(you_hit(("Player-9998-0000000F", "Rizz-Other-Roleplay PvP-US"), 10)))
+    assert _scan(env).exit_code == 0
+    rows = _rows(env)
+    tay = rows[TAY]
+    assert (tay["region"], tay["region_from"], tay["region_conflict"]) == (None, None, ["eu", "us"])
+    assert (rows["Rizz-Other"]["region"], rows["Rizz-Other"]["region_from"]) == ("us", "log")
+    lines = json.loads(env.run("crew", "show", TAY, "--json").stdout)["lines"]
+    assert (
+        f"  Region: not known: the crew book recorded EU as your region on {_day(REGION_AT)}, "
+        "but your game's settings name US"
+    ) in lines
+
+
+def test_a_book_region_with_no_time_is_dated_by_its_first_sync_constructed(make: Any) -> None:
+    env = make(_book3({TAY: _tay()}, region_at=None))
+    before = int(time.time())
+    first = _rows(env)[TAY]["region_recorded_at"]
+    assert first is not None and before - 5 <= first <= int(time.time()) + 5
+    env.save(_book3({TAY: _tay(met=7)}, region_at=None))
+    assert _rows(env)[TAY]["region_recorded_at"] == first
+
+
+def test_resolve_tried_at_is_read_and_shown_constructed(make: Any) -> None:
+    missed = player(guid="Player-9998-0000000A", resolve_tried_at=T1 + 300)
+    env = make(_book3({KEY_A: missed}))
+    read = env.book()
+    assert read.players[0].resolve_tried_at == T1 + 300 and read.players[0].other_keys == []
+    assert _rows(env)[KEY_A]["resolve_tried_at"] == T1 + 300
+    bad = make(_book3({KEY_A: player(resolve_tried_at="soon")}))
+    assert bad.book().unread[0].reason == "resolve_tried_at is not a time"
+
+
+def test_a_flavor_without_second_names_says_name_not_first_name_constructed(
+    make: Any,
+) -> None:
+    """The captured character folder moved to the retail shape
+    (`<Realm>/<Name>/`, constructed): a name the game gave with no second
+    part is the name, not a first name."""
+    env = make(_book3({TAY: _tay(resolved_name="Tay", resolved_realm="Invented Realm")}))
+    account = env.flavor / "WTF" / "Account" / ACCOUNT
+    (account / "Somerealm").mkdir()
+    (account / "1" / "Sandgraal-Rizzen").rename(account / "Somerealm" / "Sandgraal")
+    (account / "1").rmdir()
+    lines = json.loads(env.run("crew", "show", TAY, "--json").stdout)["lines"]
+    assert (
+        "  Name in game: Tay (name Tay, realm Invented Realm; as the game gave it for the "
+        f"character's id on {_day(ASKED)})"
+    ) in lines
+
+
+def test_control_characters_in_a_name_the_game_gave_are_escaped_constructed(
+    make: Any,
+) -> None:
+    """Hostile input, constructed: an escape sequence, a C1 control and a
+    line break in `resolved_name` reach no terminal raw."""
+    hostile = "Tay\x1b[31m\x9b2J\nSoulrend"
+    env = make(_book3({TAY: _tay(resolved_name=hostile)}))
+    text = env.run("crew", "show", TAY)
+    assert text.exit_code == 0, text.output
+    assert "\x1b" not in text.stdout and "\x9b" not in text.stdout
+    name_lines = [line for line in text.stdout.splitlines() if "Name in game" in line]
+    assert len(name_lines) == 1 and "Soulrend" in name_lines[0]
