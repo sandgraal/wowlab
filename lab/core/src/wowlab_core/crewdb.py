@@ -2487,8 +2487,10 @@ def _counts(path: Path) -> tuple[int, int, int, tuple[int, int, int] | None] | s
         (matches,) = conn.execute(_SQL_COUNT_MATCHES).fetchone()
         world: tuple[int, int, int] | None = None
         if _has_world(conn):
-            counting = _SQL_COUNT_WORLD_6 if version >= 6 else _SQL_COUNT_WORLD
-            encounters, opponents, logs = conn.execute(counting).fetchone()
+            if version >= 6:
+                encounters, opponents, logs = conn.execute(_SQL_COUNT_WORLD_6).fetchone()
+            else:
+                encounters, opponents, logs = conn.execute(_SQL_COUNT_WORLD).fetchone()
             world = (int(encounters), int(opponents), int(logs))
     except sqlite3.Error:
         return "wowlab could not read it now"
