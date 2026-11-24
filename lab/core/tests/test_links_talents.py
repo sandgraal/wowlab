@@ -139,3 +139,30 @@ def test_a_class_in_an_address_needs_the_talents_table_constructed() -> None:
     end = text.index("[pasted.", start)
     with pytest.raises(links.LinkSitesError, match="no \\[talents\\]"):
         links.parse_link_sites(text[:start] + text[end:])
+
+
+def test_a_talent_code_in_an_address_needs_the_talents_table_constructed() -> None:
+    """The review's probe case: `{ranks}` alone (class and race written into
+    the path) still needs `[talents]`, so `build` never meets it unfilled."""
+    text = _shipped()
+    start = text.index("[talents]\n")
+    end = text.index("[pasted.", start)
+    text = text[:start] + text[end:]
+    old = 'optional = ["race"]\nrooms = { forever = "/talents/{class}?b={ranks}&race={race}" }'
+    assert text.count(old) == 1
+    with pytest.raises(links.LinkSitesError, match="talent code"):
+        links.parse_link_sites(
+            text.replace(old, 'rooms = { forever = "/talents/warlock?b={ranks}" }')
+        )
+
+
+@pytest.mark.parametrize(
+    "code", ["0&b=2", "0/../x", "0#x", "0%26"], ids=lambda c: f"constructed: {c!r}"
+)
+def test_a_loose_ranks_pattern_still_takes_only_digits_and_hyphens_constructed(code: str) -> None:
+    old = "ranks = '[0-9]{0,40}(?:-[0-9]{0,40}){0,2}'"
+    sites = links.parse_link_sites(_shipped().replace(old, "ranks = '.*'", 1))
+    made = links.build(
+        "talents", version=FOREVER, class_id=WARLOCK, race_id=UNDEAD, ranks=code, sites=sites
+    )
+    assert "talent code" in _why(made)

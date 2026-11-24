@@ -2345,15 +2345,21 @@
 
   // ─── Open my talents (M21-07) ───
   // `char gear --json`'s `talents`: WoW Forever Builds' talent calculator
-  // with the character's talents. Its address becomes the static link's
-  // href only when `outsideAddress` passes it for the site the report
-  // names; else the report's reason is shown as text. When the reason is
-  // that the game's talent tables are not downloaded (`download`, for
-  // `download_build`), a button runs `wowlab db2 fetch` for each table,
-  // then `char gear` again, and draws its `talents`. Nothing is fetched
+  // with the talents of the spec active when the character last saved. Its
+  // address becomes the static link's href only when `outsideAddress`
+  // passes it for WoW Forever Builds (`TALENTS_SITE`, whatever site the
+  // report names); else the report's reason is shown as text. When the
+  // reason is that the game's talent tables are not downloaded
+  // (`download`, for `download_build`), a button runs `wowlab db2 fetch`
+  // for each of them that is one of `TALENT_TABLES`, then `char gear`
+  // again, and draws its `talents`. Nothing is fetched
   // from the site: the player's browser opens it on a click.
   const talentsView = { params: null, seq: 0, fetching: false, download: [], build: null };
-  const TALENT_TABLE = /^[A-Za-z0-9_]{1,64}$/;
+  // The only site this link goes to, and the only game tables its button
+  // downloads (the talent layout tables `char gear` names); anything else a
+  // report names is not offered.
+  const TALENTS_SITE = "wowforeverbuilds";
+  const TALENT_TABLES = ["TraitNode", "TraitNodeGroup", "TraitNodeGroupXTraitNode"];
   const GAME_BUILD = /^[0-9]{1,9}(\.[0-9]{1,9}){3}$/;
 
   function talentsSay(text) {
@@ -2384,20 +2390,22 @@
     byId("char-talents").hidden = false;
     const site = typeof made.site_name === "string" && made.site_name ? visible(made.site_name) : "the talent calculator";
     if (typeof made.url === "string") {
-      const checked = outsideAddress(made.url, typeof made.site === "string" ? made.site : "");
+      const checked = outsideAddress(made.url, TALENTS_SITE);
       if (checked === null) {
         talentsSay("The talents address in the report is not one this page links to, so no link is shown.");
         return;
       }
       const link = byId("char-talents-link");
       pointLink(link, checked);
-      link.title = "Opens " + site + " in a new tab; wowlab sends nothing";
+      link.title = "Opens " + site + " in a new tab: the talents of the spec active when the character last saved; wowlab sends nothing";
       link.textContent = "Open my talents";
       link.hidden = false;
       return;
     }
     talentsSay("No talents link: " + (typeof made.why === "string" ? visible(made.why) : "the report says no more") + ".");
-    const tables = (Array.isArray(talents.download) ? talents.download : []).filter((t) => typeof t === "string" && TALENT_TABLE.test(t));
+    // A list naming any other table is not offered at all.
+    const named = Array.isArray(talents.download) ? talents.download : [];
+    const tables = named.every((t) => TALENT_TABLES.includes(t)) ? named.slice() : [];
     const build = typeof talents.download_build === "string" && GAME_BUILD.test(talents.download_build) ? talents.download_build : null;
     if (tables.length && build && talentsView.params) {
       talentsView.download = tables;

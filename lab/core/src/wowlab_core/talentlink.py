@@ -14,9 +14,11 @@ the player clicks it.
 
 **Where the ranks are.** Forever's class talents are `C_Traits` nodes of one
 trait tree per class, and the lab-addon records them under `talents.class`
-(the class config: each node's id and rank), as `simexport` reads them for
-WoWSims. `talents.legacy` holds the candidates for Forever's separate Legacy
-system (trait trees of another system), which the calculator does not show.
+(the class config of the spec active when the character last saved: each
+node's id and rank), as `simexport` reads them for WoWSims. `talents.legacy`
+holds the candidates for Forever's separate Legacy system (trait trees of
+another system, 45 in the captures; that 45 is the Legacy system is
+**[verify]**), which the calculator does not show.
 
 **Where each talent sits.** The game's `Talent` and `TalentTab` tables are
 still in the Forever client, but they are the classic layout: at
@@ -24,10 +26,14 @@ still in the Forever client, but they are the classic layout: at
 new talents (Soul Harvest, Wrack, ...), where the game, and the site, draw
 it at row 0, column 0 (docs/DATA_SOURCES.md, 2026-11-24). What the game
 draws is `TraitNode`'s `PosX` and `PosY` for each node of the class's trait
-tree, split into its three trees by `TraitNodeGroup` and
-`TraitNodeGroupXTraitNode`: of the groups of a tree, the ones no other group
-contains are its three trees (each class at 1.60.1.70888: three such groups,
-disjoint, holding every node; the talent frame draws one header per group).
+tree. Splitting that tree into its three is wowlab's own reading of
+`TraitNodeGroup` and `TraitNodeGroupXTraitNode`: of the groups of a tree,
+the ones no other group contains are taken as its three trees (each class at
+1.60.1.70888: three such groups, disjoint, holding every node). The talent
+frame draws one header per group `C_Traits.GetGroupDisplayInfoByTreeID`
+returns, and the tables do not say which groups those are, so that these
+are the display groups is **[verify]**; the reading is backed by the site's
+layout, below.
 A row is the nodes whose `PosY` lie within `ROW_TOLERANCE` of the row's
 first (rows are 600 apart there, and a node may sit 10 off its row), a
 column the order of `PosX` within the row. Checked by hand on 2026-11-24
@@ -39,8 +45,13 @@ code.
 
 A tree the groups do not split cleanly, a ranked node the tables do not
 hold, a rank over 9, or a class or race the site does not name, gives no
-link and says why; the site itself refuses a code that is not a legal build
-for it, which is the owner's check (M21-O2).
+link and says why. The site does not refuse a code in its address that is
+not a legal build for it: on load its script caps each rank at the talent's
+maximum, drops talents whose prerequisites or row gate fail, trims to its
+51 points, ignores digits past its talents, and rewrites the address bar
+with the code of what it kept (its strict check runs only on a code pasted
+into its import box). So the owner's check (M21-O2) is that after the page
+loads the address still reads the code wowlab built.
 
 Nothing here names a client folder, a product or a build (L6): the build
 read is the record's, else the install's, and the room the address is made
@@ -204,9 +215,9 @@ def code_of(ranks: Mapping[int, int], layout: Layout, *, build: str) -> str:
     if unknown:
         shown = ", ".join(str(n) for n in unknown[:_SHOWN_UNKNOWN])
         more = f" and {len(unknown) - _SHOWN_UNKNOWN} more" if len(unknown) > _SHOWN_UNKNOWN else ""
-        word = "talent" if len(unknown) == 1 else "talents"
+        word, verb = ("talent", "is") if len(unknown) == 1 else ("talents", "are")
         raise ValueError(
-            f"{word} {shown}{more} of the record are not in the game tables of {build}"
+            f"{word} {shown}{more} of the record {verb} not in the game tables of {build}"
         )
     trees = {layout.tree_of[n] for n in ranks}
     if len(trees) != 1:

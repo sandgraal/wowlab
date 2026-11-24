@@ -56,7 +56,8 @@ CLASS_TREES = {
     "druid": 1089,
 }
 # The site's talents per tree, in its order, read from its pages on
-# 2026-11-24 (calculator data at client 1.60.1.70862).
+# 2026-11-24 (their footer: "Data: Live client 1.60.1.70707, last reviewed Nov 1,
+# 2026"; the calculator script names 1.60.1.70862).
 SITE_SIZES = {
     "warrior": [17, 18, 18],
     "paladin": [17, 17, 17],
@@ -238,9 +239,11 @@ def test_an_unknown_talent_gives_no_code_and_names_it_constructed(
 ) -> None:
     with pytest.raises(
         ValueError,
-        match=r"talent 999999 of the record are not in the game tables of 1\.60\.1\.70888",
+        match=r"talent 999999 of the record is not in the game tables of 1\.60\.1\.70888",
     ):
         talentlink.code_of({SUPPRESSION: 2, 999999: 1}, layout, build=BUILD)
+    with pytest.raises(ValueError, match=r"talents 999998, 999999 of the record are not in"):
+        talentlink.code_of({999999: 1, 999998: 1}, layout, build=BUILD)
 
 
 def test_a_rank_over_nine_gives_no_code_constructed(layout: talentlink.Layout) -> None:

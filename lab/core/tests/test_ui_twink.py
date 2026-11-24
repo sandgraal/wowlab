@@ -181,7 +181,7 @@ def test_the_links_are_static_markup_with_no_href() -> None:
         ("pointLink(link, checked);", "const checked = outsideAddress(row.url, slot.site);"),
         (
             "pointLink(link, checked);",
-            'const checked = outsideAddress(made.url, typeof made.site === "string" ? made.site : "");',
+            "const checked = outsideAddress(made.url, TALENTS_SITE);",
         ),
         (
             "pointLink(link, planner);",

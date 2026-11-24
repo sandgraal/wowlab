@@ -145,6 +145,12 @@ def test_the_link_is_static_markup_with_no_href() -> None:
     assert '<button id="char-talents-fetch" class="link-button" type="button" hidden>' in page
     script = (_TEMPLATES / "page.js").read_text(encoding="utf-8")
     assert "wowforeverbuilds.com" not in script.lower()
+    # The page's own site key and table list: the link is checked against
+    # WoW Forever Builds' origin whatever site the report names, and only the
+    # tables `char gear` can name are downloaded.
+    assert script.count('const TALENTS_SITE = "wowforeverbuilds";') == 1
+    tables = ", ".join(f'"{t}"' for t in talentlink.TABLES)
+    assert script.count(f"const TALENT_TABLES = [{tables}];") == 1
 
 
 def test_the_csp_is_unchanged(server: Any) -> None:
@@ -218,7 +224,10 @@ def test_the_links_href_is_the_reports_address_constructed(
     assert view["hidden"] is False and view["linkHidden"] is False
     assert view["href"] == ADDRESS
     assert view["linkText"] == "Open my talents"
-    assert view["linkTitle"] == "Opens WoW Forever Builds in a new tab; wowlab sends nothing"
+    assert view["linkTitle"] == (
+        "Opens WoW Forever Builds in a new tab: the talents of the spec active when the "
+        "character last saved; wowlab sends nothing"
+    )
     assert view["why"] == "" and view["buttonHidden"] is True
     _only_api(out)
 
@@ -231,8 +240,10 @@ _HOSTILE = [
     ("HTTPS://WOWFOREVERBUILDS.COM/talents/warlock?b=022", "wowforeverbuilds"),
     ("https://wowforeverbuilds.com/talents/war lock?b=022", "wowforeverbuilds"),
     ("javascript:alert(1)", "wowforeverbuilds"),
-    (ADDRESS, "wowhead"),  # another site's origin than the address's
-    (ADDRESS, "nosuchsite"),
+    # Another listed site's own address: the page checks against WoW Forever
+    # Builds only, whatever site the report names.
+    ("https://www.wowhead.com/forever/item=6948", "wowhead"),
+    ("https://www.wowhead.com/forever/item=6948", "wowforeverbuilds"),
 ]
 
 
@@ -255,6 +266,9 @@ def test_a_hostile_address_is_left_unrendered_constructed(
 
 
 _HOSTILE_DOWNLOADS: list[tuple[Any, Any]] = [
+    # Any other game table, well formed or not: only the three are offered.
+    (["ItemSparse"], "1.60.1.70450"),
+    (["TraitNode", "ItemSparse"], "1.60.1.70450"),
     (["Trait Node"], "1.60.1.70450"),
     (["../x"], "1.60.1.70450"),
     (["TraitNode"], "1.60.1.70450 --yes"),

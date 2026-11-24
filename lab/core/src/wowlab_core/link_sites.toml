@@ -263,19 +263,24 @@ rooms = { forever = "/talents/{class}?b={ranks}&race={race}" }
 #
 # Read by hand by the M21-07 agent on 2026-11-24 from the site's own pages
 # (each class's `/talents/<class>` page: the calculator's props, whose
-# `cls.slug` and `races[].slug`/`clientName` give these words) and its
-# script (`/_astro/summary.CzJQ1we6.js`, the calculator's data at client
-# 1.60.1.70862): the address is `/talents/<class>?b=<code>&race=<race>`;
-# the code is, per tree in the page's order, one digit per talent (its
-# rank) with the talents sorted by row and then column, trailing zeros cut,
-# trees joined with `-`, and empty trees at the end dropped; the script
-# refuses a code that fails `ranks` below, or that is not a legal build
-# (51 points, 5 per row before the next, each talent's prerequisites), or
-# that it would not write back the same. The page's tree order is the
-# game's left to right. Its race words for ChrRaces' names: Human, Orc,
-# Dwarf, Night Elf, Undead, Tauren, Gnome, Troll, and "High Order
-# Skyborne" and "Windshaper Skyborne" (ids 95 and 96 at 1.60.1.70888).
-# A race the class cannot be is dropped by the site's script, not here.
+# `cls.slug` and `races[].slug`/`clientName` give these words; the pages'
+# footer reads "Data: Live client 1.60.1.70707 · last reviewed Nov 1, 2026",
+# and the calculator script names 1.60.1.70862) and its script
+# (`/_astro/summary.CzJQ1we6.js`): the address is
+# `/talents/<class>?b=<code>&race=<race>`; the code is, per tree in the
+# page's order, one digit per talent (its rank) with the talents sorted by
+# row and then column, trailing zeros cut, trees joined with `-`, and empty
+# trees at the end dropped. On load the script reads a code in the address
+# that passes `ranks` below without refusing it: it caps each rank at the
+# talent's maximum, drops talents whose prerequisites or row gate (5 points
+# per row) fail, trims to 51 points, ignores digits past its talents, and
+# rewrites the address bar with the code of what it kept. Its strict check
+# (a legal build that it would write back the same) runs only on a code
+# pasted into its import box. The page's tree order is the game's left to
+# right. Its race words for ChrRaces' names: Human, Orc, Dwarf, Night Elf,
+# Undead, Tauren, Gnome, Troll, and "High Order Skyborne" and "Windshaper
+# Skyborne" (ids 95 and 96 at 1.60.1.70888). A race the class cannot be is
+# dropped by the site's script, not here.
 [talents]
 ranks = '[0-9]{0,40}(?:-[0-9]{0,40}){0,2}'
 

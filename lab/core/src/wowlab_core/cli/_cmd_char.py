@@ -1541,17 +1541,21 @@ def _header_lines(report: CharGearReport) -> list[str]:
 
 def _talents_line(talents: talentlink.TalentsLink) -> str:
     """`char gear`'s line for "Open my talents" (M21-07): the address, or why
-    there is none and, when the game's talent tables are missing, where to
-    get them. The table names stay in `--json` (`talents.download`)."""
+    there is none and, when the game's talent tables are missing, which they
+    are and how to get them, as `--json` names them (`talents.download`).
+    Each table name is in double quotes: it is the game's word, and
+    `TraitNode` is also the name of one of wowlab's own models."""
     made = talents.link
     head = f"Talents on {made.site_name}" if made.site_name else "Talents"
     if isinstance(made, links.Link):
         return f"{head}: {made.url}"
     line = f"{head}: no link: {made.why}"
-    if talents.download:
+    if talents.download and talents.download_build:
+        names = [f'"{name}"' for name in talents.download]
+        listed = names[0] if len(names) == 1 else ", ".join(names[:-1]) + " and " + names[-1]
         line += (
-            "; the Character tab of wowlab ui downloads them with one click, or wowlab db2 "
-            "fetch downloads each table --json lists"
+            "; the Character tab of wowlab ui downloads them with one click, or run wowlab db2 "
+            f"fetch <table> --build {talents.download_build} for each of {listed}"
         )
     return line
 

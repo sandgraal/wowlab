@@ -101,6 +101,13 @@ _MAX_PASTED = 512
 _FIXED = ("region", "locale", "ruleset", "id", "class", "race", "ranks")
 _SLUG = re.compile(r"[a-z0-9]+(?:-[a-z0-9]+)*")
 _GAME_ID = re.compile(r"[1-9][0-9]{0,8}")
+# What a talent code may hold whatever `[talents] ranks` allows: digits and
+# `-`, so a looser pattern in the file can never put `&`, `/` or `#` into an
+# address.
+_RANKS = re.compile(r"[0-9-]{0,256}")
+# The placeholders a template may mark optional: the builder knows how to
+# leave out only these (`_talent_values`).
+_OPTIONAL = frozenset({"race"})
 _APOSTROPHES = ("'", chr(0x2019))  # the typewriter and the typographic apostrophe
 
 
@@ -284,13 +291,16 @@ class LinkSites(_Model):
                     raise ValueError(f"link {key!r}: {path!r} has an unknown placeholder")
                 if ("region" in names or "locale" in names) and t.regions is None:
                     raise ValueError(f"link {key!r}: a region in the address and no regions")
-                if names & {"class", "race"} and self.talents is None:
+                if names & {"class", "race", "ranks"} and self.talents is None:
                     raise ValueError(
-                        f"link {key!r}: a class or race in the address and no [talents]"
+                        f"link {key!r}: a class, race or talent code in the address and no "
+                        "[talents]"
                     )
                 if not _TEMPLATE_TEXT.fullmatch(_PLACEHOLDER.sub("", path)):
                     raise ValueError(f"link {key!r}: {path!r} holds text a URL parser changes")
                 for name in t.optional:
+                    if name not in _OPTIONAL:
+                        raise ValueError(f"link {key!r}: {name!r} cannot be optional")
                     if name not in names or len(_optional_pairs(path, name)) != 1:
                         raise ValueError(
                             f"link {key!r}: optional {name!r} is not one query pair after the first"
@@ -580,7 +590,11 @@ def _talent_values(
         else:
             raise _RefusedError("the character's race is not known to the site")
     if "{ranks}" in path:
-        if not isinstance(ranks, str) or not re.fullmatch(talents.ranks, ranks):
+        if (
+            not isinstance(ranks, str)
+            or not _RANKS.fullmatch(ranks)
+            or not re.fullmatch(talents.ranks, ranks)
+        ):
             raise _RefusedError(f"the talent code is not one {site_name} takes")
         values["ranks"] = ranks
     return path

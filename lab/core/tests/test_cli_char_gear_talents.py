@@ -102,9 +102,10 @@ def test_without_the_tables_the_text_says_where_to_get_them(user_data: Path) -> 
     out = _ok("char", "gear").stdout
     assert (
         f"Talents on WoW Forever Builds: no link: the game's talent tables for {BUILD} are not "
-        "downloaded; the Character tab of wowlab ui downloads them with one click, or wowlab "
-        "db2 fetch downloads each table --json lists"
-    ) in out.replace("\n", " ").replace("  ", " ")
+        "downloaded; the Character tab of wowlab ui downloads them with one click, or run "
+        f'wowlab db2 fetch <table> --build {BUILD} for each of "TraitNode", '
+        '"TraitNodeGroup" and "TraitNodeGroupXTraitNode"'
+    ) in " ".join(out.split())
     assert not (user_data / "gamedata").exists()  # nothing was written
 
 
