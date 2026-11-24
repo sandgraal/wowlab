@@ -467,12 +467,33 @@ def test_a_toc_read_in_part_is_said_and_still_current_constructed(
     assert beta["clear"] == ["All 2 addons are current for this game version."]
     assert beta["what"] == ["TOC files read in part"]
     assert [i["text"] for i in beta["items"]] == [
-        "DBM-Challenges has a TOC file too large to read whole, so wowlab checked it by its "
-        "opening lines only."
+        "DBM-Challenges has a TOC file too large to read whole; only the lines before its file "
+        "list were read, and anything it declares after them was not seen."
     ]
     assert beta["items"][0]["title"] == (
         f"Show {BETA}/Interface/AddOns/DBM-Challenges/DBM-Challenges.toc in the Explorer"
     )
+
+
+def test_a_toc_read_in_part_with_no_interface_line_says_so_of_the_part_read_constructed(
+    server: Any, both: Path, tmp_path: Path
+) -> None:
+    """The Interface line may come after the file list, which was not read."""
+
+    def edit(report: dict[str, Any]) -> None:
+        report["check"]["addons"][1]["tocs"][0].update(
+            interface_status="none", interface=None, interface_versions=[], partial=True
+        )
+
+    scenario = _scenario(server, [{"patch_day": True}])
+    _edited(scenario, edit)
+    beta = _blocks(_drive(tmp_path / "node", scenario))[BETA]
+    assert beta["what"] == ["Could not be checked", "TOC files read in part"]
+    assert [i["text"] for i in beta["items"]] == [
+        "DBM-Challenges has no Interface line in the part of its TOC file wowlab read.",
+        "DBM-Challenges has a TOC file too large to read whole; only the lines before its file "
+        "list were read, and anything it declares after them was not seen.",
+    ]
 
 
 def test_the_real_tocs_are_read_whole_so_there_is_no_such_list(

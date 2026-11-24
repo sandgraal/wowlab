@@ -26,6 +26,15 @@ from wowlab_core.cli._common import (
 # ─── addons ──────────────────────────────────────────────────────────────────
 
 
+# A TOC larger than wowlab reads whole is read in part, its header only, and
+# what it declares after its file list is not seen: every absence in it is
+# said as limited to the part read.
+_PARTIAL = (
+    "too large to read whole; only the lines before its file list were read, "
+    "and anything it declares after them was not seen"
+)
+_BEFORE_FILES = " before its file list"
+
 _UI_ESCAPE = re.compile(r"\|c[0-9A-Fa-f]{8}|\|r")
 
 
@@ -71,7 +80,7 @@ def addons_list(root: RootOpt = None, flavor: FlavorOpt = None, json_out: JsonOp
         if declared is not None:
             bits.append(f"TOC declares Interface {declared.text}")
         bits.extend(
-            f"{t.file} is too large to read whole; only its opening lines were read"
+            f"{t.file} is {_PARTIAL}"
             for t in a.tocs
             if t.document is not None and t.document.partial
         )
@@ -134,7 +143,7 @@ def _check_interface(toc: addoncheck.TocCheck, interface: int | None, role: _Toc
     if toc.interface_status == "unread":
         return f"not read: {toc.error}"
     if toc.interface_status == "none":
-        return "no ## Interface: line"
+        return "no ## Interface: line" + (_BEFORE_FILES if toc.partial else "")
     if toc.interface_status == "matches":
         return f"{toc.interface}: matches this client"
     if toc.interface_status == "differs":
@@ -154,9 +163,7 @@ def _check_toc_lines(
     if toc.interface_status == "unread":
         return lines
     if toc.partial:
-        lines.append(
-            f"{indent}read        only its opening lines: the file is too large to read whole"
-        )
+        lines.append(f"{indent}read        {_PARTIAL}")
     if toc.dependencies:
         words = {
             "installed": "installed",
@@ -167,16 +174,21 @@ def _check_toc_lines(
         deps = ", ".join(f"{d.name} ({words[d.status]})" for d in toc.dependencies)
         lines.append(f"{indent}needs       {deps}")
     else:
-        lines.append(f"{indent}needs       nothing")
+        lines.append(
+            f"{indent}needs       "
+            + ("none declared" + _BEFORE_FILES if toc.partial else "nothing")
+        )
     lines.append(
         f"{indent}loads       "
         + (
             "on demand: only when another addon or the client asks for it"
             if toc.load_on_demand
             else "at login, when enabled"
+            + (f" (no LoadOnDemand{_BEFORE_FILES})" if toc.partial else "")
         )
     )
-    lines.append(f"{indent}version     {_ui_text(toc.version) if toc.version else 'not given'}")
+    unversioned = "not given" + (_BEFORE_FILES if toc.partial else "")
+    lines.append(f"{indent}version     {_ui_text(toc.version) if toc.version else unversioned}")
     return lines
 
 

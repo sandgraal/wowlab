@@ -44,7 +44,7 @@ def test_live_an_oversized_toc_gives_its_header() -> None:
                 doc = toc.document
                 assert toc.error is None, (addon.name, toc.file, toc.error)
                 assert doc is not None and doc.partial is True, (addon.name, toc.file)
-                kept = doc.to_bytes()
+                kept = b"".join(line.raw + line.ending.encode("ascii") for line in doc.lines)
                 assert len(kept) <= MAX_TOC_BYTES and kept.endswith(b"\n")
                 assert doc.files == ()
                 said = checked.get((addon.name, toc.file))

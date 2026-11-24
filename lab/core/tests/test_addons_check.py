@@ -434,6 +434,12 @@ def _oversized(header: bytes) -> bytes:
     return data
 
 
+PARTIAL = (
+    "too large to read whole; only the lines before its file list were read, "
+    "and anything it declares after them was not seen"
+)
+
+
 def _questie(flavor: Path, header: bytes, name: str = "QuestieDB_Forever.toc") -> None:
     folder = flavor / "Interface" / "AddOns" / "QuestieDB"
     folder.mkdir()
@@ -460,7 +466,7 @@ def test_an_oversized_toc_is_checked_by_its_header_constructed(flavor: Path) -> 
     assert (
         'QuestieDB  "QuestieDB v1.1.5"\n'
         "  interface   16001: matches this client\n"
-        "  read        only its opening lines: the file is too large to read whole\n"
+        f"  read        {PARTIAL}\n"
         "  needs       DBM-Core (not installed)\n"
     ) in out
 
@@ -473,10 +479,7 @@ def test_addons_list_says_a_toc_was_not_read_whole_constructed(flavor: Path) -> 
     assert toc.document is not None and toc.document.partial is True
     assert toc.document.get("Title") == "QuestieDB"
     out = ok("addons", "list")
-    said = (
-        'QuestieDB  "QuestieDB"  TOC declares Interface 16001  QuestieDB.toc is too large to '
-        "read whole; only its opening lines were read\n"
-    )
+    said = f'QuestieDB  "QuestieDB"  TOC declares Interface 16001  QuestieDB.toc is {PARTIAL}\n'
     assert said in out
     assert "DBM-Brawlers" in out and "too large" not in out.replace(said, "")
 
@@ -487,9 +490,7 @@ def test_addons_list_says_it_of_a_suffixed_toc_too_constructed(flavor: Path) -> 
     still said."""
     _questie(flavor, b"## Interface: 16001\n## Title: QuestieDB\n")
     (line,) = [x for x in ok("addons", "list").splitlines() if x.startswith("QuestieDB  ")]
-    assert line.endswith(
-        "  QuestieDB_Forever.toc is too large to read whole; only its opening lines were read"
-    )
+    assert line.endswith(f"  QuestieDB_Forever.toc is {PARTIAL}")
 
 
 def test_saved_data_of_a_toc_read_in_part_constructed(flavor: Path) -> None:
@@ -513,3 +514,40 @@ def test_saved_data_of_a_toc_read_in_part_constructed(flavor: Path) -> None:
     caveat = cli._not_judged_caveat(["RareScanner"])
     assert "whose TOC could not be read whole" in caveat
     assert caveat in _orphans().notes
+
+
+def test_absences_in_a_toc_read_in_part_are_limited_to_the_part_read_constructed(
+    flavor: Path,
+) -> None:
+    """The client very likely reads directives after the file list, so a
+    partial read never says an addon needs nothing, loads at login, has no
+    version or no interface: only that none was seen before its file list."""
+    _questie(flavor, b"## Title: QuestieDB\n", "QuestieDB.toc")
+    check = _check().check
+    (toc,) = next(a for a in check.addons if a.name == "QuestieDB").tocs
+    assert toc.partial is True and toc.interface_status == "none"
+    assert toc.dependencies == () and toc.load_on_demand is False and toc.version is None
+    out = ok("addons", "check")
+    assert (
+        'QuestieDB  "QuestieDB"\n'
+        "  interface   no ## Interface: line before its file list\n"
+        f"  read        {PARTIAL}\n"
+        "  needs       none declared before its file list\n"
+        "  loads       at login, when enabled (no LoadOnDemand before its file list)\n"
+        "  version     not given before its file list\n"
+    ) in out
+    # A TOC read whole keeps the plain words.
+    assert "  needs       nothing\n" not in out
+    assert "  interface   no ## Interface: line\n" not in out
+
+
+def test_tree_notes_a_toc_read_in_part_constructed(flavor: Path) -> None:
+    _questie(flavor, b"## Interface: 16001\n")
+    note = f"TOC {PARTIAL}"
+    report = cli.TreeReport.model_validate_json(ok("tree", "Interface/AddOns", "--json"))
+    by_path = {i.path: i for i in report.items}
+    assert by_path["Interface/AddOns/QuestieDB/QuestieDB_Forever.toc"].note == note
+    assert by_path["Interface/AddOns/DBM-Brawlers/DBM-Brawlers.toc"].note is None
+    out = ok("tree", "Interface/AddOns")
+    (line,) = [x for x in out.splitlines() if "QuestieDB_Forever.toc" in x]
+    assert line.endswith(f" bytes  ({note})")

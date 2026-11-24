@@ -273,7 +273,10 @@ def _tree_items(
         add(addon.path, "folder", None, f"addon; {_SELECTION_WORDS[addon.selection]}")
         for toc in addon.tocs:
             partial = toc.document is not None and toc.document.partial
-            note = "TOC too large to read whole; only its opening lines were read"
+            note = (
+                "TOC too large to read whole; only the lines before its file list were "
+                "read, and anything it declares after them was not seen"
+            )
             add(f"{addon.path}/{toc.file}", "file", toc.size, note if partial else toc.error)
     for o in inv.other.overrides:
         add(o.path, "file", o.size, f"{o.area} override")

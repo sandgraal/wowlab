@@ -210,10 +210,8 @@ globals:
     property: read-only
   GetCurrentBindingSet:
     property: read-only
-  ACCOUNT_BINDINGS:
-    property: read-only
-  CHARACTER_BINDINGS:
-    property: read-only
+  Enum.BindingSet:
+    any: true
   GetNumBindings:
     property: read-only
   GetBinding:
@@ -319,4 +317,6 @@ globals:
   IsInInstance:
     args: []
   C_CVar.GetCVar:
+    property: read-only
+  C_ChatInfo.IsLoggingCombat:
     property: read-only

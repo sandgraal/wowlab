@@ -19,11 +19,13 @@ from wowlab_core.toc import (
     MAX_TOC_BYTES,
     Directive,
     FileLine,
+    PartialTocError,
     TocDocument,
     TocTooLargeError,
     parse_toc,
     parse_toc_header,
     read_toc,
+    serialize_toc,
 )
 
 HEADER = (
@@ -40,6 +42,13 @@ HEADER = (
     b"\n"
 )
 FILES = b"src\\config.lua\nsrc\\read\\baked.lua\n\n"
+
+
+def _kept(doc: TocDocument) -> bytes:
+    """The bytes a partial read holds, from its lines (BOM first). The test's
+    own join: a partial read refuses `to_bytes` and `serialize_toc`."""
+    body = b"".join(line.raw + line.ending.encode("ascii") for line in doc.lines)
+    return (b"\xef\xbb\xbf" if doc.bom else b"") + body
 
 
 def _blob(n: int) -> bytes:
@@ -63,7 +72,7 @@ def test_an_oversized_toc_gives_its_header_constructed(tmp_path: Path) -> None:
         read_toc(path)
     doc = read_toc(path, oversized="header")
     assert doc.partial is True
-    assert doc.to_bytes() == HEADER, "every header line kept, byte for byte; no file line"
+    assert _kept(doc) == HEADER, "every header line kept, byte for byte; no file line"
     assert doc.interface is not None and doc.interface.versions == (16001,)
     assert doc.get("Title") == "Big|cFF00FF00 v1.1.5|r"
     assert doc.get("Version") == "1.1.5"
@@ -82,7 +91,7 @@ def test_x_lines_before_the_files_do_not_end_the_header_constructed(tmp_path: Pa
     head = b"## Interface: 16001\n" + _blob(50) + b"## Version: 2\n"
     data = head + FILES + _blob(1_200)
     doc = read_toc(_big(tmp_path, data), oversized="header")
-    assert doc.to_bytes() == head
+    assert _kept(doc) == head
     assert doc.get("Version") == "2"
     assert sum(1 for d in doc.directives if d.key.startswith("X-")) == 50
 
@@ -95,7 +104,7 @@ def test_a_header_longer_than_the_limit_keeps_whole_lines_only_constructed(
     and the line the cut falls in is dropped whole, never kept in part."""
     data = HEADER + _blob(1_200) + FILES
     doc = read_toc(_big(tmp_path, data), oversized="header")
-    kept = doc.to_bytes()
+    kept = _kept(doc)
     assert doc.partial is True
     assert len(kept) <= MAX_TOC_BYTES
     assert data.startswith(kept) and kept.endswith(b"\n")
@@ -127,7 +136,7 @@ def test_a_header_longer_than_the_limit_keeps_whole_lines_only_constructed(
 def test_header_cut_points_constructed(data: bytes, cut: int, kept: bytes) -> None:
     doc = parse_toc_header(data[:cut])
     assert doc.partial is True
-    assert doc.to_bytes() == kept
+    assert _kept(doc) == kept
     assert not any(isinstance(line, FileLine) for line in doc.lines)
 
 
@@ -135,7 +144,7 @@ def test_header_cut_points_constructed(data: bytes, cut: int, kept: bytes) -> No
 def test_a_bom_is_kept_and_invalid_utf8_in_the_header_is_flagged_constructed() -> None:
     doc = parse_toc_header(b"\xef\xbb\xbf## Title: \xff\nA.lua\n## X: 1\n")
     assert doc.bom is True
-    assert doc.to_bytes() == b"\xef\xbb\xbf## Title: \xff\n"
+    assert _kept(doc) == b"\xef\xbb\xbf## Title: \xff\n"
     assert doc.decode_errors is True
     clean = parse_toc_header(b"## Title: T\nA.lua\n\xff\xfe\n")
     assert clean.decode_errors is False, "only the bytes kept are judged"
@@ -158,7 +167,7 @@ def test_the_read_stops_at_the_limit_constructed(tmp_path: Path) -> None:
     is within the limit and ends at a line break."""
     data = HEADER + _blob(20_000)  # about 20 MiB
     doc = read_toc(_big(tmp_path, data), oversized="header")
-    kept = doc.to_bytes()
+    kept = _kept(doc)
     assert len(kept) <= MAX_TOC_BYTES and data.startswith(kept) and kept.endswith(b"\n")
     assert doc.files == ()
     assert isinstance(doc.lines[0], Directive) and doc.lines[0].key == "Interface"
@@ -169,3 +178,20 @@ def test_a_partial_document_round_trips_through_json_constructed() -> None:
     doc = parse_toc_header(HEADER + FILES)
     assert TocDocument.model_validate_json(doc.model_dump_json()) == doc
     assert '"partial":true' in doc.model_dump_json()
+
+
+@pytest.mark.parser
+def test_a_partial_read_cannot_be_serialized_constructed(tmp_path: Path) -> None:
+    """A partial read is a read-only summary, never the file (L4): neither
+    `to_bytes` nor `serialize_toc` gives bytes for it, so nothing can write
+    it back in the file's place. A whole read still serializes."""
+    doc = read_toc(_big(tmp_path, HEADER + FILES + _blob(1_200)), oversized="header")
+    assert doc.partial is True
+    with pytest.raises(PartialTocError):
+        doc.to_bytes()
+    with pytest.raises(PartialTocError):
+        serialize_toc(doc)
+    with pytest.raises(PartialTocError):
+        parse_toc_header(HEADER).to_bytes()
+    whole = parse_toc(HEADER + FILES)
+    assert serialize_toc(whole) == HEADER + FILES

@@ -33,6 +33,7 @@ from wowlab_core.layout import (
     classify,
     layouts,
 )
+from wowlab_core.toc import PartialTocError
 
 FIXTURES = Path(__file__).resolve().parent / "fixtures"
 REAL_TOC = (
@@ -328,8 +329,10 @@ def test_oversized_toc_is_read_in_part_constructed(tmp_path: Path) -> None:
     assert toc.size == len(REAL_TOC)
     doc = toc.document
     assert doc is not None and doc.partial is True
-    kept = doc.to_bytes()
+    kept = b"".join(line.raw + line.ending.encode("ascii") for line in doc.lines)
     assert 0 < len(kept) <= 100 and REAL_TOC.startswith(kept) and kept.endswith(b"\n")
+    with pytest.raises(PartialTocError):
+        doc.to_bytes()  # a summary, never the file
     assert doc.interface is not None and doc.interface.versions == (50504, 120100)
     assert doc.get("Version") == "r264"
     whole = Layout(flavor).addons()[0].tocs[0].document
