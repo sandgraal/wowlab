@@ -959,6 +959,81 @@ compares them by the rule in that module's docstring; the folders whose
 TOC `## X-Wago-ID:` is the record's `externalId` (DBM-Core's is,
 `qv633o6b`) are the ones judged when there are any.
 
+## 16. The CurseForge app's `AddonGameInstance.json` (outside the install; M22-25)
+
+The CurseForge desktop app's list of the addons it installed, one file for
+every game folder it manages. Not an install file: it lives in the app's
+user-data folder, Electron's `userData` for the app (macOS
+`~/Library/Application Support/CurseForge/`, seen 2026-11-24; Windows
+`%APPDATA%\CurseForge\` by Electron's rule, **[verify]**; there is no
+Linux app), at `agent/GameInstances/AddonGameInstance.json`. The same
+folder holds a Chromium profile (`Cookies`, `Local Storage`, `Session
+Storage`, `Trust Tokens`, `IndexedDB`), `agent/database/app.db` (SQLite),
+`agent/gamesCache.json`, `agent/GameInstances/MinecraftGameInstance.json`
+and `.updaterId`; wowlab opens none of them. It reads the one file read
+only, refuses a link there or in `agent/` or `agent/GameInstances/` (not
+followed), anything that is not a regular file (a FIFO is refused without
+waiting) and a file past 64 MiB.
+
+Fixture `curseforge/macos/AddonGameInstance.json`, captured 2026-11-24
+through `scripts/lab_capture.py --file`. One line of compact JSON, UTF-8,
+no BOM, no trailing newline: a list of game instances, each an object.
+Fields of an instance in the capture, every one optional to the reader:
+
+- `guid` (a UUID; the `gameInstanceID` of each of its records), `name`
+  (the app's label, `Forever`), `gameTypeID` (`1`), `installPath` (the
+  flavor folder itself, with a trailing `/`: the owner's `_forever_`),
+  `gameVersion` and `gameVersionFlavor` (both `null`),
+  `gameVersionTypeId` (`88568`), `isValid`, `isEnabled`, `installDate`,
+  `lastPreviousMatchUpdate`, `lastRefreshAttempt` (ISO 8601 text, one with
+  a UTC offset), `cachedScans`, the `preference…` flags and
+  `preferenceModdingFolderPath` (`null`), `installedGamePrerequisites`,
+  `wasNameManuallyChanged`, `wasGameVersionTypeIdManuallyChanged`;
+- `syncProfile`: the app's SavedVariables sync, with `SyncProfileID` (an
+  integer the server issues for the account's sync; the capture tool
+  replaces it), `GameInstanceGuid`, `LastSyncDate` and a
+  `SavedVariablesProfile` holding the same id as `syncProfileID`;
+- `installedAddons`: the records (22 in the capture).
+
+Fields of a record: `instanceID` (a UUID, the record's own id), `addonID`
+(CurseForge's project id: the TOC's `## X-Curse-Project-ID:` of its
+folders, `3358` for DBM-Core, `6124` for Auctionator), `gameID`, `name`,
+`authors`, `primaryAuthor`, `webSiteURL` (the addon's page), `thumbnailUrl`,
+`categorySection` (its `path` is `Interface\AddOns`), `categoryIds`,
+`gameInstanceID`, `modFolderPath` (the flavor folder's `Interface/AddOns`),
+`fileNameOnDisk`, `filePaths` (every file and folder the addon installed,
+as full paths: 9295 in the capture, most of the file's size), `dateInstalled`,
+`dateUpdated`, `status` (`4` or `5`, **[verify]** what each means),
+`installSource` (`0`, `1` or `4`, **[verify]**), `modSource` (`0`),
+`isEnabled`, `isLocked`, `isModified`, `isWorkingCopy`, `isFuzzyMatch`,
+`preferenceIsIgnored` (whether CurseForge then offers no update is
+**[verify]**), `preferenceReleaseType`, `installedTargets`,
+`allowModDistribution`, `exportDisabledReason`, `groupId`, and two file
+objects, `installedFile` and `latestFile` (as of the app's last check):
+`id`, `fileName` (`Auctionator-352.zip`), `fileDate`, `fileLength`,
+`releaseType`, `fileStatus`, `downloadUrl` (a public `edge.forgecdn.net`
+address, no query), `dependencies`, `modules` (each `foldername`,
+`fingerprint`, `invalidFingerprint`: the folders the file holds),
+`packageFingerprint`, `gameVersion`, `sortableGameVersion`, `hashes` and
+more. No file object has a `displayName` or a version: the version is in
+`fileName` only, and not always (`LFGForever.zip`, `BanterBlocker.zip`).
+
+What wowlab reads: per instance `guid` and `installPath`; per record
+`instanceID`, `name`, `addonID`, `webSiteURL`, `gameInstanceID`,
+`dateInstalled`, `preferenceIsIgnored`, and of `installedFile` and
+`latestFile` the `id` and `fileName` (without `.zip`, as the version), and
+of `installedFile` the `modules`' `foldername`s, the folders it claims. A
+record belongs to the flavor folder its instance's `installPath` names
+(paths compared, no folder name known); an update is known when
+`latestFile.id` differs from `installedFile.id` (equal on all 22 in the
+capture). A file name agrees with a TOC's `## Version:` when the version
+stands in it between separators (`addonsource.file_name_has_version`:
+`ForeverLevelingBiS-v1.4.7-forever` and `v1.4.7` agree, `QuestieTrace-v1.10.0`
+and `1.14.0` do not); a name with no digit says nothing. One folder can be
+a module of two records: Questie's file carries `QuestieTrace`, which has
+its own record too (`QuestieTrace-v1.10.0`); the install's TOC said 1.14.0
+on 2026-11-24, Questie's copy, so QuestieTrace's own record is out of date.
+
 ## Amendments
 
 Dated entries, newest last. Each names the fixture that prompted it.
@@ -1766,3 +1841,11 @@ Dated entries, newest last. Each names the fixture that prompted it.
   string at this build. A key bound straight to a spell, item or macro
   (`SPELL …`, `ITEM …`, `MACRO …`) or to a frame's button (`CLICK …`) is
   the client's own binding kind, not an addon's command.
+- **2026-11-24, §15 and §16, `curseforge/macos/AddonGameInstance.json`
+  (M22-25).** §15 said the capture tool cannot take a file outside an
+  install; it now can (`scripts/lab_capture.py --file`), and §16's fixture
+  went through it, so the WowUp hand copy stays the one exception. The
+  CurseForge app's records, **[verify]** in §15's first reading, are
+  resolved on macOS (§16); the Windows folder stays **[verify]**. Unlike
+  WowUp's, its list names each game folder by the flavor folder itself,
+  not the client inside it, and records no version, only file names.
