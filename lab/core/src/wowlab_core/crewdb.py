@@ -68,6 +68,7 @@ from wowlab_core import (
     crewedit,
     guard,
     layout,
+    links,
     nemesis,
     snapshot,
     worldpvp,
@@ -446,6 +447,10 @@ class Target(_Model):
     file: str
 
 
+# One profile link of a player (M21-05): an address, or why there is none.
+type ProfileLink = links.Link | links.NoLink
+
+
 class CrewRow(crewbook.CrewPlayer):
     """One player as wowlab's crew database keeps them: the fields of the
     book's record (`CrewPlayer`), and whether the game's list held them at
@@ -514,6 +519,14 @@ class CrewRow(crewbook.CrewPlayer):
     # this player (the launch client's writes one); `settings`, the
     # flavor's Config.wtf; None when there is no region.
     region_from: Literal["log", "settings"] | None = None
+    # Links out (M21-05): the player's profile pages, as `links.profiles`
+    # builds them from `first_name`, `second_name` and `region` for the
+    # flavor's game version: the armory, the Journey Companion and
+    # Raider.IO, in that order, each an address or why there is none. Built
+    # by the crew commands, which know the game version; empty in a row
+    # read without one. Never a ForeverTwinking link: those are the
+    # player's own, pasted for their own characters (M21-03).
+    links: list[ProfileLink] = Field(default_factory=list)
 
 
 class CrewMatchRow(_Model):

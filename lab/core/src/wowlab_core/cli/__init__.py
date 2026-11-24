@@ -1131,6 +1131,9 @@ if TYPE_CHECKING:
         CrewPlace as CrewPlace,
     )
     from wowlab_core.cli._cmd_crew import (
+        CrewProfile as CrewProfile,
+    )
+    from wowlab_core.cli._cmd_crew import (
         CrewReport as CrewReport,
     )
     from wowlab_core.cli._cmd_crew import (
@@ -1141,6 +1144,15 @@ if TYPE_CHECKING:
     )
     from wowlab_core.cli._cmd_crew import (
         CrewSyncReport as CrewSyncReport,
+    )
+    from wowlab_core.cli._cmd_crew import (
+        _crew_version as _crew_version,
+    )
+    from wowlab_core.cli._cmd_crew import (
+        _profile_lines as _profile_lines,
+    )
+    from wowlab_core.cli._cmd_crew import (
+        _profile_links as _profile_links,
     )
     from wowlab_core.cli._cmd_cvar import (
         _ACCOUNT_BINDINGS as _ACCOUNT_BINDINGS,
@@ -2412,6 +2424,9 @@ if TYPE_CHECKING:
         SpyListReport as SpyListReport,
     )
     from wowlab_core.cli._cmd_spy import (
+        SpyRow as SpyRow,
+    )
+    from wowlab_core.cli._cmd_spy import (
         SpyShowReport as SpyShowReport,
     )
     from wowlab_core.cli._cmd_spy import (
@@ -2439,6 +2454,9 @@ if TYPE_CHECKING:
         _spy_line as _spy_line,
     )
     from wowlab_core.cli._cmd_spy import (
+        _spy_linked as _spy_linked,
+    )
+    from wowlab_core.cli._cmd_spy import (
         _spy_place as _spy_place,
     )
     from wowlab_core.cli._cmd_spy import (
@@ -2458,6 +2476,9 @@ if TYPE_CHECKING:
     )
     from wowlab_core.cli._cmd_spy import (
         _spy_words as _spy_words,
+    )
+    from wowlab_core.cli._cmd_spy import (
+        _SpyFlavor as _SpyFlavor,
     )
     from wowlab_core.cli._cmd_spy import (
         _SpyRead as _SpyRead,

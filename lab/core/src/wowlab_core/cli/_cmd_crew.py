@@ -38,6 +38,7 @@ from wowlab_core import (
     install,
     labaddon,
     layout,
+    links,
     luadata,
     nemesis,
     region,
@@ -415,13 +416,29 @@ def _from_database(
     outcome: crewdb.SyncOutcome | None = None
     if opened.book.state != "not_turned_on" and opened.data is not None:
         outcome = crewdb.sync(target, opened.data, opened.book, reread=_rereader(opened))
-    return outcome, crewdb.read(
+    rows = crewdb.read(
         target.flavor_folder,
         target.account,
         opened.book,
         region=reading.region if reading is not None else None,
         second_names=_crew_second_names(opened),
     )
+    version = _crew_version(opened)
+    return outcome, [r.model_copy(update={"links": _profile_links(r, version)}) for r in rows]
+
+
+def _crew_version(opened: _Opened) -> str | None:
+    """The game version of the chosen book's flavor (its `.build.info`
+    row), which picks the pages a profile link points at (M21-05)."""
+    return opened.where[0].version if opened.where is not None else None
+
+
+def _profile_links(p: crewdb.CrewRow, version: str | None) -> list[crewdb.ProfileLink]:
+    """A player's profile links (M21-05): the armory, the Journey Companion
+    and Raider.IO, each an address or why there is none, from the names and
+    region the row holds. A row with no second name (a key whose second part
+    is a realm) or no region gets no armory link, and says why."""
+    return list(links.profiles(p.first_name or None, p.second_name, p.region, version=version))
 
 
 def _rereader(opened: _Opened) -> Callable[[], bytes] | None:
@@ -977,10 +994,39 @@ def crew_show(
     for line in lines:
         _say(line)
     if player is not None:
+        for line in _profile_lines(player.links):
+            _say(line)
         _say_notes(_CREW_NOTES, notes)
 
 
+def _profile_lines(made: Sequence[crewdb.ProfileLink]) -> list[str]:
+    """A player's profile links as `crew show` prints them (M21-05): each
+    site's name and address, or why there is no link."""
+    if not made:
+        return []
+    lines = ["Profiles (addresses to open in your browser; wowlab itself requests nothing):"]
+    for made_link in made:
+        label = made_link.label or "Profile"  # no label: the list of sites cannot be used
+        if isinstance(made_link, links.Link):
+            lines.append(f"  {label}: {made_link.url}")
+        else:
+            lines.append(f"  {label}: no link: {made_link.why}")
+    return lines
+
+
 # ─── matches (§21.3, "Reading", M20-09) ──────────────────────────────────────
+
+
+class CrewProfile(_Out):
+    """One player a listed match or open-world encounter names (M21-05):
+    their stored key, their in-game name, the region their links use and
+    their profile links (`crewdb.CrewRow.links`), each an address or why
+    there is none."""
+
+    key: str
+    game_name: str
+    region: Region | None
+    links: list[crewdb.ProfileLink]
 
 
 class CrewMatchesReport(_Out):
@@ -1019,6 +1065,11 @@ class CrewMatchesReport(_Out):
     # as in `CrewReport`.
     region: Region | None = None
     region_absent: str | None = None
+    # Links out (M21-05): every player the listed matches or encounters
+    # name, with you and against you, once each in the order first named,
+    # with their profile links. A key the database no longer keeps is in
+    # no match, so every one listed has its row.
+    profiles: list[CrewProfile] = pydantic.Field(default_factory=list)
 
 
 _MATCH_KIND_WORDS = {"bg": "battleground", "arena": "arena", "shuffle": "solo shuffle"}
@@ -1140,6 +1191,17 @@ def crew_matches(
                 f"newest first: {n}."
             )
             lines = [line for m in found for line in _match_lines(m)]
+    named = (
+        [k for e in encounters for k in (*e.foes, *e.allies, *e.your_kills, *e.killed_you)]
+        if world
+        else [k for m in found for k in (*m.team, *m.foes)]
+    )
+    rows = {p.key: p for p in kept}
+    profiles = [
+        CrewProfile(key=k, game_name=rows[k].game_name, region=rows[k].region, links=rows[k].links)
+        for k in dict.fromkeys(named)
+        if k in rows
+    ]
     report = CrewMatchesReport(
         flavor_folder=place.flavor_folder if place else None,
         account=place.account if place else None,
@@ -1158,6 +1220,7 @@ def crew_matches(
         encounters=encounters,
         region=_region_fields(reading)[0],
         region_absent=_region_fields(reading)[1],
+        profiles=profiles,
     )
     if json_out:
         _emit(report)

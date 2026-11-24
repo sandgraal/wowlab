@@ -229,9 +229,17 @@
 <h3 id="crew-matches-title" tabindex="-1">Match history</h3>
 <p id="crew-matches-words" class="crew-words"></p>
 <ul id="crew-matches-lines" class="crew-lines"></ul>
+<p id="crew-matches-people-words" class="crew-words" hidden>The players in these, each opening what the crew book keeps about them and their profile links:</p>
+<ul id="crew-matches-people" class="crew-people" hidden></ul>
 </section>
 <section id="crew-player" class="panel crew-player" aria-labelledby="crew-player-title" hidden>
 <h3 id="crew-player-title" tabindex="-1"></h3>
+<p id="crew-profiles" class="char-saved-links profile-links" hidden><span class="saved-title">Profiles:</span>
+<a id="crew-profile-armory" class="dressing-link" target="_blank" rel="noopener noreferrer" hidden>Armory</a>
+<a id="crew-profile-journey" class="dressing-link" target="_blank" rel="noopener noreferrer" hidden>Journey Companion</a>
+<a id="crew-profile-raiderio" class="dressing-link" target="_blank" rel="noopener noreferrer" hidden>Raider.IO</a>
+</p>
+<ul id="crew-profiles-why" class="crew-lines" hidden></ul>
 <ul id="crew-player-lines" class="crew-lines"></ul>
 <div class="crew-actions"><button id="crew-player-matches-show" type="button">Show their matches</button></div>
 <p id="crew-player-matches-words" class="crew-words" hidden></p>
@@ -267,11 +275,17 @@
 <div id="spy-table" class="hub-table" role="region" aria-label="Seen by Spy" tabindex="0" hidden></div>
 <section id="spy-player" class="crew-player" aria-labelledby="spy-player-title" hidden>
 <h4 id="spy-player-title" tabindex="-1"></h4>
+<p id="spy-profiles" class="char-saved-links profile-links" hidden><span class="saved-title">Profiles:</span>
+<a id="spy-profile-armory" class="dressing-link" target="_blank" rel="noopener noreferrer" hidden>Armory</a>
+<a id="spy-profile-journey" class="dressing-link" target="_blank" rel="noopener noreferrer" hidden>Journey Companion</a>
+<a id="spy-profile-raiderio" class="dressing-link" target="_blank" rel="noopener noreferrer" hidden>Raider.IO</a>
+</p>
+<ul id="spy-profiles-why" class="crew-lines" hidden></ul>
 <ul id="spy-player-lines" class="crew-lines"></ul>
 </section>
 </section>
 <details class="about"><summary>About this data</summary>
-<p class="intro">The crew book is the lab-addon's list of the players you grouped with, read with <code>wowlab crew list</code>; picking a player shows what <code>wowlab crew show</code> prints, and the match history is what <code>wowlab crew matches</code> prints. Seen by Spy reads the Spy addon's saved files with <code>wowlab spy list</code>, and picking a player there shows what <code>wowlab spy show</code> prints; nothing in Spy's files is changed. Names, guilds, notes, instance and map names are other people's text and are shown exactly as text, never as a link. Changing a rating or a note, or forgetting a player, runs <code>wowlab crew rate</code>, <code>wowlab crew note</code> or <code>wowlab crew forget</code>: each shows its plan first and changes nothing until you press Confirm; the game must be closed, a snapshot is taken first, and <code>wowlab undo</code> puts back what was there. Confirm runs only the plan shown: if the crew book's files changed after the plan, it is refused and nothing is written. For a player only wowlab's crew database keeps (the game's list dropped them), a rating or note changes that database alone: the plan says so, it cannot be undone, and Confirm is refused if their rating or note there changed after the plan.</p>
+<p class="intro">The crew book is the lab-addon's list of the players you grouped with, read with <code>wowlab crew list</code>; picking a player shows what <code>wowlab crew show</code> prints, and the match history is what <code>wowlab crew matches</code> prints. Seen by Spy reads the Spy addon's saved files with <code>wowlab spy list</code>, and picking a player there shows what <code>wowlab spy show</code> prints; nothing in Spy's files is changed. Names, guilds, notes, instance and map names are other people's text and are shown exactly as text. A player's profile links (the Blizzard armory, the Journey Companion, Raider.IO) are addresses wowlab builds from their name and your region, which it assumes is theirs (the <code>--json</code> of <code>crew list</code>, <code>crew show</code>, <code>crew matches</code>, <code>spy list</code> and <code>spy show</code> carries them); a link opens in your browser only when you click it, and wowlab itself requests nothing from those sites. A player with no second name, or with no region known, gets no armory link, and the panel says why. Changing a rating or a note, or forgetting a player, runs <code>wowlab crew rate</code>, <code>wowlab crew note</code> or <code>wowlab crew forget</code>: each shows its plan first and changes nothing until you press Confirm; the game must be closed, a snapshot is taken first, and <code>wowlab undo</code> puts back what was there. Confirm runs only the plan shown: if the crew book's files changed after the plan, it is refused and nothing is written. For a player only wowlab's crew database keeps (the game's list dropped them), a rating or note changes that database alone: the plan says so, it cannot be undone, and Confirm is refused if their rating or note there changed after the plan.</p>
 <div id="crew-about" class="crew-about">
 <p id="crew-keeps"></p>
 <ul id="crew-notes" class="crew-notes"></ul>
