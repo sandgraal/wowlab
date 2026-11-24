@@ -151,18 +151,23 @@ def _only_api(out: dict[str, Any]) -> None:
 # ─── the markup ──────────────────────────────────────────────────────────────
 
 
+_PROFILE_SLOTS = ("armory", "journey", "raiderio")
+
+
 def test_the_link_is_static_markup_with_no_href(server: Any) -> None:
     page = (_TEMPLATES / "page.html").read_text(encoding="utf-8")
     anchors = re.findall(r"<a\b[^>]*>", page)
     # M21-03 added the three links of the addresses the player saved, graded
     # in test_ui_links.py, and M22-06 the Twink panel's two, graded in
-    # test_ui_twink.py.
+    # test_ui_twink.py; M21-05 the profile links of the Crew tab's player
+    # and of Spy's, graded in test_ui_crew_links.py.
     saved = [
         "char-saved-ft-profile",
         "char-saved-ft-build",
         "char-saved-wcl-report",
         "char-twink-planner",
         "char-twink-wowhead",
+        *(f"{panel}-profile-{slot}" for panel in ("crew", "spy") for slot in _PROFILE_SLOTS),
     ]
     assert anchors == [
         '<a id="char-dressing-link" class="dressing-link" target="_blank" '
@@ -173,7 +178,7 @@ def test_the_link_is_static_markup_with_no_href(server: Any) -> None:
         ),
     ]
     body = _page(server).body.decode("utf-8")
-    assert body.count('target="_blank" rel="noopener noreferrer"') == 6
+    assert body.count('target="_blank" rel="noopener noreferrer"') == 12
     assert "See it dressed</a>" in body
 
 

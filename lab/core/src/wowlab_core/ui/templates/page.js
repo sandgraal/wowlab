@@ -4116,9 +4116,9 @@
       if (!one) continue;
       const checked = typeof one.url === "string" ? outsideAddress(one.url, slot.site) : null;
       if (checked !== null) {
-        const link = byId(panel + "-profile-" + slot.slot);
-        pointLink(link, checked);
-        link.hidden = false;
+        const profile = byId(panel + "-profile-" + slot.slot);
+        pointLink(profile, checked);
+        profile.hidden = false;
         any = true;
       } else if (typeof one.url === "string") {
         why.push(slot.label + ": no link: its address is not one this page links to");
