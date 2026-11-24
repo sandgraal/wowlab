@@ -264,6 +264,13 @@ main > section { display: flex; flex-direction: column; gap: var(--space-4); min
 .badge.badge-link::before { content: "\2197" / ""; }
 .badge-server { color: var(--blight); background: var(--blight-bg); border-color: var(--blight-border); border-style: dashed; }
 .badge-server::before { content: "\2248" / ""; }
+/* The crew book's two marks (M22-03): Nemesis (killing blows) and Rival team
+   (match results). Void and Blight, not Ruin, since red is for errors. */
+.badge-nemesis, .badge-rival { margin-left: var(--space-2); }
+.badge-nemesis { color: var(--void); background: var(--void-bg); border-color: var(--void-border); }
+.badge-nemesis::before { content: "\2694" / ""; }
+.badge-rival { color: var(--blight); background: var(--blight-bg); border-color: var(--blight-border); }
+.badge-rival::before { content: "\2691" / ""; }
 .marks { display: inline-flex; flex-wrap: wrap; gap: var(--space-1); flex: none; }
 
 /* ─── the detail pane ─── */
@@ -563,6 +570,8 @@ span.gear-name { cursor: auto; }
 .key-slot { text-align: right; }
 .key-row.key-disagrees { background: var(--selected); }
 .key-disagree-mark { display: block; color: var(--ruin); }
+.key-command small { font-family: var(--font-text); white-space: normal; }
+.key-row.key-not-client .key-command, .key-row.key-not-client .key-does { color: var(--ruin); }
 .char-slots { margin: var(--space-1) 0 var(--space-3); padding-left: var(--space-5); overflow-wrap: anywhere; unicode-bidi: isolate; }
 .macro {
   margin: 0 0 var(--space-4); padding: var(--space-3) var(--space-4);
@@ -579,6 +588,7 @@ span.gear-name { cursor: auto; }
   display: block; font-family: var(--font-mono); font-size: 13px; line-height: 20px;
   white-space: pre-wrap; overflow-wrap: anywhere; unicode-bidi: isolate;
 }
+.macro-line-finding { color: var(--ruin); text-decoration: underline dotted; text-underline-offset: 3px; }
 .macro-placement p, .macro-findings, .macro-slots { margin: var(--space-1) 0; overflow-wrap: anywhere; }
 .macro-findings, .macro-slots { padding-left: var(--space-5); }
 .macro-finding { color: var(--ruin); }

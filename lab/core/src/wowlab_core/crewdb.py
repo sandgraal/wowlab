@@ -68,6 +68,7 @@ from wowlab_core import (
     crewedit,
     guard,
     layout,
+    nemesis,
     snapshot,
     worldpvp,
 )
@@ -457,6 +458,13 @@ class CrewRow(crewbook.CrewPlayer):
     # (a rename or a realm move gives a new key, not a new id). Rows are not
     # merged; each lists the others.
     also_known_as: list[str] = Field(default_factory=list)
+    # The record against them (M22-03, `nemesis`): fights, first and latest
+    # fight, the fights per source, and two parts kept apart: `personal`
+    # (killing blows each way, nemesis) and `team` (match wins and losses
+    # against their side, rival team); added up from the matches and
+    # open-world encounters the database keeps (`fights` lists the rows).
+    # None (`null` in JSON) for a player with no fight.
+    record: nemesis.Record | None = None
     # The record with and against (§21.2, §21.3): matches on your side and
     # against you, and of each the ones your side won, as the database adds
     # them up across syncs; and the latest match the saved file named.
@@ -1107,6 +1115,7 @@ def _public(
     region: Region | None = None,
     second_names: bool = False,
     logged: _LogName | None = None,
+    records: dict[str, nemesis.Record] | None = None,
 ) -> CrewRow:
     kept = {p.key: p for p in book.players} if book is not None else {}
     held = kept.get(row.key)
@@ -1168,6 +1177,7 @@ def _public(
         world_first=part.first,
         world_last=part.last,
         world_zone=part.zone,
+        record=(records or {}).get(row.key),
         game_name=names.game_name,
         realm=names.realm,
         first_name=names.first_name,
@@ -1219,8 +1229,10 @@ def read(
         aliases = _aliases(rows)
         world = _world_parts(conn)
         names = _log_names(conn)
+        records = _records(conn, world)
         return [
-            _public(r, book, aliases, world, region, second_names, names.get(r.key)) for r in rows
+            _public(r, book, aliases, world, region, second_names, names.get(r.key), records)
+            for r in rows
         ]
     except sqlite3.Error as exc:
         raise CrewDbError(f"The crew database {path} cannot be read ({exc}).") from exc
@@ -1357,7 +1369,11 @@ def check_book(book: crewbook.CrewBook) -> str | None:
             "the book's start time",
             f"a date from 2004 to {TIME_AHEAD // 86_400} days after this computer's clock",
         )
-    for name, value in (("count of skipped reads", book.skipped), ("load count", book.probe_loads)):
+    for name, value in (
+        ("count of skipped reads", book.skipped),
+        ("count of reads skipped for no second name or realm", book.no_second),
+        ("load count", book.probe_loads),
+    ):
         if value is not None and not 0 <= value <= COUNTER_MAX:
             return _refused(f"the book's {name}", f"a whole number from 0 to {COUNTER_MAX:,}")
     return None
@@ -3067,6 +3083,12 @@ class _WorldPart:
     first: int | None = None
     last: int | None = None
     zone: str | None = None
+    # As a foe only (M22-03): the killing blows each way and the start of
+    # the first and latest encounter, the open world's part of the record.
+    foe_kills: int = 0
+    foe_deaths: int = 0
+    foe_first: int | None = None
+    foe_last: int | None = None
 
 
 def _log_name_values(p: worldpvp.WorldPlayer) -> tuple[str | None, str | None, str | None] | None:
@@ -3123,6 +3145,11 @@ def _world_parts(conn: sqlite3.Connection) -> dict[str, _WorldPart]:
         part = out.setdefault(str(key), _WorldPart())
         if side == "foe":
             part.faced += 1
+            at = int(start)
+            part.foe_kills += int(killed_by_you)
+            part.foe_deaths += int(killed_you)
+            part.foe_first = at if part.foe_first is None else min(part.foe_first, at)
+            part.foe_last = at if part.foe_last is None else max(part.foe_last, at)
         else:
             part.allied += 1
         part.kills += int(killed_by_you)
@@ -3593,6 +3620,155 @@ def world_encounters(
     return got if isinstance(got, list) else []
 
 
+# ─── the record against each opponent (M22-03) ───────────────────────────────
+
+# A source's fights, one per player in a row: a kept match with the player
+# on the other side gives its team result and no killing blows (a solo
+# shuffle lists no one on the other side, so it is in no fight); a kept
+# open-world encounter in which they fought you gives the killing blows
+# between you and no team result, leaving out an encounter on a map the
+# database keeps a match on, as `_SQL_WORLD_PARTS`. Each source is read two
+# ways from the same rows: totalled per player on every read (matches by
+# `_SQL_TALLY_MATCH_*`, the open world from `_SQL_WORLD_PARTS`'s own scan),
+# and one fight per row for one player (`_SQL_FIGHTS_*_OF`, `fights`) or for
+# all (`_SQL_FIGHTS_*_ALL`).
+_SQL_TALLY_MATCH_RESULTS = "SELECT match_id, at, won FROM matches"
+_SQL_TALLY_MATCH_FOES = "SELECT match_id, player_key FROM match_players WHERE side = 'foes'"
+_SQL_FIGHTS_MATCHES_ALL = (
+    "SELECT mp.player_key, m.match_id, m.at, m.map, m.won"
+    " FROM match_players AS mp JOIN matches AS m ON m.match_id = mp.match_id"
+    " WHERE mp.side = 'foes'"
+    " ORDER BY m.at, m.match_id, mp.player_key"
+)
+_SQL_FIGHTS_MATCHES_OF = (
+    "SELECT mp.player_key, m.match_id, m.at, m.map, m.won"
+    " FROM match_players AS mp JOIN matches AS m ON m.match_id = mp.match_id"
+    " WHERE mp.side = 'foes' AND mp.player_key = ?"
+    " ORDER BY m.at, m.match_id"
+)
+_SQL_FIGHTS_WORLD_ALL = (
+    "SELECT p.player_key, e.encounter_id, e.start_at, e.zone, p.killed_by_you, p.killed_you"
+    " FROM world_encounter_players AS p"
+    " JOIN world_encounters AS e ON e.encounter_id = p.encounter_id"
+    " WHERE p.side = 'foe'"
+    " AND (e.instance_id IS NULL OR e.instance_id NOT IN (SELECT map_id FROM matches))"
+    " ORDER BY e.start_at, e.encounter_id, p.player_key"
+)
+_SQL_FIGHTS_WORLD_OF = (
+    "SELECT p.player_key, e.encounter_id, e.start_at, e.zone, p.killed_by_you, p.killed_you"
+    " FROM world_encounter_players AS p"
+    " JOIN world_encounters AS e ON e.encounter_id = p.encounter_id"
+    " WHERE p.side = 'foe' AND p.player_key = ?"
+    " AND (e.instance_id IS NULL OR e.instance_id NOT IN (SELECT map_id FROM matches))"
+    " ORDER BY e.start_at, e.encounter_id"
+)
+
+
+def _match_tallies(conn: sqlite3.Connection) -> list[nemesis.Tally]:
+    """Each player's match fights, totalled: the rows `_SQL_FIGHTS_MATCHES_*`
+    list, read as two plain scans (the matches, then every player on the
+    other side) and added up here, which measured faster than a `GROUP BY`
+    joining the two."""
+    results = {
+        int(match_id): (int(at), won)
+        for match_id, at, won in conn.execute(_SQL_TALLY_MATCH_RESULTS)
+    }
+    sums: dict[str, list[int]] = {}
+    for match_id, key in conn.execute(_SQL_TALLY_MATCH_FOES):
+        at, won = results[int(match_id)]
+        held = sums.get(key)
+        if held is None:
+            sums[key] = [1, won == 1, won == 0, at, at]
+            continue
+        held[0] += 1
+        held[1] += won == 1
+        held[2] += won == 0
+        held[3] = min(held[3], at)
+        held[4] = max(held[4], at)
+    return [
+        nemesis.Tally(str(key), "match", n, 0, 0, int(wins), int(losses), first, last)
+        for key, (n, wins, losses, first, last) in sums.items()
+    ]
+
+
+def _world_tallies(world: dict[str, _WorldPart]) -> list[nemesis.Tally]:
+    """Each player's open-world fights, totalled from the scan `_world_parts`
+    already made (`_SQL_WORLD_PARTS`: the rows `_SQL_FIGHTS_WORLD_*` list,
+    as a foe)."""
+    return [
+        nemesis.Tally(
+            key, "world", p.faced, p.foe_kills, p.foe_deaths, 0, 0, p.foe_first, p.foe_last
+        )
+        for key, p in world.items()
+        if p.faced and p.foe_first is not None and p.foe_last is not None
+    ]
+
+
+def _records(conn: sqlite3.Connection, world: dict[str, _WorldPart]) -> dict[str, nemesis.Record]:
+    """Each player's record against you, by stored key, from every source's
+    tallies; a player with no fight has none. A source added later (Spy,
+    M22-02) adds its tallies here."""
+    return nemesis.records_from([*_match_tallies(conn), *_world_tallies(world)])
+
+
+def _fights(conn: sqlite3.Connection, key: str | None) -> list[nemesis.Fight]:
+    """The fights the database keeps (`key`: one player's), one per source
+    row, oldest first within each source: the rows `_records` totals. A
+    source added later (Spy, M22-02) adds its reader here too; a
+    battleground's kill pairs (M22-15) fold into the match's fight, as its
+    `kills` and `deaths`, in both places."""
+    in_matches = (
+        conn.execute(_SQL_FIGHTS_MATCHES_ALL)
+        if key is None
+        else conn.execute(_SQL_FIGHTS_MATCHES_OF, (key,))
+    )
+    out = [
+        nemesis.Fight(
+            key=str(k),
+            source="match",
+            row=int(match_id),
+            at=int(at),
+            place=_text(map_name),
+            team=nemesis.team_result(None if won is None else bool(won)),
+        )
+        for k, match_id, at, map_name, won in in_matches
+    ]
+    if not _has_world(conn):
+        return out
+    in_world = (
+        conn.execute(_SQL_FIGHTS_WORLD_ALL)
+        if key is None
+        else conn.execute(_SQL_FIGHTS_WORLD_OF, (key,))
+    )
+    out += [
+        nemesis.Fight(
+            key=str(k),
+            source="world",
+            row=int(encounter_id),
+            at=int(start),
+            place=_text(zone),
+            kills=int(killed_by_you),
+            deaths=int(killed_you),
+        )
+        for k, encounter_id, start, zone, killed_by_you, killed_you in in_world
+    ]
+    return out
+
+
+def fights(flavor_folder: str, account: str, key: str | None = None) -> list[nemesis.Fight]:
+    """The fights wowlab's crew database keeps (`key`: only that player's,
+    by stored key), each one source row: a kept match with the player on the
+    other side, or a kept open-world encounter in which they fought you.
+    Their record (`CrewRow.record`) is these added up. Empty when there is
+    no database yet."""
+
+    def use(conn: sqlite3.Connection) -> list[nemesis.Fight]:
+        return _fights(conn, key)
+
+    got = _read_with(flavor_folder, account, use)
+    return got if isinstance(got, list) else []
+
+
 __all__ = [
     "APPLICATION_ID",
     "COUNTER_MAX",
@@ -3624,6 +3800,7 @@ __all__ = [
     "crew_root",
     "database_path",
     "entry_problems",
+    "fights",
     "forget",
     "holds",
     "kept_words",

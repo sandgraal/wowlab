@@ -20,7 +20,7 @@ from typing import Annotated
 
 import typer
 
-from wowlab_core import links, linkstore
+from wowlab_core import install, links, linkstore
 from wowlab_core.cli._cmd_char import CharLinkRow, _link_row
 from wowlab_core.cli._common import (
     EXIT_USAGE,
@@ -32,6 +32,7 @@ from wowlab_core.cli._common import (
     RootOpt,
     YesOpt,
     _confirm,
+    _discover,
     _emit,
     _handled,
     _home_words,
@@ -71,11 +72,15 @@ class CharLinkRefused(_Out):
 
 class CharLinkListReport(_Out):
     """`wowlab char link list --json`: the saved addresses (of one
-    character, with `--character`), the file they are kept in, and the
-    entries left out."""
+    character, with `--character`), the file they are kept in, those of
+    them kept for a character folder that is gone from the game folder
+    (`gone`, a subset of `links`: a renamed or moved character, or a
+    renamed flavor folder; the Character tab shows them for no character),
+    and the entries wowlab no longer shows (`refused`)."""
 
     file: str
     links: list[CharLinkRow]
+    gone: list[CharLinkRow]
     refused: list[CharLinkRefused]
 
 
@@ -109,6 +114,28 @@ def _link_key(
     return linkstore.CharacterKey(
         flavor=chosen.folder, account=acct.folder, character=f"{char.realm_folder}/{char.folder}"
     )
+
+
+def _link_shown(file: linkstore.StoreFile, key: linkstore.CharacterKey) -> list[CharLinkRow]:
+    """The addresses of `key` in `file` that wowlab shows (they check out)."""
+    shown, _ = linkstore.checked(file)
+    return [_link_row(key, s) for s in linkstore.links_for(shown, key)]
+
+
+def _link_part(text: str) -> bool:
+    """Whether `text` is one plain folder name."""
+    return bool(text) and text not in (".", "..") and not any(c in text for c in "/\\\0")
+
+
+def _link_folder_gone(inst: install.Install, key: linkstore.CharacterKey) -> bool:
+    """Whether the character folder `key` names is missing from this game
+    folder (or its flavor folder is). Looks only; reads nothing inside."""
+    flavor = next((f for f in inst.flavors if f.folder == key.flavor), None)
+    realm, _, folder = key.character.partition("/")
+    parts = (key.account, realm, folder)
+    if flavor is None or not all(_link_part(p) for p in parts):
+        return True
+    return not (flavor.path / "WTF" / "Account" / key.account / realm / folder).is_dir()
 
 
 def _link_read() -> linkstore.Stored:
@@ -172,6 +199,11 @@ def char_link_set(
     build their addresses; you paste each once. A character keeps one of
     each kind, and a new one replaces the old.
 
+    The address belongs to this character's folder in the game folder. If
+    the folder is renamed (a character renamed or moved, a flavor folder
+    renamed), the address is no longer shown for the character, and `char
+    link list` lists it as kept for a folder that is gone.
+
     The address is kept in a small file in wowlab's own data folder; nothing
     in the game folder changes. It opens in your browser only when you click
     it; wowlab itself never opens it. Shows the plan and asks first.
@@ -200,7 +232,6 @@ def char_link_set(
     dropped = [] if old is None or same else [_link_row(key, old)]
 
     def report(done: bool) -> CharLinkChangeReport:
-        current = linkstore.links_for(after if done else stored.file, key)
         return CharLinkChangeReport(
             dry_run=dry_run,
             changed=not same,
@@ -211,7 +242,7 @@ def char_link_set(
             file=stored.path,
             saved=_link_row(key, new),
             dropped=dropped,
-            links=[_link_row(key, s) for s in current],
+            links=_link_shown(after if done else stored.file, key),
         )
 
     if dry_run or same:
@@ -244,9 +275,11 @@ def char_link_list(
     json_out: JsonOpt = False,
 ) -> None:
     """The addresses you pasted for your characters, from wowlab's own data
-    folder; with --character, one character's. A saved address that no
-    longer checks out is listed apart and never shown as a link. Reads
-    only; without --character the game folder is not read.
+    folder; with --character, one character's. Without --character, an
+    address kept for a character folder that is no longer in the game
+    folder (a renamed character or flavor folder) is listed as kept for a
+    folder that is gone. A saved address that no longer checks out is
+    listed apart and never shown as a link. Reads only.
 
     \f
     JSON: CharLinkListReport."""
@@ -256,10 +289,30 @@ def char_link_list(
     stored = _link_read()
     rows = [
         _link_row(entry.key, s)
-        for entry in stored.file.characters
+        for entry in stored.shown.characters
         if key is None or entry.key == key
         for s in entry.links
     ]
+    gone: list[CharLinkRow] = []
+    if key is None:
+        # Which folders are gone, when the game folder can be found at all;
+        # with none found, nothing is said about them.
+        try:
+            inst, _ = _discover(root)
+        except (CliError, install.InstallError, OSError):
+            # No game folder found, a --root or WOWLAB_WOW_ROOT that is not
+            # one, or one that cannot be read: the listing still prints.
+            inst = None
+        if inst is not None:
+            keys = {(r.flavor_folder, r.account, r.character) for r in rows}
+            missing = {
+                k
+                for k in keys
+                if _link_folder_gone(
+                    inst, linkstore.CharacterKey(flavor=k[0], account=k[1], character=k[2])
+                )
+            }
+            gone = [r for r in rows if (r.flavor_folder, r.account, r.character) in missing]
     refused = [
         CharLinkRefused(
             flavor_folder=r.key.flavor,
@@ -273,13 +326,14 @@ def char_link_list(
         if key is None or r.key == key
     ]
     if json_out:
-        _emit(CharLinkListReport(file=stored.path, links=rows, refused=refused))
+        _emit(CharLinkListReport(file=stored.path, links=rows, gone=gone, refused=refused))
         return
     if not rows:
         _say("No saved addresses." if key is None else f"No saved addresses for {_link_who(key)}.")
     for row in rows:
+        where = "Kept for a character folder that is gone: " if row in gone else ""
         _say_prose(
-            f"{row.character} ({row.account}, {row.flavor_folder}): {row.label}: {row.url}",
+            f"{where}{row.character} ({row.account}, {row.flavor_folder}): {row.label}: {row.url}",
             keep=[row.character],
         )
     for r in refused:
@@ -325,7 +379,6 @@ def char_link_forget(
     )
 
     def report(done: bool) -> CharLinkChangeReport:
-        current = linkstore.links_for(after if done else stored.file, key)
         return CharLinkChangeReport(
             dry_run=dry_run,
             changed=bool(dropped),
@@ -336,7 +389,7 @@ def char_link_forget(
             file=stored.path,
             saved=None,
             dropped=[_link_row(key, s) for s in dropped],
-            links=[_link_row(key, s) for s in current],
+            links=_link_shown(after if done else stored.file, key),
         )
 
     if dry_run or not dropped:

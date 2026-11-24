@@ -104,19 +104,27 @@ def test_constructed_macros_with_the_fallback_slot_count_read_and_say_so() -> No
     assert isinstance(char.macros, labaddon.Macros)
     assert char.macros.account_slots_from == "fallback"
     assert [m.index for m in char.macros.list_] == [1, 121]
+    lines = labaddon.describe(char)
     assert (
-        "  this character's macros asked from index 121: the game's count of account macro "
-        "slots is loaded only once the macro window has been opened, so the addon assumed 120 "
-        "[verify]"
-    ) in labaddon.describe(char)
+        "  this character's macros asked from index 121: the game gave no count of account "
+        "macro slots, so the addon assumed 120, the game's own number [verify]"
+    ) in lines
+    # M21-11: the macro window was never the reason (no file of the 71037 UI
+    # source assigns the global; the count is Constants.MacroConsts').
+    assert not any("macro window" in line for line in lines)
 
 
-def test_constructed_macros_from_the_client_constant_say_so() -> None:
-    lines = labaddon.describe(_char(_raw(account_slots_from="MAX_ACCOUNT_MACROS")))
+@pytest.mark.parametrize("source", ["MAX_ACCOUNT_MACROS", "MacroConsts"])
+def test_constructed_macros_from_the_client_constant_say_so(source: str) -> None:
+    """The global (M20-16) and, since M21-11, the client's
+    Constants.MacroConsts read the same to the player."""
+    char = _char(_raw(account_slots_from=source))
+    assert isinstance(char.macros, labaddon.Macros)
+    assert char.macros.account_slots_from == source
     assert (
         "  this character's macros asked from index 121, after the game's own count of "
         "account macro slots"
-    ) in lines
+    ) in labaddon.describe(char)
 
 
 def test_constructed_macros_written_before_m20_16_add_no_slot_line() -> None:
@@ -186,8 +194,10 @@ def test_the_real_schema_4_action_bars_keep_the_old_words() -> None:
             "full_name",
             "InventedRealm",
             True,
-            "realm InventedRealm (written without spaces: taken from the character's full "
-            "name; the game gave no realm name), ",
+            # M21-11: only an earlier addon wrote this source; on Forever the
+            # value is very likely the second name.
+            "realm or second name InventedRealm (from the character's full name; probably "
+            "the second name [verify]), ",
         ),
     ],
     ids=["constructed-realm-name", "constructed-normalized", "constructed-full-name"],

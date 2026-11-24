@@ -69,6 +69,7 @@ from wowlab_core.cli._common import (
     NotesOpt,
     RootOpt,
     _account_words,
+    _client_facts,
     _damaged_records,
     _discover,
     _emit,
@@ -1476,7 +1477,7 @@ def _saved_links(key: linkstore.CharacterKey) -> tuple[list[CharLinkRow], str | 
     (None when the file was read or there is none). Never raises."""
     try:
         stored = linkstore.read()
-        return [_link_row(key, s) for s in linkstore.links_for(stored.file, key)], None
+        return [_link_row(key, s) for s in linkstore.links_for(stored.shown, key)], None
     except (linkstore.LinkStoreError, links.LinkSitesError) as exc:
         return [], f"Your saved addresses could not be read: {exc}"
 
@@ -2390,7 +2391,8 @@ def char_binds(
     bindings-cache.wtf and the keys the lab-addon recorded, each key
     with the action slot its command presses (the main bar at page 1, the page
     shown with no form, stance or stealth active) and what the record says
-    that slot holds, where the files and the record
+    that slot holds, the game's own name for any other command (or that it
+    is an addon's), where the files and the record
     disagree, and the filled slots no key reaches. Without --character, the
     character whose WowLab.lua was written last. Reads only.
 
@@ -2428,7 +2430,11 @@ def char_binds(
         else f"no lab-addon record ({keymap.GET_RECORD})"
     )
     found = keymap.join_record(
-        account=account_doc, character=character_doc, record=record, no_record=no_record
+        account=account_doc,
+        character=character_doc,
+        record=record,
+        no_record=no_record,
+        client=_client_facts(lay, chosen),
     )
     report = CharBindsReport(
         flavor_folder=chosen.folder,
@@ -2760,7 +2766,11 @@ def char_macros(
         else f"no lab-addon record ({keymap.GET_RECORD})"
     )
     keys = keymap.join_record(
-        account=account_doc, character=character_doc, record=record, no_record=no_record
+        account=account_doc,
+        character=character_doc,
+        record=record,
+        no_record=no_record,
+        client=_client_facts(lay, chosen),
     )
     if isinstance(record, labaddon.CharDBV3):
         bars, no_bars = record.actionbars, f"no action-bar record ({keymap.GET_RECORD})"
@@ -2777,7 +2787,9 @@ def char_macros(
         no_book = "no spellbook record (no character chosen; use --character)"
     else:
         no_book = macrocheck.NO_RECORD
-    checked = macrocheck.check(sources, record, character=who, no_record=no_book)
+    checked = macrocheck.check(
+        sources, record, character=who, no_record=no_book, client=_client_facts(lay, chosen)
+    )
     positions: dict[macrocheck.MacroScope, int] = {"account": 0, "character": 0}
     order: list[tuple[macroplace.MacroScope, int]] = []
     for s in sources:

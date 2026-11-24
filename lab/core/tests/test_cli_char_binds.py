@@ -197,7 +197,7 @@ def test_char_binds_text_has_the_table_unreached_slots_and_counts_cross_capture(
     assert (
         unmarked(
             "  slot  64  runs macro 149 (a macro index [verify]); the record keeps no macro name or "
-            "body  (bottom left bar button 4, page 6)"
+            "body  (Action Bar 2 (bottom left) button 4, page 6)"
         )
         in lines
     )
@@ -317,8 +317,8 @@ def test_a_character_bindings_file_is_read_beside_the_account_one_constructed(
     assert (backpack.sources, backpack.agreement) == (["character file"], "file only")
     text = ok("char", "binds", "--character", CHARACTER).stdout
     assert (
-        "  CTRL-F11         TOGGLEBACKPACK                -  a binding command, not an action "
-        "slot  (character file only: disagrees with the record)"
+        "  CTRL-F11         TOGGLEBACKPACK                -  Toggle Backpack (Interface Panel)  "
+        "(character file only: disagrees with the record)"
     ) in text
     assert "the record has no command on CTRL-F11" in text
     # Key 1 is on ACTIONBUTTON1 in the record and on bar 5 in the file: both rows
@@ -329,7 +329,7 @@ def test_a_character_bindings_file_is_read_beside_the_account_one_constructed(
         "  (character file only: disagrees with the record)"
     )
     assert lines[bar5 + 1].endswith(
-        "bar 5 button 1, page 13 (unconfirmed: no capture has had a key on this bar)"
+        "Action Bar 6 button 1, page 13 (unconfirmed: no capture has had a key on this bar)"
     )
     assert lines[bar5 + 2].endswith("the record has 1 on ACTIONBUTTON1")
     assert (

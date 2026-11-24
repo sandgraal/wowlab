@@ -40,6 +40,7 @@ from typer.core import TyperGroup
 
 from wowlab_core import (
     __version__,
+    clientlists,
     crewcount,
     guard,
     install,
@@ -484,6 +485,23 @@ crew_app = typer.Typer(
     no_args_is_help=True,
 )
 app.add_typer(crew_app, name="crew", short_help="The players you grouped with (the crew book).")
+live_app = typer.Typer(
+    help="What the Live view of wowlab ui shows: your latest match from the combat log, and your "
+    "last save, against an earlier one your backups hold.",
+    no_args_is_help=True,
+)
+app.add_typer(
+    live_app,
+    name="live",
+    short_help="Latest match; last save, against an earlier one your backups hold.",
+)
+spy_app = typer.Typer(
+    help="What the Spy addon saved: the players it saw, your kill-on-sight and ignore lists, "
+    "the fights it counted, and your notes and tags, as of your last logout or /reload. "
+    "Read only: Spy's files are never changed.",
+    no_args_is_help=True,
+)
+app.add_typer(spy_app, name="spy", short_help="The players the Spy addon saw (read only).")
 
 # The modules of this package in the order they register their commands when
 # all are imported, which is the order `wowlab --help` lists them in. Each
@@ -512,6 +530,8 @@ _PART_NAMES = (
     "_cmd_casc",
     "_cmd_charmodel",
     "_cmd_crew",
+    "_cmd_live",
+    "_cmd_spy",
     "_cmd_ui",
 )
 # The modules to import before a root command or group is looked up (M15-22):
@@ -540,6 +560,8 @@ _COMMAND_MODULES: dict[str, tuple[str, ...]] = {
     "char": ("_cmd_char", "_cmd_charlink", "_cmd_charmodel"),
     "casc": ("_cmd_casc",),
     "crew": ("_cmd_crew",),
+    "live": ("_cmd_live",),
+    "spy": ("_cmd_spy",),
 }
 
 
@@ -2061,6 +2083,25 @@ def _listed[T](read: Callable[..., T], lay: layout.Layout, rel: str, **kwargs: A
         return read(lay.flavor_path / rel, root=lay.install_root, **kwargs)
     except snapshot.LinkedPathError as exc:
         raise exc.changed_while_read(lay.flavor_path) from exc
+
+
+def _client_facts(lay: layout.Layout, chosen: install.Flavor) -> clientlists.Client:
+    """What the game's shipped command lists judge against (M22-18): the
+    opened flavor's build, as discovered from `.build.info`, and the text
+    language its `Config.wtf` sets (`textLocale`), None when there is no
+    such file or line or the file cannot be read."""
+    language: str | None = None
+    found = [
+        f for f in lay.wtf_files() if f.scope == "machine" and f.name.casefold() == "config.wtf"
+    ]
+    if found:
+        try:
+            cvar = _listed(wtfconfig.read_config, lay, found[0].path).get("textLocale")
+        except (OSError, ValueError, WowlabError):  # no language, as with no file
+            cvar = None
+        if cvar is not None and re.fullmatch(r"[a-z]{2}[A-Z]{2}", cvar.value):
+            language = cvar.value
+    return clientlists.Client(build=chosen.version, language=language)
 
 
 # What each kind of snapshot is, in words (M16-09): `snap show` prints it, and
