@@ -4,7 +4,7 @@ QuestieDB is the database the Questie addon reads: every quest, NPC, object
 and item it knows, with where each one is. The player's own installed copy
 is read here, read-only (L1), and nothing in it is executed (L3). Its form,
 from the owner's install of QuestieDB 1.1.4 on 2026-11-23
-(`docs/LAB_FORMATS.md` §13):
+(`docs/LAB_FORMATS.md` §14):
 
 - **The baked store.** The addon's TOC carries the data as `## X-...`
   directives, which the client hands to the addon through

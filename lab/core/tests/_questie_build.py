@@ -2,7 +2,7 @@
 
 CONSTRUCTED INPUT. QuestieDB is a third-party addon's data, so no byte of
 the owner's copy is committed (the ticket's rule, as M21-09 kept Ketho's
-lists out): what is committed is the shape, as `docs/LAB_FORMATS.md` §13
+lists out): what is committed is the shape, as `docs/LAB_FORMATS.md` §14
 records it from the owner's QuestieDB 1.1.4 for Forever on 2026-11-23, and
 an owner-run `@live` test (`test_questiedb_live.py`) reads the real one.
 

@@ -7,7 +7,7 @@ the owner runs it by hand:
 It is skipped when `$WOWLAB_WOW_ROOT` is not set or no flavor folder holds a
 QuestieDB. It reads the installed copy, read-only, and checks the facts the
 constructed slices of `test_questiedb.py` and `test_lookup.py` stand for
-(`docs/LAB_FORMATS.md` §13): the TOC is a baked store; every kind's id
+(`docs/LAB_FORMATS.md` §14): the TOC is a baked store; every kind's id
 header decodes; every entity's row decodes, with a name; the drop tables
 read as literals; and what is left out is what the constructed slices say.
 Nothing from the install is written anywhere, and nothing is fetched.

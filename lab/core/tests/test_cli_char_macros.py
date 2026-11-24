@@ -289,7 +289,7 @@ def test_unconfirmed_with_one_candidate_slot_and_a_key_constructed(flavor: Path)
     twenty_nine = placed[("character", 29)]
     assert (twenty_nine.status, twenty_nine.candidate_index) == ("unconfirmed", 149)
     assert [(s.slot, s.page_note, s.unfollowed_page) for s in twenty_nine.slots] == [
-        (64, "bottom left bar button 4, page 6", False)
+        (64, "Action Bar 2 (bottom left) button 4, page 6", False)
     ]
     assert [(k.key, k.command, k.slot, k.sources) for k in twenty_nine.keys] == [
         ("CTRL-F7", "MULTIACTIONBAR1BUTTON4", 64, ["account file"])
@@ -303,11 +303,17 @@ def test_unconfirmed_with_one_candidate_slot_and_a_key_constructed(flavor: Path)
     assert by[("character", 1)].placement.status == "none"
     text = ok("char", "macros", "--character", CHARACTER).stdout
     assert "Macros: 29 (2 with a candidate slot, 27 with none; 0 findings)" in text
-    assert "    may sit at slot 64 (unconfirmed): bottom left bar button 4, page 6\n" in text
+    assert (
+        "    may sit at slot 64 (unconfirmed): Action Bar 2 (bottom left) button 4, page 6\n"
+        in text
+    )
     assert (
         "      key CTRL-F7 (MULTIACTIONBAR1BUTTON4; account file only: disagrees with the record)\n"
     ) in text
-    assert "    may sit at slot 65 (unconfirmed): bottom left bar button 5, page 6\n" in text
+    assert (
+        "    may sit at slot 65 (unconfirmed): Action Bar 2 (bottom left) button 5, page 6\n"
+        in text
+    )
     assert "      no key reaches it on the page its bar shows by default\n" in text
 
 

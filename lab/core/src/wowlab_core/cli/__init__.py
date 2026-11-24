@@ -2976,6 +2976,9 @@ if TYPE_CHECKING:
         _click_wording as _click_wording,
     )
     from wowlab_core.cli._common import (
+        _client_facts as _client_facts,
+    )
+    from wowlab_core.cli._common import (
         _client_names as _client_names,
     )
     from wowlab_core.cli._common import (
