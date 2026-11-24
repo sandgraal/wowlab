@@ -260,15 +260,36 @@ def test_constructed_a_jwt_refuses() -> None:
 
 def test_constructed_thousands_of_ids_scrub_quickly() -> None:
     """Security review L2: the time grew with the square of the distinct ids
-    (8,000 numeric ids took 18 s). One pass each now."""
+    (8,000 numeric ids took 18 s; 128,000 text ids in 3.3 MB took 42 s).
+    Numeric ids take one pass each; text ids past APP_ID_TEXT_MAX refuse the
+    file before any pass over them."""
     numbers = b",".join(b'{"user_id": %d}' % (10_000_000 + i) for i in range(8_000))
-    texts = b",".join(b'{"user_id": "%036d"}' % i for i in range(8_000))
-    for body in (numbers, texts):
-        data = b"[" + body + b"]"
+    start = time.perf_counter()
+    outcome = _process(b"[" + numbers + b"]")
+    assert outcome.problems == []
+    assert time.perf_counter() - start < 10, "a generous hang guard, not a budget"
+    cap = lab_capture.APP_ID_TEXT_MAX
+    within = b",".join(b'{"user_id": "%036d"}' % i for i in range(cap))
+    assert _process(b"[" + within + b"]").problems == []
+    for count in (cap + 1, 128_000):
+        texts = b",".join(b'{"user_id": "%036d"}' % i for i in range(count))
         start = time.perf_counter()
-        outcome = _process(data)
-        assert outcome.problems == []
+        outcome = _process(b"[" + texts + b"]")
         assert time.perf_counter() - start < 10, "a generous hang guard, not a budget"
+        assert (
+            f"more distinct app or account ids than a manager's file holds x{count}"
+            in outcome.problems
+        )
+
+
+@pytest.mark.parametrize(
+    "planted",
+    [b"%2FUsers%2Fchris%2Fx", b"%2fhome%2fchris", b"C:%5CUsers%5Cchris"],
+    ids=["users", "home", "windows"],
+)
+def test_constructed_a_percent_encoded_home_path_refuses(planted: bytes) -> None:
+    outcome = _process(b'{"u": "https://x.invalid/?p=' + planted + b'"}')
+    assert "percent-encoded home path x1" in outcome.problems
 
 
 # ─── what it refuses ─────────────────────────────────────────────────────────

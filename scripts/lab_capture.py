@@ -3732,6 +3732,8 @@ def discover_identity(root: Path, flavors: Sequence[Flavor], args: argparse.Name
 # text), a JSON `\u` escape of a printable character (ESCAPE_RE: the
 # detectors read raw bytes, and `\u0040` would hide the `@` of an address),
 # a JSON key that names a secret (SECRET_KEY_WORDS), a signed token (JWT_RE),
+# a percent-encoded home path (PERCENT_HOME_RE), more distinct text ids than
+# APP_ID_TEXT_MAX,
 # and a file name the scrub would change (an app's file name is public). The
 # provenance row says the file came from outside an install, with its size,
 # modification time and SHA-256 before the scrub.
@@ -3828,6 +3830,18 @@ APP_ID_SHAPE_LABEL = "app or account id in a shape the tool does not replace"
 # A text id this long is replaced wherever it appears (a UUID is 36); a
 # shorter one, like a number, only under its key, and refuses elsewhere.
 APP_ID_ANYWHERE_MIN = 8
+# A manager's file holds one or two distinct ids (the owner's CurseForge file:
+# one GUID, one sync id). Past this many distinct text ids the file is refused
+# unscanned: the one pass over them grows with their count.
+APP_ID_TEXT_MAX = 64
+APP_ID_TOO_MANY_LABEL = "more distinct app or account ids than a manager's file holds"
+# A home folder written with its separators percent-encoded (`%2FUsers%2F`),
+# which the home-path detector, reading raw bytes, cannot see.
+PERCENT_HOME_RE = re.compile(
+    rb"(?i)%2F(?:Users|home|Documents(?:%20|\+| )and(?:%20|\+| )Settings)%2F|"
+    rb"%5C(?:Users|Documents(?:%20|\+| )and(?:%20|\+| )Settings)%5C"
+)
+PERCENT_HOME_LABEL = "percent-encoded home path"
 APP_ID_LABEL = "app or account id not replaced"
 APP_ID_ELSEWHERE_LABEL = "app or account id found outside its key"
 _APP_ID_TEXT = b"00000000-0000-4000-8000-%012d"
@@ -3872,6 +3886,7 @@ class OutsideScan:
     keyed: frozenset[bytes]
     dropped: int  # edits dropped for overlapping another: refuses the file
     odd_shapes: int  # app or account id values of another shape: refuses the file
+    too_many: int = 0  # distinct text ids past APP_ID_TEXT_MAX: refuses the file
 
 
 def _no_overlaps(
@@ -3916,8 +3931,9 @@ def outside_scan(data: bytes, home: str | None = None) -> OutsideScan:
             stand_in = _APP_ID_TEXT if quoted else _APP_ID_NUMBER
             keyed[inner] = stand_in % (len(texts) + len(keyed) + 1)
         edits.append((m.start(2) + quoted, m.end(2) - quoted, keyed[inner], "app-id"))
-    if texts:
-        # One pass for every text id, longest first (a file can hold thousands).
+    too_many = len(texts) if len(texts) > APP_ID_TEXT_MAX else 0
+    if texts and not too_many:
+        # One pass for every text id, longest first.
         anywhere = re.compile(
             b"|".join(re.escape(t) for t in sorted(texts, key=lambda t: (-len(t), t)))
         )
@@ -3933,7 +3949,7 @@ def outside_scan(data: bytes, home: str | None = None) -> OutsideScan:
     # other (the end of a login, the digits of an id).
     kept, dropped = _no_overlaps(edits)
     issued = frozenset([*texts.values(), *keyed.values()])
-    return OutsideScan(tuple(kept), issued, frozenset(keyed), dropped, odd)
+    return OutsideScan(tuple(kept), issued, frozenset(keyed), dropped, odd, too_many)
 
 
 # What a keyed id is looked for as, after the scrub: a run of letters,
@@ -3949,6 +3965,8 @@ def outside_leftovers(scrubbed: bytes, scan: OutsideScan) -> list[str]:
     problems: list[str] = []
     if scan.dropped:
         problems.append(f"{OVERLAP_LABEL} x{scan.dropped}")
+    if scan.too_many:
+        problems.append(f"{APP_ID_TOO_MANY_LABEL} x{scan.too_many}")
     if scan.odd_shapes:
         problems.append(f"{APP_ID_SHAPE_LABEL} x{scan.odd_shapes}")
     links = sum(1 for m in LINK_TOKEN_RE.finditer(scrubbed) if m.group(2) != LINK_PLACEHOLDER)
@@ -3997,6 +4015,9 @@ def outside_text_refusals(data: bytes) -> list[str]:
             keys += 1
     if keys:
         problems.append(f"{SECRET_KEY_LABEL} x{keys}")
+    homes = len(PERCENT_HOME_RE.findall(data))
+    if homes:
+        problems.append(f"{PERCENT_HOME_LABEL} x{homes}")
     jwts = len(JWT_RE.findall(data))
     if jwts:
         problems.append(f"{JWT_LABEL} x{jwts}")

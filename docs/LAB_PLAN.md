@@ -1892,8 +1892,9 @@ never edited. Every capture passes through `scripts/lab_capture.py`, which
 > cookie, login, credentials, session or browser-storage file (never
 > opened), a compressed, NUL-holding or non-UTF-8 file, a JSON `\u` escape
 > of a printable character (the detectors read raw bytes), a JSON key that
-> names a secret, a JWT, an id of a shape it does not replace, and two
-> replacements that overlap. The provenance
+> names a secret, a JWT, a percent-encoded home path, an id of a shape it
+> does not replace, more than 64 distinct text ids (a manager's file holds
+> one or two), and two replacements that overlap. The provenance
 > row's flavor cell says `n/a (outside an install)` and its notes give the
 > source path under `~`, the file time, and the size and SHA-256 before
 > the scrub.
