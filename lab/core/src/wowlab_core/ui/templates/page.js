@@ -5567,7 +5567,7 @@
         const held = Array.isArray(file.records) ? file.records.length : null;
         sourcesLine(item, "sources-clear",
           "WowUp's list" + (n === null ? "" : ", last written " + localTime(n)) + ": " +
-          plural(held, "addon", "addons") + ".");
+          (held === 1 ? "one addon" : (held === null ? "?" : grouped(held)) + " addons") + ".");
       } else if (file.state === "unreadable") {
         sourcesLine(item, "sources-error", "wowlab could not read WowUp's list: " +
           (hubStr(file.error) ? visible(file.error) : "no reason given") + ".");
