@@ -24,9 +24,11 @@ that uses them, as `parser/test_crewbook_constructed.py` does):
 - The Forever parts follow the community forum notes in the ticket
   (threads 59774 and 60334, read 2026-11-23): the namespace
   `profile-forever-us`, the path `/profile/wow/character/{first}-{second}`,
-  `surname` and `ruleset` in the profile, and no realm. The shape of
-  `ruleset` (an object with `type` and `name`, or a string) is unknown; both
-  are read. The guild's address for a Forever character is unknown; a
+  `surname` and `ruleset` in the profile, and no realm. The armory's
+  `"ruleset":{"slug":…}` was seen by the M21-03 domain review on 2026-11-24
+  (`link_sites.toml`, `[rulesets]`); whether Forever's profile carries it
+  the same way is unknown, so an object with `name` and `slug`, and a
+  string, are both read. The guild's address for a Forever character is unknown; a
   one-segment `/data/wow/guild/<slug>` is used here.
 - The render-host addresses are shaped like Blizzard's
   (`https://render.worldofwarcraft.com/<region>/character/.../<id>-avatar.jpg`);
@@ -86,7 +88,7 @@ PROFILE_BODY: dict[str, Any] = {
         "name": "Affliction",
         "id": 265,
     },
-    "ruleset": {"type": "PVP", "name": "PvP"},
+    "ruleset": {"type": "PVP", "name": "PvP", "slug": "pvp"},
     "guild": {
         "key": {"href": f"{API}{GUILD_PATH}?namespace=profile-forever-us"},
         "name": "The Crew",
@@ -359,6 +361,8 @@ def test_a_fetch_asks_for_a_token_then_the_four_parts_constructed(game: bnet.Gam
     assert (c.average_item_level, c.equipped_item_level) == (31, 30)
     assert c.last_login == "2025-11-23T12:13:20+00:00"
     assert c.realm is None
+    # The slug the Raider.IO link's [rulesets] table takes (link_sites.toml).
+    assert c.ruleset_slug == "pvp"
     assert [
         (i.slot, i.slot_name, i.item_id, i.name, i.quality, i.item_level) for i in profile.equipment
     ] == [
@@ -396,6 +400,7 @@ def test_a_ruleset_given_as_a_string_is_read_too_constructed(game: bnet.Game) ->
     send = Recorded(answers(profile=reply(200, {**PROFILE_BODY, "ruleset": "PVP"})))
     profile, _ = bnet.fetch_profile(creds(), game, "us", NAME, send=send)
     assert profile.character is not None and profile.character.ruleset == "PVP"
+    assert profile.character.ruleset_slug is None
 
 
 def test_another_region_asks_its_own_host_and_locale_constructed(game: bnet.Game) -> None:

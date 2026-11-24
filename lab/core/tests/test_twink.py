@@ -16,7 +16,7 @@ from pathlib import Path
 
 import pytest
 
-from wowlab_core import gear, twink
+from wowlab_core import gear, links, twink
 
 WAGO = Path(__file__).resolve().parent / "fixtures" / "wago"
 BUILD = "1.60.1.70888"
@@ -227,15 +227,17 @@ def test_the_default_bracket(config: twink.TwinkConfig) -> None:
 
 def test_the_links(config: twink.TwinkConfig, monkeypatch: pytest.MonkeyPatch) -> None:
     assert twink.wowhead_link(6537, None, VERSION) == "https://www.wowhead.com/forever/item=6537"
-    # `?bonus=` is off until the owner's check confirms Wowhead reads it.
-    assert twink.WOWHEAD_BONUS is False
+    # `?bonus=` is off until the owner's check confirms Wowhead reads it; the
+    # switch is the shared link builder's since M21-03.
+    assert links.WOWHEAD_BONUS is False
     assert twink.wowhead_link(6537, 12720, VERSION) == "https://www.wowhead.com/forever/item=6537"
-    monkeypatch.setattr(twink, "WOWHEAD_BONUS", True)
+    monkeypatch.setattr(links, "WOWHEAD_BONUS", True)
     assert (
         twink.wowhead_link(6537, 12720, VERSION)
         == "https://www.wowhead.com/forever/item=6537?bonus=12720"
     )
-    monkeypatch.setattr(twink, "WOWHEAD_BONUS", False)
+    assert twink.wowhead_link(6537, 0, VERSION) == "https://www.wowhead.com/forever/item=6537"
+    monkeypatch.setattr(links, "WOWHEAD_BONUS", False)
     assert twink.wowhead_link(6537, None, None) is None
     assert twink.wowhead_link(6537, None, "9.9.9.1") is None
     assert twink.planner_link(config, "WARLOCK", 5, 29) == (
@@ -248,6 +250,18 @@ def test_the_links(config: twink.TwinkConfig, monkeypatch: pytest.MonkeyPatch) -
     assert link is None and why == "twink.toml has no planner word for the class DEATHKNIGHT"
     link, why = twink.planner_link(config, "WARLOCK", None, 29)
     assert link is None and why is not None and "the record has no race" in why
+
+
+def test_the_planner_origin_is_the_allowlists(config: twink.TwinkConfig) -> None:
+    """M21-03: the shipped planner origin is `link_sites.toml`'s
+    ForeverTwinking site, and one a player's twink.toml names elsewhere
+    gets no link (constructed)."""
+    assert config.planner.origin == links.origins()[twink.PLANNER_SITE]
+    moved = config.model_copy(
+        update={"planner": config.planner.model_copy(update={"origin": "https://evil.example"})}
+    )
+    link, why = twink.planner_link(moved, "WARLOCK", 5, 29)
+    assert link is None and why == "https://evil.example is not a site wowlab links to"
 
 
 def test_sources_are_not_known_yet() -> None:

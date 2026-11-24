@@ -45,6 +45,7 @@ import platformdirs
 import psutil
 import pytest
 import typer
+from _user_dirs import no_wowup_list
 from pydantic import BaseModel
 from typer.testing import CliRunner
 
@@ -320,6 +321,7 @@ class _NoClient:
 
 def sandbox(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, overlay: str) -> Path:
     """The fixture sandbox, as `_make_sandbox.sh <name> [overlay]` builds it."""
+    no_wowup_list(monkeypatch, tmp_path / "wowup")
     root = tmp_path / "World of Warcraft"
     root.mkdir()
     shutil.copy2(FIXTURES / "macos" / ".build.info", root / ".build.info")
@@ -426,6 +428,8 @@ def read_commands(root: Path, tmp_path: Path) -> list[list[str]]:
         # left out and the line says how to get them.
         ["char", "sim-export"],
         ["char", "sim-export", "--notes"],
+        # M21-03: nothing saved in the sandbox, so it says so.
+        ["char", "link", "list"],
         *[
             [*cmd, "--character", c]
             for c in chars
@@ -468,6 +472,21 @@ def read_commands(root: Path, tmp_path: Path) -> list[list[str]]:
         ["crew", "scan-log"],
         ["crew", "list", "--world"],
         ["crew", "matches", "--world", "--notes"],
+        # M22-08: the sandbox holds no QuestieDB and no item table, so both
+        # say there is nothing to search; test_cli_lookup.py runs it on a
+        # constructed QuestieDB slice and lints that text too.
+        ["lookup", "claw"],
+        ["lookup", "claw", "--notes"],
+        # M22-05: the captures hold no game id and no earlier save, so both
+        # say so; test_cli_live.py runs it on a constructed match and store.
+        ["live", "recap"],
+        ["live", "recap", "--notes"],
+        # M22-01: the sandbox (macos/ and its overlays) holds no Spy file,
+        # so list says so and show ends in its one error line;
+        # test_cli_spy.py runs both on the Spy files of macos-71037/.
+        ["spy", "list"],
+        ["spy", "list", "--notes"],
+        ["spy", "show", "Inventeda-Fakerealm"],
         ["db2", "builds"],
         ["db2", "fetch", "ChrClasses", "--build", TABLE_BUILD],
         ["db2", "head", "ChrClasses", "--build", TABLE_BUILD],
@@ -520,6 +539,9 @@ NOT_RUN = {
     ("crew", "rate"): "writes into the install",
     ("crew", "note"): "writes into the install",
     ("undo",): "writes into the install",
+    # M21-03: test_cli_char_link.py runs them and checks their text.
+    ("char", "link", "set"): "writes into wowlab's user data directory",
+    ("char", "link", "forget"): "writes into wowlab's user data directory",
     ("ui",): "runs a local server",
 }
 

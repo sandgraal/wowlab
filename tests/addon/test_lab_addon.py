@@ -668,13 +668,44 @@ def test_toc_loads_every_source_and_nothing_else() -> None:
 # --- Privacy and flavor rules --------------------------------------------------
 
 
+# M21-11 (ticket item 4): the one read of C_ChatInfo, the documented
+# IsLoggingCombat (the combat log's state and its advanced flag), allowed in
+# CombatLog.lua only and only as exactly this lookup (twice there: the state
+# and the flag; tests/addon/test_m21_11_api_fixes.py pins the count). Every
+# other use of the table (its sends among them) stays refused.
+CHAT_INFO_FILE = "CombatLog.lua"
+CHAT_INFO_READ = 'ns . Fn ( C_ChatInfo , "IsLoggingCombat" )'
+
+
+def _chat_info_reads(path: Path, tokens: list[Token]) -> set[int]:
+    """The indices of the C_ChatInfo tokens of the allowed lookup: none
+    outside CombatLog.lua, and each only where it stands in CHAT_INFO_READ,
+    with `ns` itself not a field (fix round 1: `t.ns.Fn(C_ChatInfo, ...)`
+    is some other table's function, refused)."""
+    if path.name != CHAT_INFO_FILE:
+        return set()
+    return {
+        i
+        for i, t in enumerate(tokens)
+        if t.kind == "name"
+        and t.text == "C_ChatInfo"
+        and i >= 4
+        and _render(tokens[i - 4 : i + 4]) == CHAT_INFO_READ
+        and (i == 4 or tokens[i - 5].text not in {".", ":"})
+    }
+
+
 def _forbidden_api_problems(path: Path, tokens: list[Token]) -> list[str]:
     """A kept name (a send, the Battle.net identity, a reader no ticket
     builds) as a name, a field, or inside any string, in every file: no file
-    is relaxed (M20-13)."""
+    is relaxed (M20-13), but for the one C_ChatInfo lookup of CHAT_INFO_READ
+    (M21-11)."""
     bad = []
-    for t in tokens:
+    allowed = _chat_info_reads(path, tokens)
+    for i, t in enumerate(tokens):
         if t.kind == "name" and t.text in FORBIDDEN_APIS:
+            if i in allowed:
+                continue
             bad.append(f"{_where(path, t)} {t.text}")
         elif t.kind == "string" and any(api in t.text for api in FORBIDDEN_APIS):
             bad.append(f"{_where(path, t)} {t.text!r}")
@@ -3097,7 +3128,7 @@ def test_readme_and_plan_document_why_a_value_is_missing() -> None:
 # last write came from an open, with no `chr_model_id`, and the file could not
 # say why. The addon changes only so the next capture can, as schema 2 (the
 # first format change after M11-04): `events_received` counts every event the
-# customization section registered, six count-only events (one a made-up
+# customization section registered, five count-only events (one a made-up
 # control name) are counted and never gathered on, and `chr_model_id_absent`
 # records how the model-id call went. Every value stored here is also held to
 # the stored-value rules above (test_every_stored_value_is_type_checked).
@@ -3112,9 +3143,11 @@ BARBER_COUNT_ONLY = (
     "BARBER_SHOP_CLOSE",
     "BARBER_SHOP_FORCE_CUSTOMIZATIONS_UPDATE",
     "BARBER_SHOP_COST_UPDATE",
-    "BARBER_SHOP_SUCCESS",
     "WOWLAB_CONTROL_NOT_A_REAL_EVENT",
 )
+# M21-11: no longer registered; not in the client's event list (70938), and
+# it never got an entry (70425 capture). The docs still name it.
+BARBER_DROPPED = "BARBER_SHOP_SUCCESS"
 # Made up on purpose: whether it gets an entry shows whether the client
 # refuses a name it does not know.
 CONTROL_EVENT = "WOWLAB_CONTROL_NOT_A_REAL_EVENT"
@@ -3139,15 +3172,16 @@ def _literal_list(section: str, field: str) -> tuple[str, ...]:
     return tuple(re.findall(r'"([A-Z0-9_]+)"', match.group(1)))
 
 
-def test_m11_29_customization_counts_six_more_events_and_gathers_on_two() -> None:
+def test_m11_29_customization_counts_five_more_events_and_gathers_on_two() -> None:
     """The change events are unchanged; the count-only list is a literal of
-    six event names, none of them a change event, each a name the reader
+    five event names (six until M21-11 dropped BARBER_SHOP_SUCCESS), none of them a change event, each a name the reader
     accepts and none a private event, the last a control that names no
     client event (not BARBER_SHOP_*, and the addon's own prefix). No other
     section has a count-only list."""
     section = _section_source(_customization_lua(), "customization")
     assert _literal_list(section, "events") == BARBER_CHANGE_EVENTS
     assert _literal_list(section, "count_only") == BARBER_COUNT_ONLY
+    assert BARBER_DROPPED not in _render(_tokens(_customization_lua()))
     assert not set(BARBER_COUNT_ONLY) & set(BARBER_CHANGE_EVENTS)
     assert CONTROL_EVENT.startswith("WOWLAB_") and "NOT_A_REAL_EVENT" in CONTROL_EVENT
     for name in BARBER_CHANGE_EVENTS + BARBER_COUNT_ONLY:
@@ -3310,7 +3344,7 @@ def test_m11_29_readme_and_plan_say_what_is_confirmed_and_what_stays_verify() ->
     for text in (readme, plan):
         for reason in MODEL_ABSENT:
             assert reason in text, reason
-        for name in BARBER_COUNT_ONLY:
+        for name in (*BARBER_COUNT_ONLY, BARBER_DROPPED):
             assert f"`{name}`" in text, name
         assert "`events_received`" in text
         assert "`chr_model_id_absent`" in text
@@ -6100,7 +6134,7 @@ def test_m20_13_bindings_ask_and_store_every_command_as_given() -> None:
 
 def test_m20_13_macros_walk_only_the_client_s_own_indices() -> None:
     """`macros` asks GetMacroInfo only for an index GetNumMacros counts:
-    1 to the account count, and MAX_ACCOUNT_MACROS + 1 on for this
+    1 to the account count, and the account's macro slots + 1 on for this
     character's, each run bounded by the addon's own MAX_MACROS_PER_SCOPE (an
     out-of-range index into a C API is the crash class in
     docs/DATA_SOURCES.md, 2026-09-28). The name, icon and body are cleaned
@@ -6114,14 +6148,11 @@ def test_m20_13_macros_walk_only_the_client_s_own_indices() -> None:
         'scope = "character" , first = perAccount + 1 , '
         "last = perAccount + math . min ( characterCount , MAX_MACROS_PER_SCOPE ) ,"
     ) in text
-    assert "local perAccount = ns . Number ( MAX_ACCOUNT_MACROS )" in text
-    # M20-16: the constant is nil until the macro window loads; the addon's
-    # own 120 is used then, and the record says which.
+    # M21-11: the count is Constants.MacroConsts', else the global's, else
+    # the addon's own 120 (accountMacroSlots, pinned with its stub-client
+    # model in test_m21_11_api_fixes.py); the record says which.
+    assert "local perAccount , slotsFrom = accountMacroSlots ( )" in text
     assert "local ACCOUNT_MACRO_SLOTS = 120" in text
-    assert (
-        'local slotsFrom = "MAX_ACCOUNT_MACROS" if not perAccount then '
-        'perAccount = ACCOUNT_MACRO_SLOTS slotsFrom = "fallback" end'
-    ) in text
     assert "account_slots_from = slotsFrom ," in text
     assert "is not a number" not in text
     assert "local okMacro , name , icon , body = pcall ( getInfo , index )" in text
@@ -6749,8 +6780,9 @@ def test_m13_05_get_macro_info_only_for_a_macro_index() -> None:
 def test_m13_05_spellbook_records_the_client_item_types() -> None:
     """`item_types` is Enum.SpellBookItemType as the client has it, name to
     number, so a reader names each item's `type` without assuming numbers;
-    `bindings` records the client's ACCOUNT_BINDINGS and CHARACTER_BINDINGS
-    for the same reason."""
+    `bindings` records the client's Enum.BindingSet for the same reason
+    (M21-11; until then ACCOUNT_BINDINGS and CHARACTER_BINDINGS, which no
+    file of the 71037 UI source defines)."""
     text = _render(_tokens(ACTIONS))
     assert (
         'local itemTypes = type ( Enum ) == "table" and Enum . SpellBookItemType or nil'
@@ -6758,8 +6790,9 @@ def test_m13_05_spellbook_records_the_client_item_types() -> None:
     assert "for name , value in pairs ( itemTypes ) do" in text
     assert "out [ key ] = ns . Number ( value )" in text
     assert "item_types = spellbookItemTypes ( )" in text
-    assert "record . account_bindings = ns . Number ( ACCOUNT_BINDINGS )" in text
-    assert "record . character_bindings = ns . Number ( CHARACTER_BINDINGS )" in text
+    assert "record . binding_sets = bindingSets ( )" in text
+    assert 'local sets = type ( Enum ) == "table" and Enum . BindingSet or nil' in text
+    assert "ACCOUNT_BINDINGS" not in text and "CHARACTER_BINDINGS" not in text
 
 
 def test_m13_05_readme_and_plan_document_schema_3() -> None:
@@ -9332,30 +9365,33 @@ _M20_13_KEPT: dict[str, tuple[Path, list[tuple[str, str]], Callable[[Path], list
         _m20_13_identity_problems,
         "GetNormalizedRealmName is not bound to a local of its own",
     ),
-    "secret test: UnitFullName's realm stored before the test": (
+    # M21-11: UnitFullName's second return is the second name now, under the
+    # same rule.
+    "secret test: UnitFullName's second name stored before the test": (
         IDENTITY,
         [
             (
-                '                local keptFull, whyFull = ownText(fullRealm, "the second return '
-                'of UnitFullName")\n',
-                "                local keptFull, whyFull = fullRealm, nil\n",
+                "                local keptSecond, whySecond = ownText(second, "
+                '"the second return of UnitFullName")\n',
+                "                local keptSecond, whySecond = second, nil\n",
             )
         ],
         _m20_13_identity_problems,
-        "fullRealm is used other than handed once to ownText",
+        "second is used other than handed once to ownText",
     ),
-    "secret test: UnitFullName's realm compared before the test": (
+    "secret test: UnitFullName's second name compared before the test": (
         IDENTITY,
         [
             (
-                '                local keptFull, whyFull = ownText(fullRealm, "the second return '
-                'of UnitFullName")\n',
-                '                local keptFull, whyFull = ownText(fullRealm, "the second return '
-                'of UnitFullName")\n                if fullRealm == "" then return record end\n',
+                "                local keptSecond, whySecond = ownText(second, "
+                '"the second return of UnitFullName")\n',
+                "                local keptSecond, whySecond = ownText(second, "
+                '"the second return of UnitFullName")\n'
+                '                if second == "" then return record end\n',
             )
         ],
         _m20_13_identity_problems,
-        "fullRealm is used other than handed once to ownText",
+        "second is used other than handed once to ownText",
     ),
     "secret test: the normalized realm read outside Identity.lua": (
         ADDON / "Gear.lua",
@@ -9388,31 +9424,35 @@ def test_m20_13_each_kept_rule_fails_its_own_edit() -> None:
 
 
 def test_m20_16_the_realm_comes_from_the_first_of_three_sources() -> None:
-    """GetRealmName, then GetNormalizedRealmName, then UnitFullName's second
-    return, each asked only while no realm was kept, each source named in
-    `realm_from`; the last two mark the realm normalized. With none,
-    `realm_absent` joins the three reasons."""
+    """GetRealmName, then GetNormalizedRealmName, each asked only while no
+    realm was kept, each source named in `realm_from`; the second marks the
+    realm normalized. Then (M21-11) UnitFullName's second return, asked only
+    while no realm was kept, is the second name, never the realm. With
+    none, `realm_absent` joins the three reasons."""
     text = _render(_tokens(IDENTITY))
     order = [
         text.index("local realm = GetRealmName ( )"),
         text.index("if not record . realm then if type ( GetNormalizedRealmName ) ~="),
         text.index("local normalized = GetNormalizedRealmName ( )"),
         text.index("if not record . realm then if type ( UnitFullName ) ~="),
-        text.index('local fullRealm = select ( 2 , UnitFullName ( "player" ) )'),
+        text.index('local second = select ( 2 , UnitFullName ( "player" ) )'),
         text.index("if not record . realm then record . realm_absent ="),
     ]
     assert order == sorted(order)
     for kept, source, normalized in (
         ("keptRealm", "realm_name", ""),
         ("keptNormalized", "normalized_realm_name", " record . realm_normalized = true"),
-        ("keptFull", "full_name", " record . realm_normalized = true"),
     ):
         assert (
             f"if {kept} then record . realm = ns . String ( {kept} ) "
             f'record . realm_from = "{source}"{normalized} else'
         ) in text, source
-    assert text.count("record . realm_from =") == 3
-    assert text.count("record . realm =") == 3
+    assert (
+        "if keptSecond then record . second_name = ns . String ( keptSecond ) "
+        'record . second_name_from = "full_name" '
+    ) in text
+    assert text.count("record . realm_from =") == 2
+    assert text.count("record . realm =") == 2
 
 
 def test_m20_16_a_record_without_a_realm_is_gathered_again() -> None:

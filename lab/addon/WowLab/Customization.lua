@@ -32,7 +32,9 @@
 -- - count_only events [verify]: counted only, never recorded on, and no
 --   event argument is read. BARBER_SHOP_RESULT, BARBER_SHOP_CLOSE,
 --   BARBER_SHOP_FORCE_CUSTOMIZATIONS_UPDATE and BARBER_SHOP_COST_UPDATE are
---   Retail names; BARBER_SHOP_SUCCESS is the pre-9.0 name.
+--   Retail names. BARBER_SHOP_SUCCESS, the pre-9.0 name, was counted until
+--   M21-11; it is not in the client's event list (70938) and never got an
+--   entry (70425 capture), so it is no longer registered.
 --   WOWLAB_CONTROL_NOT_A_REAL_EVENT is made up on purpose: whether it gets an
 --   entry shows whether this client refuses a name it does not know.
 -- - chr_model_id_absent: which outcome the GetViewingChrModel call had when
@@ -85,7 +87,6 @@ ns.Section({
         "BARBER_SHOP_CLOSE",
         "BARBER_SHOP_FORCE_CUSTOMIZATIONS_UPDATE",
         "BARBER_SHOP_COST_UPDATE",
-        "BARBER_SHOP_SUCCESS",
         "WOWLAB_CONTROL_NOT_A_REAL_EVENT",
     },
     immediate = true,

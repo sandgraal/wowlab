@@ -38,7 +38,10 @@ ROWS: tuple[str, ...] = (
     "version: your installed one, or the one you give with `--build`. `wowlab names "
     "fetch` downloads the tables that name races, classes, specs and professions the same "
     "way, for each version you have installed, and only the ones not already downloaded. "
-    "`wowlab char model` downloads the tables it needs for your installed version, once.",
+    "`wowlab char model` downloads the tables it needs for your installed version, once. "
+    "`wowlab lookup --fetch` downloads the item and zone tables (ItemSparse and AreaTable) "
+    "for your installed version, only the ones not already downloaded; without `--fetch`, "
+    "`wowlab lookup` makes no network request.",
     "`wowlab blizzard fetch`, and the Blizzard profile panel's Fetch button, ask Blizzard's "
     "own API for one character's public profile, gear, guild and portrait address, only when "
     "you run it or press it, and only with the API client you created at develop.battle.net "

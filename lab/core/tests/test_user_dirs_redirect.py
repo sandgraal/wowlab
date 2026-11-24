@@ -13,6 +13,7 @@ fixture that forgets to. Windows CI is the end-to-end proof.
 from __future__ import annotations
 
 import importlib.util
+import ntpath
 import os
 from pathlib import Path
 
@@ -41,18 +42,55 @@ def _root_conftest() -> object:
     return module
 
 
+RUNNER_FOLDERS = {"CSIDL_LOCAL_APPDATA": RUNNER_LOCAL, "CSIDL_APPDATA": RUNNER_ROAMING}
+
+
+def _override_variable(csidl_name: str) -> str:
+    """platformdirs' documented override variable for a `CSIDL_*` folder."""
+    return "WIN_PD_OVERRIDE_" + csidl_name.removeprefix("CSIDL_")
+
+
+def _runner_win_folder(csidl_name: str) -> str:
+    """`platformdirs.windows.get_win_folder` as it answers on a Windows
+    runner (constructed): the override variable when it holds a fully
+    qualified path, otherwise the system's known folder, whatever `APPDATA`
+    or `LOCALAPPDATA` say. A drive path is fully qualified, and so, here, is
+    a POSIX `tmp_path`."""
+    override = os.environ.get(_override_variable(csidl_name), "").strip()
+    if override and (ntpath.isabs(override) or Path(override).is_absolute()):
+        return override
+    return RUNNER_FOLDERS[csidl_name]
+
+
 @pytest.fixture
 def windows_platformdirs(monkeypatch: pytest.MonkeyPatch) -> None:
     """platformdirs as it behaves on a Windows runner (constructed).
 
-    The system's known-folder lookup (`_resolve_win_folder`, platformdirs
-    4.x) answers the runner's real folders whatever the environment says,
-    and a POSIX `tmp_path` counts as a fully qualified override path.
+    Only public names are replaced: the module-level `get_win_folder`, which
+    every `Windows` directory property calls, and `PlatformDirs`. The
+    private resolver behind `get_win_folder` changes between platformdirs
+    releases (`_resolve_win_folder` went in 4.14.8, #697);
+    `test_the_stand_in_matches_platformdirs_override_constructed` holds the
+    stand-in to the real function's override rule.
     """
-    real = {"CSIDL_LOCAL_APPDATA": RUNNER_LOCAL, "CSIDL_APPDATA": RUNNER_ROAMING}
-    monkeypatch.setattr(platformdirs.windows, "_resolve_win_folder", real.__getitem__)
-    monkeypatch.setattr(platformdirs.windows, "_is_fully_qualified", os.path.isabs)
+    monkeypatch.setattr(platformdirs.windows, "get_win_folder", _runner_win_folder)
     monkeypatch.setattr(platformdirs, "PlatformDirs", platformdirs.windows.Windows)
+
+
+def test_the_stand_in_matches_platformdirs_override_constructed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The real `get_win_folder` honours the override variable the stand-in
+    reads, named as `WINDOWS_OVERRIDES` names it, ahead of the plain
+    variable. A drive path is fully qualified on every platform."""
+    assert {_override_variable(c) for c in RUNNER_FOLDERS} == set(WINDOWS_OVERRIDES.values())
+    for csidl_name in RUNNER_FOLDERS:
+        override = "C:\\Stand-in\\" + csidl_name
+        plain = csidl_name.removeprefix("CSIDL_").replace("_", "")
+        monkeypatch.setenv(plain, "C:\\Plain\\" + csidl_name)
+        monkeypatch.setenv(_override_variable(csidl_name), f"  {override} ")
+        assert platformdirs.windows.get_win_folder(csidl_name) == override
+        assert _runner_win_folder(csidl_name) == override
 
 
 def test_the_stand_in_sets_both_windows_overrides_constructed(

@@ -14,10 +14,11 @@
 <div class="bar">
 <h1 class="brand"><svg class="mark" viewBox="0 0 24 24" width="26" height="26" aria-hidden="true" focusable="false"><path d="M12 2l3 7 7 3-7 3-3 7-3-7-7-3 7-3z"/></svg>wowlab</h1>
 <div class="sections" role="tablist" aria-label="Sections">
-<button id="sec-characters" class="sec" type="button" role="tab" aria-selected="true" aria-controls="account-view character-view crew-view">Characters</button>
+<button id="sec-characters" class="sec" type="button" role="tab" aria-selected="true" aria-controls="account-view character-view crew-view lookup-view">Characters</button>
 <button id="sec-backups" class="sec" type="button" role="tab" aria-selected="false" aria-controls="backups-view">Backups</button>
 <button id="sec-addons" class="sec" type="button" role="tab" aria-selected="false" aria-controls="addons-view">Addons</button>
 <button id="sec-keybinds" class="sec" type="button" role="tab" aria-selected="false" aria-controls="character-view">Keybinds</button>
+<button id="sec-live" class="sec" type="button" role="tab" aria-selected="false" aria-controls="live-view">Live</button>
 <button id="sec-advanced" class="sec" type="button" role="tab" aria-selected="false" aria-controls="explorer-view gaps-view commands-view looks-view">Advanced</button>
 </div>
 <div class="game"><span class="game-dot" aria-hidden="true"></span><span id="game-name" class="game-name" hidden></span><label id="run-flavor-box" class="run-flavor" hidden><span class="unseen">Game version</span><select id="run-flavor"></select></label></div>
@@ -28,6 +29,7 @@
 <button id="tab-account" class="tab" type="button" role="tab" aria-selected="true" aria-controls="account-view">All characters</button>
 <button id="tab-character" class="tab" type="button" role="tab" aria-selected="false" aria-controls="character-view">Character</button>
 <button id="tab-crew" class="tab" type="button" role="tab" aria-selected="false" aria-controls="crew-view">Crew</button>
+<button id="tab-lookup" class="tab" type="button" role="tab" aria-selected="false" aria-controls="lookup-view">Look up</button>
 </nav>
 <nav id="advanced-tabs" class="tabs" role="tablist" aria-label="Advanced" hidden>
 <button id="tab-explorer" class="tab" type="button" role="tab" aria-selected="false" aria-controls="explorer-view">Explorer</button>
@@ -107,6 +109,25 @@
 <ul id="char-sim-left" class="sim-left" hidden></ul>
 <p id="char-sim-note" class="sim-note"></p>
 </div>
+<div id="char-saved" class="char-saved" hidden>
+<p class="char-saved-links"><span class="saved-title">Your links:</span>
+<span id="char-saved-ft-profile-box" class="saved-link" hidden><a id="char-saved-ft-profile" class="dressing-link" target="_blank" rel="noopener noreferrer" hidden>ForeverTwinking</a><span id="char-saved-ft-profile-text" class="saved-text"></span> <button id="char-saved-ft-profile-forget" class="link-button" type="button">Forget</button></span>
+<span id="char-saved-ft-build-box" class="saved-link" hidden><a id="char-saved-ft-build" class="dressing-link" target="_blank" rel="noopener noreferrer" hidden>ForeverTwinking build</a><span id="char-saved-ft-build-text" class="saved-text"></span> <button id="char-saved-ft-build-forget" class="link-button" type="button">Forget</button></span>
+<span id="char-saved-wcl-report-box" class="saved-link" hidden><a id="char-saved-wcl-report" class="dressing-link" target="_blank" rel="noopener noreferrer" hidden>Warcraft Logs report</a><span id="char-saved-wcl-report-text" class="saved-text"></span> <button id="char-saved-wcl-report-forget" class="link-button" type="button">Forget</button></span>
+<span id="char-saved-none" class="saved-none">none saved</span>
+</p>
+<details class="char-saved-add"><summary>Add a link</summary>
+<label>Address <input id="char-saved-address" type="text" autocomplete="off" spellcheck="false"></label>
+<button id="char-saved-plan" type="button">Show the plan</button>
+<p class="saved-hint">Paste a ForeverTwinking character page or build, or a Warcraft Logs report, from your browser's address bar. wowlab keeps it in its own data folder for this character's folder and shows it here as a link; it opens in your browser only when you click it. If the character folder is renamed, the address is no longer shown here; <code>wowlab char link list</code> lists it as kept for a folder that is gone.</p>
+</details>
+<p id="char-saved-status" class="saved-status"></p>
+<div id="char-saved-confirm-box" class="confirm-box" hidden>
+<pre id="char-saved-plan-lines" class="plan-lines" hidden></pre>
+<p id="char-saved-confirm-note"></p>
+<button id="char-saved-confirm" type="button" hidden>Confirm</button>
+</div>
+</div>
 </section>
 <div class="char-grid">
 <section id="char-gear-panel" class="panel char-panel" aria-labelledby="char-gear-title">
@@ -181,7 +202,7 @@
 </section>
 </div>
 <details class="about"><summary>About this data</summary>
-<p class="intro">One character as the lab-addon last saved it: the file it wrote at logout or <code>/reload</code>, never the session in progress, beside the key bindings and macros the client last wrote, and its earlier saves that your backups hold. Read only: this page runs <code>wowlab char list</code>, <code>wowlab char gear</code>, <code>wowlab char binds</code>, <code>wowlab char macros</code> and <code>wowlab char history</code>, or, for a character kept only in a backup, <code>wowlab char kept</code>, and, when you click <strong>Copy for WoWSims</strong>, <code>wowlab char sim-export</code>, and, when you ask the Twink panel, <code>wowlab char twink</code>, and nothing else; the professions are the ones <code>wowlab char list --summary</code> read for All characters. An item's name is its link's own text, and nothing is fetched, except that the Twink panel's first run for a game version downloads that version's item tables from wago.tools once. <strong>See it dressed</strong> opens an outside dressing room in your own browser, and only when you click it; this page makes no request to it. <strong>Copy for WoWSims</strong> shows the character as the text WoWSims' Addon Import reads, to copy and paste there yourself; wowlab sends nothing to WoWSims. The Twink panel's links open Wowhead and ForeverTwinking the same way as See it dressed.</p>
+<p class="intro">One character as the lab-addon last saved it: the file it wrote at logout or <code>/reload</code>, never the session in progress, beside the key bindings and macros the client last wrote, and its earlier saves that your backups hold. This page reads with <code>wowlab char list</code>, <code>wowlab char gear</code>, <code>wowlab char binds</code>, <code>wowlab char macros</code> and <code>wowlab char history</code>, or, for a character kept only in a backup, <code>wowlab char kept</code>, and, when you click <strong>Copy for WoWSims</strong>, <code>wowlab char sim-export</code>, and, when you ask the Twink panel, <code>wowlab char twink</code>. The one change it makes is to <strong>Your links</strong>: adding or forgetting one runs <code>wowlab char link set</code> or <code>wowlab char link forget</code>, which show their plan first and, on Confirm, write only wowlab's own <code>links.json</code> in its data folder, never the game folder. Nothing else runs. The professions are the ones <code>wowlab char list --summary</code> read for All characters. An item's name is its link's own text, and nothing is fetched, except that the Twink panel's first run for a game version downloads that version's item tables from wago.tools once. <strong>See it dressed</strong> opens an outside dressing room in your own browser, and only when you click it; this page makes no request to it. <strong>Copy for WoWSims</strong> shows the character as the text WoWSims' Addon Import reads, to copy and paste there yourself; wowlab sends nothing to WoWSims. The Twink panel's links and Your links open Wowhead, ForeverTwinking and Warcraft Logs the same way as See it dressed.</p>
 <div id="char-about" class="char-about">
 <div id="char-sources"></div>
 <div id="char-dressing" class="char-dressing" hidden>
@@ -258,11 +279,55 @@
 </div>
 <pre id="crew-act-said" class="plan-lines" hidden></pre>
 </section>
+<section id="spy-panel" class="panel crew-player" aria-labelledby="spy-title">
+<h3 id="spy-title" tabindex="-1">Seen by Spy</h3>
+<p class="crew-words">The players the Spy addon saw, with the character that saw them, as of your last logout or /reload. Spy's files are only read.</p>
+<div class="toolbar">
+<label>Find <input id="spy-search" type="search" placeholder="part of a name or guild" autocomplete="off" spellcheck="false"></label>
+<label>Show <select id="spy-filter"></select></label>
+<label>Order <select id="spy-sort"></select></label>
+<button id="spy-show" type="button">Show what Spy saw</button>
+</div>
+<p id="spy-status" role="status"></p>
+<ul id="spy-warnings" class="crew-unread" hidden></ul>
+<div id="spy-table" class="hub-table" role="region" aria-label="Seen by Spy" tabindex="0" hidden></div>
+<section id="spy-player" class="crew-player" aria-labelledby="spy-player-title" hidden>
+<h4 id="spy-player-title" tabindex="-1"></h4>
+<ul id="spy-player-lines" class="crew-lines"></ul>
+</section>
+</section>
 <details class="about"><summary>About this data</summary>
-<p class="intro">The crew book is the lab-addon's list of the players you grouped with, read with <code>wowlab crew list</code>; picking a player shows what <code>wowlab crew show</code> prints, and the match history is what <code>wowlab crew matches</code> prints. Names, guilds, notes, instance and map names are other people's text and are shown exactly as text, never as a link. Changing a rating or a note, or forgetting a player, runs <code>wowlab crew rate</code>, <code>wowlab crew note</code> or <code>wowlab crew forget</code>: each shows its plan first and changes nothing until you press Confirm; the game must be closed, a snapshot is taken first, and <code>wowlab undo</code> puts back what was there. Confirm runs only the plan shown: if the crew book's files changed after the plan, it is refused and nothing is written. For a player only wowlab's crew database keeps (the game's list dropped them), a rating or note changes that database alone: the plan says so, it cannot be undone, and Confirm is refused if their rating or note there changed after the plan.</p>
+<p class="intro">The crew book is the lab-addon's list of the players you grouped with, read with <code>wowlab crew list</code>; picking a player shows what <code>wowlab crew show</code> prints, and the match history is what <code>wowlab crew matches</code> prints. Seen by Spy reads the Spy addon's saved files with <code>wowlab spy list</code>, and picking a player there shows what <code>wowlab spy show</code> prints; nothing in Spy's files is changed. Names, guilds, notes, instance and map names are other people's text and are shown exactly as text, never as a link. Changing a rating or a note, or forgetting a player, runs <code>wowlab crew rate</code>, <code>wowlab crew note</code> or <code>wowlab crew forget</code>: each shows its plan first and changes nothing until you press Confirm; the game must be closed, a snapshot is taken first, and <code>wowlab undo</code> puts back what was there. Confirm runs only the plan shown: if the crew book's files changed after the plan, it is refused and nothing is written. For a player only wowlab's crew database keeps (the game's list dropped them), a rating or note changes that database alone: the plan says so, it cannot be undone, and Confirm is refused if their rating or note there changed after the plan.</p>
 <div id="crew-about" class="crew-about">
 <p id="crew-keeps"></p>
 <ul id="crew-notes" class="crew-notes"></ul>
+<h3>Seen by Spy</h3>
+<ul id="spy-notes" class="crew-notes"></ul>
+</div>
+</details>
+</section>
+<section id="lookup-view" role="tabpanel" aria-labelledby="tab-lookup" hidden>
+<div class="chars-head">
+<h2 class="page-title">Look up</h2>
+<span class="chars-when">where an item drops or which quest gives it, who sells it, where an NPC or quest is</span>
+</div>
+<div id="lookup-tools" class="toolbar panel" role="search">
+<label>Find <input id="lookup-query" type="search" placeholder="an item, NPC, quest or object, or an id" autocomplete="off" spellcheck="false"></label>
+<label>Kind <select id="lookup-kind"></select></label>
+<button id="lookup-go" type="button">Look up</button>
+</div>
+<div id="lookup-offer" class="names-offer" hidden>
+<p class="names-say"><strong>Zone and item names need a one-time download.</strong> Until then, zones show as numbers.</p>
+<button id="lookup-fetch" type="button">Download zone and item names</button>
+<p class="names-note">Downloads the game's public item and zone tables from wago.tools, sending your game version.</p>
+</div>
+<p id="lookup-status" role="status"></p>
+<p id="lookup-caveat" class="crew-words" hidden></p>
+<div id="lookup-hits" class="lookup-hits"></div>
+<details class="about"><summary>About this data</summary>
+<p class="intro">Where things are, who sells them and what drops them come from QuestieDB, the addon installed for this game version, read with <code>wowlab lookup</code> as data, never run; it says what Questie's authors recorded, which the game itself may not match. Drop chances are shown only where QuestieDB's drop tables have one; those cover the items quests ask for. Spots are map coordinates, across then down. Item levels come from QuestieDB first, then from the game's item table; zone names from the game's zone table, once it is downloaded. The notes below are the ones <code>wowlab lookup --notes</code> prints.</p>
+<div id="lookup-about" class="lookup-about">
+<ul id="lookup-left-out" class="crew-lines" aria-label="Notes" hidden></ul>
 </div>
 </details>
 </section>
@@ -285,8 +350,32 @@
 <ul id="patch-day-lines" class="patch-day-lines"></ul>
 <p id="patch-day-status" role="status"></p>
 </div>
+<div id="sources" class="panel sources" role="region" aria-labelledby="sources-heading">
+<h3 id="sources-heading">Where they came from</h3>
+<ul id="sources-lines" class="sources-lines"></ul>
+<p id="sources-status" role="status"></p>
+</div>
 <details class="about"><summary>About this data</summary>
-<p class="patch-day-intro">Addons the game may skip, and saved data no installed addon declares, as wowlab reads them from your files. Reads only. Pick a line to see its file in the Explorer.</p>
+<p class="patch-day-intro">Addons the game may skip, and saved data no installed addon declares, as wowlab reads them from your files. Reads only. Pick a line to see its file in the Explorer. Where they came from is what the WowUp app recorded when it installed each addon into this game folder, read with <code>wowlab addons list</code>: the site, the version, an update WowUp knew of when it last checked, and whether its record still matches the folders here. WowUp keeps one list for every game folder it manages; a record of another game folder is never counted as this folder's. WowUp's own files are read, never changed, and nothing is fetched. An addon not in WowUp's list was installed by hand or by an app wowlab does not read.</p>
+</details>
+</section>
+<section id="live-view" role="tabpanel" aria-labelledby="sec-live" hidden>
+<div class="chars-head">
+<h2 class="page-title">Live</h2>
+<span class="chars-when">refreshes by itself while this view is open</span>
+</div>
+<p id="live-watch" class="crew-words" role="status"></p>
+<div id="live-match" class="panel crew-player" role="region" aria-labelledby="live-match-title">
+<h3 id="live-match-title">Latest match</h3>
+<ul id="live-match-lines" class="crew-lines"></ul>
+</div>
+<div id="live-session" class="panel crew-player" role="region" aria-labelledby="live-session-title">
+<h3 id="live-session-title">Your last save, against an earlier one your backups hold</h3>
+<ul id="live-session-lines" class="crew-lines"></ul>
+</div>
+<p id="live-status" role="status"></p>
+<details class="about"><summary>About this data</summary>
+<p class="intro">This view is meant for a second screen while you play. Every few seconds it asks wowlab whether your game folder changed: the times of your saved addon data, which the game writes only at <code>/reload</code> and logout, and the newest combat log, which the game writes as you play, a little at a time. When either changed, it reads again with <code>wowlab live recap</code>. The latest match is read from the combat log: who you fought, your killing blows and deaths, and the result when the log or the crew book has it. The crew book, like all addon data, is saved only at <code>/reload</code> or logout, so a battleground's result and scoreboard appear after that. A match shows its fights only when the combat log was on during it. The lab-addon turns the log off in instances: to log a battleground, wait for WowLab's chat line that says the combat log is off, then type <code>/combatlog</code>, and the game answers that combat is being logged (<code>/combatlog</code> switches the log, so typing it while the log is on turns it off). Your last save, against an earlier one your backups hold, compares the newest save of the character you played last with the save before it that your backups hold: level, gear and currencies from the lab-addon, new items from Syndicator when you use it (everything it lists counts: bags, bank, mail, auctions and what you wear), and the players you met. Take a backup after you play to compare the next session with it. Reads only; nothing leaves this computer.</p>
 </details>
 </section>
 <section id="explorer-view" role="tabpanel" aria-labelledby="tab-explorer" hidden>

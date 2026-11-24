@@ -4268,6 +4268,8 @@ Read, read-only, the WowUp app's `addons.json` under its user-data folder (on ma
 
 **Acceptance:** a real capture of `addons.json` (scrubbed by the capture tool; no secrets live in it) with a provenance row; tests for a missing file, a stale record and a folder no one claims. Reviewed by `code-reviewer` and `domain-reviewer`. User-facing: yes.
 
+*Amendment 2026-11-24 (conductor, from the code review):* `scripts/lab_capture.py` reads install trees only, so the `addons.json` fixture was made by hand: a byte copy of the owner's file with its six `?link=` values blanked to `REDACTED`, nothing else changed, the source sha256 in the provenance row. It is accepted as a one-off. The next file from outside an install (CurseForge's records, a Windows WowUp list) goes through the capture tool's single-file mode (M22-25). CurseForge moved to M22-25. Records join only to the installation WowUp's `preferences.json` names for them (domain review).
+
 ---
 
 ## [ ] M22-17 — "Open in WoWSims" without pasting
@@ -4342,8 +4344,19 @@ Turn off the Windows workflows (`windows.yml` nightly, `windows-app.yml`) and th
 
 ---
 
+## [ ] M22-25 — CurseForge app records, and a single-file mode for the capture tool
+**Size:** M · **Depends on:** M22-16 · **Sources:** owner request 2026-11-23 ("add curseforge app records too"); M22-16's code review (fixture route)
+
+1. **Capture tool, single-file mode.** Give `scripts/lab_capture.py` a mode for one file from outside an install, such as an addon manager's records. It runs the same identifier detectors with the same refusal on a leftover, does byte-level targeted replacements only (never parse and re-serialize), and owns the blanking of per-user link tokens like WowUp's `?link=`. Its provenance row says it came from outside an install. Graded like the rest of `lab_capture` (`security-reviewer`).
+2. **CurseForge's records.** Find where the CurseForge app keeps its installed-addon records on macOS (under `~/Library/Application Support/CurseForge` [verify]; on Windows its AppData folder [verify]). Read them read-only, with the same open rules as M22-16's reader (no follow, non-blocking, regular files only, size cap), and never a token, cookie or login file. Join each record to the installed `Interface/AddOns` folders of the installation the app names, as M22-16 does for WowUp. Each addon then shows its source, version and update mark, and a folder claimed by both managers says so. The format is unknown: record it in `docs/LAB_FORMATS.md` from a real capture made through step 1, with a provenance row. If the app keeps no readable per-install record, stop and report.
+3. The Addons view in the UI shows CurseForge beside WowUp, and `wowlab addons list --json` carries it.
+
+**Acceptance:** a real capture through the single-file mode; tests for a missing app folder, a stale record, a folder both managers claim and a hostile path (FIFO, symlink, oversized file); an owner `@live` test. Reviewed by `code-reviewer`, `domain-reviewer` and `security-reviewer`. User-facing: yes.
+
+---
+
 ## [ ] M22-14 — Wave review
-**Size:** S · **Depends on:** M22-01 to M22-13, M22-15 to M22-24, M22-O1
+**Size:** S · **Depends on:** M22-01 to M22-13, M22-15 to M22-25, M22-O1
 
 `docs/handoffs/M22-review.md`; dispatch stops until the owner's next pick.
 

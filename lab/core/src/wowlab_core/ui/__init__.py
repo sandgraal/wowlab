@@ -1,7 +1,7 @@
 """ui: the `wowlab ui` server, a local UI over the CLI (ADR-0029, §15.6, M13-24).
 
 One `http.server.ThreadingHTTPServer`, bound to `127.0.0.1` on a port the
-OS picks, serving one page shell and three JSON endpoints for as long as
+OS picks, serving one page shell and four JSON endpoints for as long as
 `wowlab ui` runs. It runs CLI commands as subprocesses of the same `wowlab`,
 with `--json`, and writes nothing itself: no file, no log line.
 
@@ -93,6 +93,19 @@ frame `document.baseURI` is the page's URL, which neither script the frame
 may run (`lookspage._SCRIPT`, `page.js`) reads, as `test_ui_looks.py`
 checks; since M16-42 that URL is `/`, the query taken out before the frame
 exists, and the URL `wowlab ui` opens never holds the session key.
+
+The Live view (M22-05). `GET /api/live` answers one poll of a watcher
+(`live.Watcher`) that this server holds in memory: the newest modification
+time of the SavedVariables of the install wowlab finds by itself (as the CLI
+finds it with no `--root`), and the newest combat log's name, size and the
+zone and arena lines added since the last poll (at most
+`live.WATCH_TAIL_BYTES` read). Its query holds the token and at most one
+`flavor`, which must be the exact name of one of that install's flavor
+folders (400 `bad_request` for anything else), so no request names a file.
+It is read in this process, never through a run, opens the install
+read-only and writes nothing; its cost is in the body (`cost_us`). The page
+asks it every `live.POLL_SECONDS` while the Live view is shown, and runs
+`live recap` through `/api/run` only when the answer changed.
 
 The confirm step (ADR-0029 "Writes", §16.1, M14-02, M14-03). A leaf that
 declares `--yes` is never run with `--yes` from a form: its `yes` (and
@@ -1251,8 +1264,17 @@ _KILLED_STORE_NOTE = (
 )
 # The leaves of the step whose confirmed run writes only the store (§16.1:
 # `snap gc` removes unreferenced objects, `doctor --yes` takes a first
-# snapshot). Any other leaf of the step gets `_KILLED_NOTE`.
-_STORE_ONLY: frozenset[tuple[str, ...]] = frozenset({("snap", "gc"), _DOCTOR})
+# snapshot), and those that write only wowlab's own list of saved links
+# (`char link set` and `forget`, M21-03; `_KILLED_LINKS_NOTE`). Any other
+# leaf of the step gets `_KILLED_NOTE`.
+_LINKS_ONLY: frozenset[tuple[str, ...]] = frozenset(
+    {("char", "link", "set"), ("char", "link", "forget")}
+)
+_STORE_ONLY: frozenset[tuple[str, ...]] = frozenset({("snap", "gc"), _DOCTOR}) | _LINKS_ONLY
+_KILLED_LINKS_NOTE = (
+    "It was stopped before it finished. It changes only wowlab's own list of your links, "
+    "never your game files, and that file is replaced whole or not at all: run it again."
+)
 
 
 def _confirmed_note(leaf: _Leaf, run: _Run) -> str | None:
@@ -1262,6 +1284,8 @@ def _confirmed_note(leaf: _Leaf, run: _Run) -> str | None:
     (`snap gc` and `doctor` make no record, and a refusal is shown as the
     CLI printed it)."""
     if run.timed_out or run.truncated:
+        if leaf.path in _LINKS_ONLY:
+            return _KILLED_LINKS_NOTE
         return _KILLED_STORE_NOTE if leaf.path in _STORE_ONLY else _KILLED_NOTE
     report = run.report()
     record = report.get("transaction") if report is not None else None
@@ -1409,16 +1433,32 @@ def _positive_bytes(value: object) -> int:
     return value
 
 
+def _link_origins() -> dict[str, str]:
+    """The outside origins the page may link to, by site key (M21-03): the
+    shipped `link_sites.toml`'s `[sites]`, never the player's files. The
+    page draws an outside link only when its address is https: and its
+    origin is exactly the one listed for the site it names. A file that
+    cannot be used gives none, so the page draws no outside link at all."""
+    from wowlab_core import links
+
+    try:
+        return links.origins()
+    except links.LinkSitesError:
+        return {}
+
+
 def _commands_body(leaves: Mapping[tuple[str, ...], _Leaf]) -> bytes:
     """The `/api/commands` body. The home folder is data from the machine,
     like a file name: escaped as a run's output is. `<`, `>` and `&` occur
-    only inside JSON strings, so translating the whole document is safe."""
+    only inside JSON strings, so translating the whole document is safe.
+    `link_origins` is the page's allowlist of outside origins (M21-03)."""
     return (
         json.dumps(
             {
                 "commands": [_describe(leaf) for leaf in leaves.values()],
                 "home": _home(),
                 "sep": os.sep,
+                "link_origins": _link_origins(),
             },
             ensure_ascii=True,
         )
@@ -1491,6 +1531,10 @@ class UiServer(http.server.ThreadingHTTPServer):
         self._confirms: collections.OrderedDict[str, tuple[tuple[str, ...], tuple[str, ...]]]
         self._confirms = collections.OrderedDict()
         self._confirms_lock = threading.Lock()
+        # The Live view's watcher (M22-05): what it learned of the newest
+        # combat log, in memory only.
+        self._watcher: Any = None
+        self._watcher_lock = threading.Lock()
         super().__init__((_LOOPBACK, 0), _Handler)
         self.port = int(self.server_address[1])
         self.url = f"http://{_LOOPBACK}:{self.port}/?boot={self.boot}"
@@ -1539,6 +1583,42 @@ class UiServer(http.server.ThreadingHTTPServer):
         with self._idle:
             while self._runs and time.monotonic() < deadline:
                 self._idle.wait(_POLL_S)
+
+    def live_body(self, flavor: str | None) -> bytes:
+        """The `/api/live` body: one poll of the Live view's watcher
+        (`live.Watcher`) on the install wowlab finds by itself, as the CLI
+        finds it with no `--root`. `flavor` names one of its flavor folders
+        exactly, never a path; with none named, the only one, or with
+        several the one whose SavedVariables were written last. Reads only;
+        an install not found answers `found: false` with the sentence the
+        page shows."""
+        from wowlab_core import install, live
+        from wowlab_core.errors import WowlabError
+
+        with self._watcher_lock:
+            if self._watcher is None:
+                self._watcher = live.Watcher()
+            watcher: live.Watcher = self._watcher
+        payload: dict[str, object] = {"found": False, "poll_seconds": live.POLL_SECONDS}
+        try:
+            inst = install.discover()
+        except (WowlabError, OSError):
+            payload["words"] = _LIVE_NO_INSTALL
+            return _live_json(payload)
+        flavors = list(inst.flavors)
+        if flavor is not None:
+            flavors = [f for f in flavors if f.folder == flavor]
+            if not flavors:
+                raise _RefusedError(400, "bad_request")
+        if not flavors:
+            payload["words"] = _LIVE_NO_INSTALL
+            return _live_json(payload)
+        chosen = flavors[0]
+        if len(flavors) > 1:
+            chosen = max(flavors, key=lambda f: live.saved_watch(f.path).newest_ns or 0)
+        watch = watcher.poll(chosen.path, chosen.folder)
+        payload.update(found=True, watch=watch.model_dump(mode="json"))
+        return _live_json(payload)
 
     def booted_shell(self) -> bytes:
         """The shell served for the boot key: the page shell with the session
@@ -1719,6 +1799,20 @@ class UiServer(http.server.ThreadingHTTPServer):
 _DIGITS = re.compile(r"[0-9]+")
 # The one route that reads a file: the page `looks page` wrote (M14-04).
 _LOOKS_PAGE = "/api/looks-page"
+# The Live view's poll (M22-05): file times and the newest combat log's
+# zone lines, read in this process; no request names a file.
+_LIVE = "/api/live"
+_LIVE_NO_INSTALL = (
+    "wowlab found no game folder to watch. Set WOWLAB_WOW_ROOT to it and start wowlab ui again."
+)
+
+
+def _live_json(payload: Mapping[str, object]) -> bytes:
+    """A Live body: escaped as `/api/commands` is, since a zone's name and a
+    file's name are data from the machine."""
+    return json.dumps(payload, ensure_ascii=True).translate(_JSON_EXTRA_ESCAPES).encode("ascii")
+
+
 # What `GET /` answers, as plain text, when it carries no session: the player
 # reads a sentence, not JSON. It holds no key.
 _NO_SESSION = (
@@ -1873,6 +1967,8 @@ class _Handler(http.server.BaseHTTPRequestHandler):
             self._reply(200, self.server.commands_body, "application/json")
         elif path == _LOOKS_PAGE:
             self._looks_page()
+        elif path == _LIVE:
+            self._live()
         elif path == "/api/run":
             self._error(405, "method_not_allowed")
         else:
@@ -1893,6 +1989,30 @@ class _Handler(http.server.BaseHTTPRequestHandler):
             return
         self._reply(200, body, "application/json; charset=utf-8")
 
+    def _live(self) -> None:
+        """`GET /api/live`: the token and at most one `flavor`, a flavor
+        folder's name, in the query, and nothing else."""
+        query = self.path.partition("?")[2].partition("#")[0]
+        try:
+            pairs = urllib.parse.parse_qsl(query, keep_blank_values=True, max_num_fields=4)
+        except ValueError:
+            self._error(400, "bad_request")
+            return
+        names = [name for name, _ in pairs]
+        flavors = [value for name, value in pairs if name == "flavor"]
+        if not set(names) <= {"token", "flavor"} or len(flavors) > 1:
+            self._error(400, "bad_request")
+            return
+        try:
+            body = self.server.live_body(flavors[0] if flavors and flavors[0] else None)
+        except _RefusedError as refused:
+            self._error(refused.status, refused.code)
+            return
+        except OSError:
+            self._error(500, "watch_failed")
+            return
+        self._reply(200, body, "application/json; charset=utf-8")
+
     def do_HEAD(self) -> None:
         self.do_GET()
 
@@ -1905,7 +2025,7 @@ class _Handler(http.server.BaseHTTPRequestHandler):
         if path is None:
             return
         if path != "/api/run":
-            if path in static_files() or path in (_LOOKS_PAGE, _ICON):
+            if path in static_files() or path in (_LOOKS_PAGE, _ICON, _LIVE):
                 self._error(405, "method_not_allowed")
             else:
                 self._error(404, "not_found")

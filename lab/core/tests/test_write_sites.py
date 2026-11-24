@@ -70,6 +70,12 @@ _LOOKS_DIR = (
     "looks/ folder, which save() refuses before and after creating it when it or any "
     "folder above it holds .build.info or .flavor.info"
 )
+_LINKSTORE = "lab/core/src/wowlab_core/linkstore.py"
+_LINKS_FILE = (
+    "saved links (M21-03): only links.json in the user data directory (or the path a test "
+    "gives), whose folder write() refuses, before and after creating it, when it or any "
+    "folder above it holds .build.info or .flavor.info"
+)
 _LOOKSPAGE = "lab/core/src/wowlab_core/lookspage.py"
 _PAGE_FILE = (
     "the looks page (§13.2, ADR-0027, M11-07): only at the file `wowlab looks page` "
@@ -276,6 +282,14 @@ ALLOWED: dict[tuple[str, str], str] = {
     ): _PAGE_FILE + "; the page's folder and its missing parents, which for --out may be "
     "anywhere the player names outside an install (M16-78: 0700 under the user data "
     "directory, the default mode elsewhere)",
+    (_LINKSTORE, "from wowlab_core.snapshot import make_private_dirs"): _LINKS_FILE
+    + "; imports the folder maker for that file's folder only",
+    (_LINKSTORE, "make_private_dirs(folder)"): _LINKS_FILE
+    + "; the file's folder and its missing parents (0700 under the user data directory)",
+    (_LINKSTORE, 'with temporary.open("xb") as out:'): _LINKS_FILE
+    + "; a new temp name beside the file (x mode)",
+    (_LINKSTORE, "temporary.replace(path)"): _LINKS_FILE + "; the temp file onto it, whole",
+    (_LINKSTORE, "temporary.unlink(missing_ok=True)"): _LINKS_FILE + "; its own temp file",
     (_LOOKSTORE, 'with tmp.open("xb") as handle:'): _LOOKS_DIR + "; a new temp name (x mode)",
     (_LOOKSTORE, "tmp.replace(final)"): _LOOKS_DIR + "; the temp file onto <name>.json",
     (_LOOKSTORE, "tmp.unlink(missing_ok=True)"): _LOOKS_DIR + "; its own temp file",

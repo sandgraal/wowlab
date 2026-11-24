@@ -153,8 +153,14 @@ def test_six_is_the_number_the_ui_offers() -> None:
 
     leaves = ui._read_tree(typer.main.get_command(cli.app))
     confirmable = {path for path, leaf in leaves.items() if leaf.confirm is not None}
-    # The two that change only wowlab's own store.
-    assert confirmable - SIX == {("snap", "gc"), ("doctor",)}
+    # The two that change only wowlab's own store, and (M21-03) the two that
+    # change only wowlab's own list of saved links.
+    assert confirmable - SIX == {
+        ("snap", "gc"),
+        ("doctor",),
+        ("char", "link", "set"),
+        ("char", "link", "forget"),
+    }
     assert confirmable >= SIX
 
 

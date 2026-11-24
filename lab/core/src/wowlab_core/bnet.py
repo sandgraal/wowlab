@@ -579,7 +579,10 @@ class PartState(_Model):
 
 class BnetCharacter(_Model):
     """The profile's summary, each field None when the answer lacks it.
-    `ruleset` is the realm type Blizzard names (Forever: [verify])."""
+    `ruleset` is the realm type's name as Blizzard gives it, and
+    `ruleset_slug` its `slug` (`normal`, `pvp`, `roleplay`, `roleplay-pvp`:
+    the keys the Raider.IO link's `[rulesets]` table takes; whether a Forever
+    profile carries it is [verify])."""
 
     name: str | None = None
     surname: str | None = None
@@ -590,6 +593,7 @@ class BnetCharacter(_Model):
     faction: str | None = None
     gender: str | None = None
     ruleset: str | None = None
+    ruleset_slug: str | None = None
     realm: str | None = None
     guild: str | None = None
     average_item_level: int | None = None
@@ -690,6 +694,14 @@ def _when(value: object) -> str | None:
         return None
 
 
+def _slug_of(value: object) -> str | None:
+    """An object's `slug` when it is a short lowercase slug, else None."""
+    slug = value.get("slug") if isinstance(value, Mapping) else None
+    if isinstance(slug, str) and re.fullmatch(r"[a-z0-9][a-z0-9-]{0,31}", slug):
+        return slug
+    return None
+
+
 def _character(body: Mapping[str, Any]) -> BnetCharacter:
     return BnetCharacter(
         name=_text(body.get("name")),
@@ -701,6 +713,7 @@ def _character(body: Mapping[str, Any]) -> BnetCharacter:
         faction=_text(body.get("faction")),
         gender=_text(body.get("gender")),
         ruleset=_text(body.get("ruleset")),
+        ruleset_slug=_slug_of(body.get("ruleset")),
         realm=_text(body.get("realm")),
         guild=_text(body.get("guild")),
         average_item_level=_int(body.get("average_item_level")),

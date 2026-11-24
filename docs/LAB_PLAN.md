@@ -2598,17 +2598,24 @@ sandbox gets a local page as well as the CLI. L1–L8 apply to every ticket.
   had said 309 listed and "1 command of those listed not a plain upper-case
   name", so the binding list holds at least one command that is not a plain
   name, with no key bound through it. Fixed in M20-16:
-  - `MAX_ACCOUNT_MACROS` is defined by the macro window's Lua, which loads
-    on demand, so it is nil until the player opens that window. The
-    `macros` section no longer depends on it: without it the character
-    macros are asked from index 121 (120 account slots, the community
-    value, **[verify]** on this client), and `account_slots_from` records
-    `"MAX_ACCOUNT_MACROS"` or `"fallback"`. The macro window is never
-    loaded to get the constant.
+  - `MAX_ACCOUNT_MACROS` was nil. The `macros` section no longer depends
+    on it: without it the character macros are asked from index 121 (120
+    account slots, **[verify]** on this client), and `account_slots_from`
+    records `"MAX_ACCOUNT_MACROS"` or `"fallback"`. *Corrected 2026-11-23
+    (M21-09, M21-11):* this bullet said the global is defined by the macro
+    window's Lua and is nil until that window is opened. It is not: no
+    file of the 71037 UI source assigns a global `MAX_ACCOUNT_MACROS`;
+    Blizzard_MacroUI reads `Constants.MacroConsts.MAX_ACCOUNT_MACROS`,
+    which is 120 in the API list at 70938, so 120 is Blizzard's own value,
+    not a community one. Since M21-11 the addon reads that table first
+    (`account_slots_from = "MacroConsts"`), then the global, then its own
+    120; `char show` no longer gives the window as the reason.
   - `identity.realm` is the first non-empty, non-secret answer of
     `GetRealmName()`, `GetNormalizedRealmName()` and the second return of
     `UnitFullName("player")`, each tested with `issecretvalue`; `realm_from`
     names it and `realm_normalized = true` marks the form without spaces.
+    (Since M21-11 the third is kept as the second name, never as the realm:
+    see the M21-11 note below.)
     A record with no realm keeps the section due for another gather, so a
     realm found later (at logout at the latest) replaces the absent one.
   - `bindings.commands_not_plain` counts the listed commands, keyed or not,
@@ -2659,7 +2666,8 @@ sandbox gets a local page as well as the CLI. L1–L8 apply to every ticket.
     does not run after `PLAYER_LOGOUT`.
   - The crew book's home realm (the realm part of a same-realm player's
     key) is `GetNormalizedRealmName()`, else the second return of
-    `UnitFullName("player")`, each tested with `issecretvalue`, with every
+    `UnitFullName("player")` (dropped in M21-11: see the note below), each
+    tested with `issecretvalue`, with every
     space and hyphen removed from whichever answered (the client's
     normalization as believed, not yet confirmed **[verify]**), so a key is
     the same whichever source answered. It is read when a key needs it and
@@ -2674,6 +2682,62 @@ sandbox gets a local page as well as the CLI. L1–L8 apply to every ticket.
     the pass at logout gathered; its no-time note is printed only for a
     record without a time of its own, and `char list` no longer says the
     addon records no time.
+
+  *Addon fixes from the launch-build API list (2026-11-23, M21-11; schema
+  5, no bump: a file without the new keys reads as before).* From the
+  M21-09 findings (`lab/addon/README.md`, "The [verify] notes against the
+  launch-build list and the field guide") and the owner's in-game check of
+  2026-11-23. Every new read is **[verify]** until a capture shows it ran.
+  - `macros`: the account's macro slots come from
+    `Constants.MacroConsts.MAX_ACCOUNT_MACROS` first, then the global
+    `MAX_ACCOUNT_MACROS`, then the addon's own 120, each taken only as a
+    whole number of at least 1; `account_slots_from` is `"MacroConsts"`,
+    `"MAX_ACCOUNT_MACROS"` or `"fallback"`.
+  - The crew book's scoreboard probe takes `GetBattlefieldScore`'s first
+    and sixth values as the name and the side only when the first is not
+    nil (tested with `type`, never compared): at 71037 the 12.0.1
+    deprecation wrapper answers a row `C_PvP.GetScoreInfo` does not have
+    with a nil name and side 0, so a `first_side` of 0 with no name was not
+    evidence of a side.
+  - `bindings` no longer asks for `ACCOUNT_BINDINGS` and
+    `CHARACTER_BINDINGS`, which no file of the 71037 UI source defines and
+    which were never numbers; it records `binding_sets`, the client's
+    `Enum.BindingSet`, member name to number (Default 0, Account 1,
+    Character 2, Current 3 in the list at 70938), and `char show` names
+    `binding_set` by it ("2 (the character's own bindings)").
+  - `combatlog` reads the log's state with the documented
+    `C_ChatInfo.IsLoggingCombat` (its first return) before
+    `LoggingCombat()`, and Advanced Combat Logging from its second return
+    before the `advancedCombatLogging` setting; `state_from`
+    (`"IsLoggingCombat"` or `"LoggingCombat"`) and `advanced_from`
+    (`"IsLoggingCombat"` or `"setting"`) name the source. `LoggingCombat`
+    still does the switching. This is the one name of `C_ChatInfo` the
+    addon reads; the table's sends stay refused (`tests/addon`).
+  - `customization` no longer registers `BARBER_SHOP_SUCCESS`, which is
+    not in the client's event list and never got an entry (70425 capture).
+  - On Forever the slot other clients use for the realm in a unit's full
+    name holds the character's second name (the owner's
+    `UnitName("target")` gave `"Tay", "Soulrend"`; `GetPlayerInfoByGUID`
+    gave the name `"Tay Soulrend"` and an empty realm), and both realm
+    calls gave nothing on the owner's runs on 71037. So `identity` asks the
+    second return of `UnitFullName("player")` only when neither realm call
+    gives a realm, and keeps it as `second_name` with `second_name_from =
+    "full_name"`, never as the realm (`realm_from = "full_name"` is no
+    longer written; a file an earlier addon wrote keeps it, and `char show`
+    says that value is probably the second name). The record then has no
+    realm, so the section stays due for another gather and the logout pass
+    asks the realm calls once more, as M20-16 does for any record without
+    a realm. The crew book's home realm is `GetNormalizedRealmName()` only:
+    a player the game names without a realm is skipped when it gives none,
+    rather than keyed with the owner's second name, and counted (the book's
+    `no_second`, one per read since the book was started, so reads, not
+    players; a match record's `rows_unkeyed` for scoreboard rows, the
+    player's own row left out), and `/wowlab crew` says how many reads only
+    when there were some (fix round 1).
+    The desk no longer takes an older record's `realm_from = "full_name"`
+    value as the home realm for `crew scan-log`. **[verify]** with the
+    owner's `/dump UnitFullName("player")` and `/dump
+    GetNormalizedRealmName()` (M22-O1).
 
   The reader reads schema 1 to 4 files as before and refuses a schema it
   does not know. The desk uses the stored text: `char show` prints the
@@ -4529,7 +4593,11 @@ The text header always prints Level, Class, Race and Spec lines. A cached name i
 A fourth tab, **Character**, beside Explorer, Gaps and Commands, drawn
 from the three models and `char list`. Read-only: it runs only read
 commands, through the same `/api/run` as the explorer's previews, and it
-offers no edit control in M14. All rendering uses `textContent`; macro
+offers no edit control in M14. *(Amended 2026-11-24, M21-03: one
+exception, the **Your links** row. Its field and its Forget buttons run
+`char link set` and `char link forget` through the confirm step; on
+Confirm they write only wowlab's own `links.json` in the user data
+directory, never the game folder, and the tab's intro says so.)* All rendering uses `textContent`; macro
 bodies and item names are player text and are never interpreted as markup.
 
 - **M14-08, the character and its gear.** A character picker from `char
@@ -4580,7 +4648,7 @@ bodies and item names are player text and are never interpreted as markup.
 
 *Amended 2026-11-23 (M21-08, Copy for WoWSims):* `wowlab char sim-export [--out NAME]` writes one character as the JSON WoWSims' (wowsims/forever, MIT) individual sim reads in its Addon Import: `class`, `flavor`, `race`, `level`, `talents` (the sim's positional talent string) and `gear.items` (one `{id, enchant, random_suffix}` per sim slot, in the sim's slot order, `null` for an empty one). It prints the text alone on stdout; `--out` writes it to a plain file name in `<user data>/sim-exports/` (the only file the command writes; `wowlab ui` refuses `--out`). The format was read by hand from the pinned commit named in `simexport`'s docstring and is data in the shipped `wowsims_format.toml`; nothing is fetched at run time. The talent string needs the trait entry → TraitDefinition map, which is the game table `TraitNodeEntry` read from the cache only (`wowlab db2 fetch TraitNodeEntry`); without it the talents are left out and the command says how to get it. On Forever a random suffix is a bonus id, not the link's suffix field (GLOSSARY, "Random suffix"); the sim numbers its suffixes by that bonus list, and the ids it knows ship in the TOML (`[suffixes]`, from its `db.json`): the one bonus id in that set is `random_suffix`. When the record's build has no cached table, the install's is used and the note says so (`record_build` beside `talents_table_build` in `--json`). Of each item link, the item, enchant, suffix, gem and bonus fields are read; what of them the export cannot carry is listed (`left_out`), with the shirt and tabard (no sim slot), gems (the sim's `ItemSpec` has none at the pinned commit), a link suffix field, a bonus id that is not one of the sim's suffixes, and a talent not in the sim's trees. The other link fields (link level, specialization, item context, modifiers) are neither exported nor listed. One note, the same in the text output, `--json` and the page, says where to paste, that the import refuses another class, that WoWSims warns of an out-of-date addon (no `version`) and imports anyway, and, below level 60, that the sim warns and simulates a level 60 character (read from the sim's source at the pinned commit). The Character tab's **Copy for WoWSims** button runs it on a click and shows the text with a Copy button and that note; the page links nowhere and the CSP is unchanged. Whether WoWSims imports the recorded export is **[verify]** until the owner's check (M21-O2).
 
-*Amended 2026-11-23 (M22-06, the Twink panel):* `wowlab char twink [--bracket N] [--weights NAME] [--top N]` and the Character tab's **Twink** panel show, for one character and one battleground level bracket, each equipment slot (the shirt and tabard left out) with its worn item, the best items the character could wear there at the bracket's top level, and the gap between the two scores. The brackets (19, 29, 39, 49, 59), each class's armour and weapon types, the stat names, the weight sets (warlock first, affliction its first set; a set is named for a talent build, since Forever's client reports one spec per class), the planner's words and the filters are the shipped `twink.toml`, which a `twink.toml` in the user config folder overrides value by value (a weight set as a whole). The default bracket is the first at or above the record's level. Candidates are items of `Item` with an `ItemSparse` row, of a type the class can use, admitted by the item's class and race masks, with a required level at or below the bracket's top level, uncommon to epic, not a test or retired item by name, not needing standing with a faction the character's race starts at Hated with (`Faction`), and not an item with no required level (0 or 1) more than `no_level_margin` (5) item levels above the bracket (mostly quest rewards, whose quest's level is the real gate; M22-08 gives the quest). An armour type a class learns later (`armor_from`: mail for hunters and shamans and plate for warriors and paladins at 40, **[verify]**) is left out below that level, judged at the bracket's top level; a one-handed weapon also fills the off hand from a class's `dual_wield_from` (rogues 10, warriors and hunters 20, **[verify]**), and an off-hand weapon fills nothing for a class that does not dual wield. A candidate with `Bonding` 1 is marked "binds when picked up". The notes count each kind left out, name where the player's own `twink.toml` goes, and say that items only the other side's quests or vendors give are not yet left out and that a crafted bind-on-pickup item needs its profession (both wait for M22-08's sources). Stat amounts are each stat's budget share (`StatPercentEditor`) of `RandPropPoints` at the item's level, quality and slot type, rounded half away from zero, plus a caster weapon's spell power (`Flags_4`), WoWSims' Forever sim's rules, **[verify]** against tooltips. A random suffix is a bonus list of the item's bonus tree (GLOSSARY, "Random suffix"); an item is scored with each, the best shown and the others listed. A worn item is scored the same way, with the link's bonus id that is a suffix list; one without an `ItemSparse` row (11231 of 19079 at 70888, among them most of the owner's random-suffix items) is listed as not scored: the server sends these items as hotfixes, which wago.tools' copy lacks; wowlab will read them from the client's hotfix cache (M22-23; GLOSSARY, "Hotfix cache"). Each item has a Wowhead address (the room of `dressing_sites.toml`, `/item=<id>`; `?bonus=<suffix>` only once `twink.WOWHEAD_BONUS` is turned on after the owner's check, M21-O2, and M21-03's link builder takes these links over), and the bracket has a planner address, `https://forevertwinking.com/planner?class=<class>&race=<race>&bracket=l<cap>` (the owner's history; the class and race words **[verify]**). Where an item comes from is M22-08's index; until then `twink.item_sources` knows none and the panel says "not known yet". The eight game tables are those of the installed client's version, downloaded once through `gamedata` (ADR-0022); nothing else is fetched. On the page the panel runs `char twink` only on **Show the gaps** or a change of either picker; the planner link and one Wowhead link (for the candidate the reader opens) are static links of `page.html`, given an address only when it parses, is https: and has exactly its origin (`PLANNER_ORIGIN`, `DRESSING_ORIGIN`), through the page's one URL sink; the CSP is unchanged. A kept character has no Twink panel. Set bonuses, weapon damage and armour are not scored.
+*Amended 2026-11-23 (M22-06, the Twink panel):* `wowlab char twink [--bracket N] [--weights NAME] [--top N]` and the Character tab's **Twink** panel show, for one character and one battleground level bracket, each equipment slot (the shirt and tabard left out) with its worn item, the best items the character could wear there at the bracket's top level, and the gap between the two scores. The brackets (19, 29, 39, 49, 59), each class's armour and weapon types, the stat names, the weight sets (warlock first, affliction its first set; a set is named for a talent build, since Forever's client reports one spec per class), the planner's words and the filters are the shipped `twink.toml`, which a `twink.toml` in the user config folder overrides value by value (a weight set as a whole). The default bracket is the first at or above the record's level. Candidates are items of `Item` with an `ItemSparse` row, of a type the class can use, admitted by the item's class and race masks, with a required level at or below the bracket's top level, uncommon to epic, not a test or retired item by name, not needing standing with a faction the character's race starts at Hated with (`Faction`), and not an item with no required level (0 or 1) more than `no_level_margin` (5) item levels above the bracket (mostly quest rewards, whose quest's level is the real gate; M22-08 gives the quest). An armour type a class learns later (`armor_from`: mail for hunters and shamans and plate for warriors and paladins at 40, **[verify]**) is left out below that level, judged at the bracket's top level; a one-handed weapon also fills the off hand from a class's `dual_wield_from` (rogues 10, warriors and hunters 20, **[verify]**), and an off-hand weapon fills nothing for a class that does not dual wield. A candidate with `Bonding` 1 is marked "binds when picked up". The notes count each kind left out, name where the player's own `twink.toml` goes, and say that items only the other side's quests or vendors give are not yet left out and that a crafted bind-on-pickup item needs its profession (both wait for M22-08's sources). Stat amounts are each stat's budget share (`StatPercentEditor`) of `RandPropPoints` at the item's level, quality and slot type, rounded half away from zero, plus a caster weapon's spell power (`Flags_4`), WoWSims' Forever sim's rules, **[verify]** against tooltips. A random suffix is a bonus list of the item's bonus tree (GLOSSARY, "Random suffix"); an item is scored with each, the best shown and the others listed. A worn item is scored the same way, with the link's bonus id that is a suffix list; one without an `ItemSparse` row (11231 of 19079 at 70888, among them most of the owner's random-suffix items) is listed as not scored: the server sends these items as hotfixes, which wago.tools' copy lacks; wowlab will read them from the client's hotfix cache (M22-23; GLOSSARY, "Hotfix cache"). Each item has a Wowhead address (the room of `dressing_sites.toml`, `/item=<id>`; `?bonus=<suffix>` only once `links.WOWHEAD_BONUS` is turned on after the owner's check, M21-O2; since M21-03 the address is built by `links.wowhead_item`), and the bracket has a planner address, `https://forevertwinking.com/planner?class=<class>&race=<race>&bracket=l<cap>` (the owner's history; the class and race words **[verify]**). Where an item comes from is M22-08's index; until then `twink.item_sources` knows none and the panel says "not known yet". The eight game tables are those of the installed client's version, downloaded once through `gamedata` (ADR-0022); nothing else is fetched. On the page the panel runs `char twink` only on **Show the gaps** or a change of either picker; the planner link and one Wowhead link (for the candidate the reader opens) are static links of `page.html`, given an address only when it parses, is https: and has exactly the origin of its site (since M21-03: the `link_origins` allowlist the server sends from `link_sites.toml`, `forevertwinking` and `wowhead`), through the page's one URL sink; a planner origin in the player's own `twink.toml` that is not `link_sites.toml`'s ForeverTwinking gets no link ("<origin> is not a site wowlab links to"); the CSP is unchanged. A kept character has no Twink panel. Set bonuses, weapon damage and armour are not scored.
 
 ### 16.4 What is known, and what is [verify]
 
@@ -7421,6 +7489,75 @@ Crew tab button now reads "Read the combat logs not read before"; a run
 stopped at the page's 120 s limit says that what was read is kept and that
 pressing the button again reads on (each part of a read is kept as it is
 read), and the UI's refusal of a path says that only the Logs folder is read.
+
+*As built (2026-11-23, M22-05): the Live view and `live recap`.* `wowlab
+ui` gains a **Live** section. The page asks the server every
+`live.POLL_SECONDS` (3) while it is shown and the browser tab is not
+hidden; the server answers `GET /api/live` in its own process
+(`live.Watcher`, held in memory, writing nothing): the newest modification
+time of the `.lua` files in every account's and character's
+`SavedVariables/` of the install wowlab finds by itself (at most 4,000
+stat'ed, links not followed, never opened), and the newest combat log's
+name and size with the zone and arena lines added since the last poll (at
+most 4 MiB read; other lines are passed over by their event name). Its
+query holds the token and at most one `flavor`, the exact name of one of
+that install's flavor folders. When the save time, the log, its count of
+zone lines or of arena end lines changes, the page runs `live recap --json`
+through `/api/run`. **The match recap** is the latest stay, in the newest 3
+logs (256 MiB at most), in a place the open-world rule does not take
+(`worldpvp.in_open_world`, now the one place that rule lives), that shows
+an arena line, is on a map a match was kept on (wowlab's crew database or
+the book), or holds a fight with a player. Who you fought is `worldpvp`'s
+fight rule counted inside that place (`scan_entries(place=)`); killing
+blows are `PARTY_KILL` lines by you or a unit flagged yours on a player;
+deaths are `UNIT_DIED` lines of your GUID; both are unknown when the stay
+holds nothing but zone and header lines (the log was off). A zone line
+right after a `COMBAT_LOG_VERSION` header naming the same place is the log
+switched on again inside the stay (a switch-on appends a header and zone
+lines to the same file, confirmed on the owner's install), not a new stay,
+when the header came at most 10 minutes after the line before it (a longer
+silence is another visit). It is over when a later zone line, the arena's
+end line or a newer log follows. It is shown ending at its last line in the
+log; the line that ended it (the next zone line, or the newer log's first
+line, perhaps the next day) is only an upper bound, printed as "over by ...
+at the latest" when the log was off there. The result is the arena's end
+line against the team on its start line, else the crew book's match on
+that map nearest the match's last line (nearest the upper bound when the
+log was off), from 120 s before its start to 900 s after the upper bound;
+the book is saved only at `/reload` or logout, and the view says so. **The
+session recap** compares the newest save of the character's `WowLab.lua`
+with the one before it (`charhistory`: level, gear, currencies), the items
+Syndicator lists for the character (every table under its entry with an
+`itemID`, `itemCount` or 1) against the copy in the snapshot holding that
+earlier save. Syndicator keys a character `Name-Realm`; on the owner's
+launch install `First Second-<realmNormalized>` (`Sandgraal Rizzen-RPPvP`,
+2026-11-23), while the committed beta capture keys `First Second` with an
+empty realm. The entry is the one whose key is the folder name, `First
+Second` or `Name-Realm` (under a realm-name folder); else whose details'
+name and realm join to one of those; else, only when one entry alone has
+it, whose key before its last `-` or details' name is one of them,
+the book's matches since then, and the open-world encounters of the logs
+written since (256 MiB at most). Measured: a poll of the owner's install
+(83 SavedVariables files, a 1.2 MB log) took 25 ms the first time and
+3.4 ms after; a constructed flavor with 402 files and a 4.8 MB log, on the
+external test volume, 84 ms and 19 ms (Apple silicon, 2026-11-23). **The
+lab-addon switches the log off in an instance** (M20-19), so a battleground
+shows its fights only when the player logs it: `/combatlog` is a toggle,
+so the advice is to type it after WowLab's chat line says the log is off,
+and the game then answers that combat is being logged. That advice changes
+when M22-15 lets the addon log battlegrounds itself. Which places are the
+open world stays `worldpvp.in_open_world`'s (difficulty 0 is not enough:
+Shadowfang Keep logs 0; M22-22 decides it by the Map table). Not yet
+confirmed: the lines that end a battleground, the arena lines' fields,
+Syndicator's layout beyond these two installs, whether an expired auction
+returned by mail counts twice, whether Feign Death logs `UNIT_DIED`.
+
+*M21-11 (2026-11-23).* The switch reads the log's state with the documented
+`C_ChatInfo.IsLoggingCombat` (first return) before `LoggingCombat()`, and
+Advanced Combat Logging from its second return before the
+`advancedCombatLogging` setting; the record's `state_from` and
+`advanced_from` name the source. `LoggingCombat(on)` still switches. Both
+reads are **[verify]** until a capture shows which answered.
 
 *As built (2026-11-23, M22-03): the record against each opponent; owner
 ruling of the same day: two marks, kept apart.* `wowlab_core.nemesis`,
