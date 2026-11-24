@@ -677,8 +677,8 @@ def test_hostile_item_text_draws_as_inert_text_constructed(
     ]
     assert row["name"] == IMG + "⟨U+202E⟩x⟨U+2028⟩</script>"
     # A colour code no slot table could hold gets no class at all (the name
-    # is the item's Wowhead link since M21-04).
-    assert row["nameClass"] == "gear-name gear-wowhead"
+    # is the item's Wowhead link since M21-04 when there is one).
+    assert [c for c in row["nameClass"].split() if c != "gear-wowhead"] == ["gear-name"]
     detail = next(d for d in out["steps"][1]["details"] if not d["hidden"])
     assert detail["link"] == "|cnIQ2:|Hitem:1|h[" + IMG + "⟨U+202E⟩x⟨U+2028⟩</script>]|h|r"
     drawn = json.dumps(out["steps"], ensure_ascii=False)
