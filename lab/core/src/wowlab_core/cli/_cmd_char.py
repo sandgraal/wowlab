@@ -1867,7 +1867,8 @@ def char_binds(
     bindings-cache.wtf and the keys the lab-addon recorded, each key
     with the action slot its command presses (the main bar at page 1, the page
     shown with no form, stance or stealth active) and what the record says
-    that slot holds, where the files and the record
+    that slot holds, the game's own name for any other command (or that it
+    is an addon's), where the files and the record
     disagree, and the filled slots no key reaches. Without --character, the
     character whose WowLab.lua was written last. Reads only.
 

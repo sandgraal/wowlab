@@ -43,6 +43,16 @@ subtext; a macro, item, flyout or equipment set is given by id only (a macro
 slot never carries the macro's name or body, and an equipment-set slot keeps
 no id, the set's id being its name **[verify]**). Without a usable action-bar record, the slot a command presses is
 still given, and what it holds is "cannot place".
+
+Naming a command (M22-18). Each row also carries the game's own English
+name for its command and the command's category (`command_label`), from
+the shipped list of the client's key-binding commands (`clientlists`), and
+whether the game's own interface defines the command at all
+(`client_command`). A command that presses no followed slot is described
+by that name; one the list does not have is an addon's key binding, said
+with the build the list was read at. Which binding file the game loads
+for Forever is the list's reading (Forever's own, by its game type), not
+an observation of the client.
 """
 
 from __future__ import annotations
@@ -53,7 +63,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict
 
-from wowlab_core import labaddon, wtfconfig
+from wowlab_core import clientlists, labaddon, wtfconfig
 
 __all__ = [
     "BAR_PAGES",
@@ -69,6 +79,7 @@ __all__ = [
     "KeyRow",
     "Source",
     "UnreachedSlot",
+    "command_label",
     "command_slot",
     "dropped",
     "held",
@@ -192,7 +203,31 @@ def _command_words(command: str) -> str:
         return f"stance bar button {match.group(1)} (not followed) [verify]"
     if match := _PAGE.fullmatch(command):
         return f"shows main-bar page {match.group(1)}"
-    return "a binding command, not an action slot"
+    found = clientlists.binding_command(command)
+    if found is None:
+        return (
+            "an addon's key binding: the game's own interface has no such command "
+            f"(at {clientlists.lists().ui_build})"
+        )
+    label = command_label(command)
+    if label is not None:
+        return label
+    under = f" (under {found.category_label})" if found.category_label else ""
+    return f"a binding of the game's own interface{under}, not an action slot"
+
+
+def command_label(command: str) -> str | None:
+    """The game's own English name for a key-binding command, with its
+    category in brackets (`clientlists`), or None when the game's
+    interface has no such command or no name for it."""
+    found = clientlists.binding_command(command)
+    if found is None:
+        return None
+    if found.label is None:
+        return None
+    if found.category_label is None or found.label.startswith(found.category_label):
+        return found.label  # "Action Bar 2 Button 1", not "... (Action Bar 2)"
+    return f"{found.label} ({found.category_label})"
 
 
 def slot_page_note(slot: int) -> str:
@@ -310,6 +345,12 @@ class KeyRow(_Model):
     agreement: Agreement | None
     disagrees: bool  # agreement is "file only" or "record only"; not "not in a file"
     note: str | None
+    # M22-18: the game's own English name for the command and its category
+    # (`command_label`), None when it has none; and whether the command is
+    # one of the game's own interface (`clientlists`; False: an addon's),
+    # None for NONE, which clears a key.
+    command_label: str | None = None
+    client_command: bool | None = None
 
 
 class UnreachedSlot(_Model):
@@ -560,6 +601,12 @@ def join(
                 agreement=agreement,
                 disagrees=agreement in ("file only", "record only"),
                 note=note,
+                command_label=command_label(command),
+                client_command=(
+                    None
+                    if command == _CLEARED
+                    else clientlists.binding_command(command) is not None
+                ),
             )
         )
     rows.sort(key=lambda r: (r.slot is None, r.slot or 0, r.command, r.key))

@@ -2280,7 +2280,7 @@
     return objects(report.keys).filter((row) => {
       if (onlyDisagreeing && row.disagrees !== true) return false;
       if (!needle) return true;
-      const hay = [row.key, row.command, row.does, ...texts(row.sources)]
+      const hay = [row.key, row.command, row.command_label, row.does, ...texts(row.sources)]
         .filter((s) => typeof s === "string")
         .join("\n")
         .toLowerCase();
@@ -2337,6 +2337,11 @@
     key.className = "key-key";
     const command = make("td", visible(String(row.command)));
     command.className = "key-command";
+    // The game's own name for the command (M22-18), from the report; a
+    // command the game's interface does not have (an addon's) is marked by
+    // its class, and its `does` says so in the report's words.
+    if (typeof row.command_label === "string") command.appendChild(make("small", visible(row.command_label)));
+    if (row.client_command === false) tr.classList.add("key-not-client");
     const slot = make("td", typeof row.slot === "number" ? String(row.slot) : "-");
     slot.className = "key-slot";
     if (typeof row.page_note === "string") slot.title = visible(row.page_note);
@@ -2448,15 +2453,29 @@
       plural(m.bytes, "byte", "bytes");
     if (m.complete === false) facts += " (the file ends before this macro's END)";
     card.appendChild(charLine(facts, "macro-facts"));
-    // The body, one element a line, as text.
+    // The body, one element a line, as text. A line a finding is about is
+    // marked, with the finding's words as its tooltip (M22-18): body line k
+    // is line `m.line + 1 + k` of the file.
     const lines = texts(m.body_lines);
+    const flagged = new Map();
+    for (const f of objects(m.findings)) {
+      if (typeof f.line !== "number" || typeof m.line !== "number") continue;
+      const at = f.line - m.line - 1;
+      if (at < 0) continue;
+      const said = visible(String(f.detail));
+      flagged.set(at, flagged.has(at) ? flagged.get(at) + "\n" + said : said);
+    }
     const body = make("div");
     body.className = "macro-body";
-    for (const text of lines) {
+    lines.forEach((text, at) => {
       const one = make("code", visible(text));
       one.className = "macro-line";
+      if (flagged.has(at)) {
+        one.classList.add("macro-line-finding");
+        one.title = flagged.get(at);
+      }
       body.appendChild(one);
-    }
+    });
     if (!lines.length) body.appendChild(charLine("no body lines", "char-none"));
     card.append(body, placementBox(m.placement, keysIncomplete));
     const found = objects(m.findings);

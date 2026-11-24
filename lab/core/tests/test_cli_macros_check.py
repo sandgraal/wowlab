@@ -27,7 +27,7 @@ import platformdirs
 import pytest
 from typer.testing import CliRunner
 
-from wowlab_core import cli, install, labaddon, macrocheck
+from wowlab_core import cli, install, labaddon, macrocheck, wtfconfig
 
 FIXTURES = Path(__file__).resolve().parent / "fixtures"
 CAPTURE = FIXTURES / "macos"
@@ -318,6 +318,46 @@ def test_showtooltip_rule_constructed(flavor: Path) -> None:
     assert "#show (the same rule assumed, [verify])" in show.detail
     second = next(f for f in rep.findings if f.macro.id == _id(2))
     assert second.line == 7 and second.detail == "#showtooltip is on body line 2, not the first"
+
+
+def test_unknown_command_rule_constructed(flavor: Path) -> None:
+    """M22-18: a `/command` the game's own interface does not have, in any
+    client language, is a finding; a known one in any case, an emote, a
+    chat channel's number and a `#` line are not."""
+    _put_macros(
+        flavor,
+        _macro(1, "Mac addon", "/cast Corruption", "/labaddoncmd show"),
+        _macro(2, "Mac known", "/CAST Corruption", "/dance", "/1 lab", "/run x=1", "#lab note"),
+        _macro(3, "Mac typo", "#showtooltip", "/castt [mod:shift] Fear"),
+        _macro(4, "Mac localized", "/wirken Fear", "/заклинание Fear"),  # German, Russian /cast
+    )
+    rep = report("--character", CHARACTER)
+    assert _ids(rep, "unknown-command") == [_id(1), _id(3)]
+    addon = next(f for f in rep.findings if f.rule == "unknown-command")
+    assert addon.line == 3  # the file's third line: macro 1's second body line
+    assert addon.detail == (
+        "body line 2: '/labaddoncmd' is not a slash command of the game's own interface (in any "
+        "client language, at 1.60.1.71037): it may be an addon's command, which works only "
+        "while that addon is loaded, or a typo"
+    )
+    text = ok("macros", "check", "--character", CHARACTER).stdout
+    assert "'/castt' is not a slash command of the game's own interface" in text
+
+
+def test_the_real_macros_have_no_unknown_command() -> None:
+    """The 70888 capture's 29 character macros (`/cast`, `/use`, `/kneel`,
+    `/dance`, `#showtooltip`, HonorBound's `#` lines): no finding of the rule."""
+    path = (
+        FIXTURES / "macos-70888/forever/WTF/Account/LABACCOUNTA/1/Sandgraal-Rizzen/macros-cache.txt"
+    )
+    doc = wtfconfig.read_macros(path)
+    assert len(doc.macros) == 29
+    sources = [
+        macrocheck.SourceMacro(scope="character", file="macros-cache.txt", macro=m)
+        for m in doc.macros
+    ]
+    checked = macrocheck.check(sources, None)
+    assert [f for f in checked.findings if f.rule == "unknown-command"] == []
 
 
 # ─── without a usable record ─────────────────────────────────────────────────

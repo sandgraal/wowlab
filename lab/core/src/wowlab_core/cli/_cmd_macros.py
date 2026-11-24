@@ -232,8 +232,10 @@ def macros_check(
 ) -> None:
     """Check the account's macros, and one character's with --character, for
     a body over 255, a spell not in the spellbook, a macro on no action bar,
-    duplicate names or bodies, unbalanced [ ] and a #showtooltip (or #show,
-    the same rule assumed, not yet confirmed) that is not the first line. The
+    duplicate names or bodies, unbalanced [ ], a #showtooltip (or #show,
+    the same rule assumed, not yet confirmed) that is not the first line, and
+    a /command the game's own interface does not have (an addon's, or a
+    typo). The
     spellbook and action bars come from the character's lab-addon record;
     without it, or when the record says it dropped values, those
     two rules say "cannot judge". Reads only.

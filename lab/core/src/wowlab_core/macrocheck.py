@@ -43,6 +43,12 @@ The rules:
   `wowlab macros fix` corrects (`Finding.fixable`, `macrofix`): when the
   macro has exactly one such line, its `#` in the first column (whether an
   indented directive counts is **[verify]**), and ends with its `END`.
+- `unknown-command`: a body line whose `/command` is not one of the client's
+  own slash commands (`clientlists.slash_command`: every text the client's
+  interface code and strings name, in every client language, at the build
+  the shipped list was read at). Such a command is an addon's, which works
+  only while that addon is loaded, or a typo; the finding says both. `#`
+  lines are not slash commands and are not read by this rule (M22-18).
 
 A record section whose own probes say values were dropped (a call raised, a
 value was secret or untestable, a needed function was missing) or that holds
@@ -60,7 +66,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict
 
-from wowlab_core import labaddon
+from wowlab_core import clientlists, labaddon
 from wowlab_core.wtfconfig import Macro
 
 __all__ = [
@@ -98,6 +104,7 @@ Rule = Literal[
     "duplicate-body",
     "unbalanced-brackets",
     "showtooltip-not-first",
+    "unknown-command",
 ]
 RULES: tuple[Rule, ...] = (
     "length",
@@ -107,6 +114,7 @@ RULES: tuple[Rule, ...] = (
     "duplicate-body",
     "unbalanced-brackets",
     "showtooltip-not-first",
+    "unknown-command",
 )
 MacroScope = Literal["account", "character"]
 
@@ -661,6 +669,8 @@ def _check_lines(macros: Sequence[SourceMacro], findings: list[Finding]) -> None
                         ),
                     )
                 )
+            if parsed is not None and parsed[0].startswith("/"):
+                _check_command(m, k, text, findings)
             if k > 0 and parsed is not None and parsed[0] in _FIRST_LINE:
                 findings.append(
                     Finding(
@@ -674,6 +684,29 @@ def _check_lines(macros: Sequence[SourceMacro], findings: list[Finding]) -> None
                         fixable=movable and text.startswith("#"),
                     )
                 )
+
+
+def _check_command(m: SourceMacro, k: int, text: str, findings: list[Finding]) -> None:
+    """`unknown-command` for one body line that starts with a `/command`."""
+    match = _COMMAND.fullmatch(text)
+    assert match is not None
+    command = match.group(1)
+    if clientlists.slash_command(command) is not None:
+        return
+    build = clientlists.lists().ui_build
+    findings.append(
+        Finding(
+            rule="unknown-command",
+            macro=_ref(m),
+            name=m.macro.name,
+            line=_body_line(m, k),
+            detail=(
+                f"body line {k + 1}: {command!r} is not a slash command of the game's own "
+                f"interface (in any client language, at {build}): it may be an addon's "
+                "command, which works only while that addon is loaded, or a typo"
+            ),
+        )
+    )
 
 
 def _check_length(

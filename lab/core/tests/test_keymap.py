@@ -122,7 +122,10 @@ def test_schema3_slots_hold_what_the_bars_and_spellbook_say_12_main_bar_3_bottom
         row(km, "CTRL-1", "BONUSACTIONBUTTON1").does == "pet bar button 1 (not followed) [verify]"
     )
     assert row(km, "SHIFT-6", "ACTIONPAGE6").does == "shows main-bar page 6"
-    assert row(km, "M", "TOGGLEWORLDMAP").does == "a binding command, not an action slot"
+    # M22-18: a command that is no action button is named in the game's words.
+    world = row(km, "M", "TOGGLEWORLDMAP")
+    assert world.does == world.command_label == "Toggle World Map Pane (Interface Panel)"
+    assert world.client_command is True
 
 
 def test_schema3_and_the_account_file_3_agree_128_not_in_a_file_0_disagree_cross_capture() -> None:
@@ -183,7 +186,7 @@ def test_a_file_only_key_disagrees_and_names_what_the_record_has_constructed() -
     f5 = row(km, "CTRL-F11", "TOGGLEBACKPACK")
     assert (f5.sources, f5.agreement, f5.disagrees) == (["account file"], "file only", True)
     assert f5.note == "the record has no command on CTRL-F11"
-    assert (f5.slot, f5.holds, f5.does) == (None, None, "a binding command, not an action slot")
+    assert (f5.slot, f5.holds, f5.does) == (None, None, "Toggle Backpack (Interface Panel)")
     # Key 1 is on another command in the record: both rows say so, neither is chosen.
     file_one = row(km, "1", "TOGGLEWORLDMAP")
     assert (file_one.agreement, file_one.note) == ("file only", "the record has 1 on ACTIONBUTTON1")
@@ -411,3 +414,56 @@ def test_what_other_slot_types_do_constructed(slot_type: str, ident: int | None,
     found = next(u for u in km.unreached_slots if u.slot == 30)
     assert (found.holds.type, found.holds.id, found.holds.name) == (slot_type, ident, None)
     assert found.does == does
+
+
+# ─── naming a command (M22-18) ───────────────────────────────────────────────
+
+LAUNCH = FIXTURES / "macos-70888/forever/WTF/Account/LABACCOUNTA/1/Sandgraal-Rizzen"
+
+
+def test_the_launch_capture_names_every_command_and_marks_two_addons_bindings() -> None:
+    """The 70888 capture: its character `bindings-cache.wtf` (8 lines) and
+    its record (125 commands with a key). Every row is named in the game's
+    words but the two commands of the owner's addons, Questie's
+    QUESTIE_TOGGLE_JOURNEY and ITEMTREE_OPEN, which no file of the game's
+    interface defines: those say they are an addon's, with the build."""
+    record = labaddon.read_char(LAUNCH / "SavedVariables" / "WowLab.lua")
+    km = keymap.join_record(
+        account=None,
+        character=wtfconfig.read_bindings(LAUNCH / "bindings-cache.wtf"),
+        record=record,
+    )
+    addon = sorted({r.command for r in km.keys if r.client_command is False})
+    assert addon == ["ITEMTREE_OPEN", "QUESTIE_TOGGLE_JOURNEY"]
+    for r in km.keys:
+        if r.command == "NONE":
+            assert (r.client_command, r.command_label) == (None, None)
+        elif r.client_command is False:
+            assert r.command_label is None
+            assert r.does == (
+                "an addon's key binding: the game's own interface has no such command "
+                "(at 1.60.1.71037)"
+            )
+        else:
+            assert r.client_command is True and r.command_label, r.command
+            assert "a binding command, not an action slot" not in r.does
+    journey = row(km, ";", "QUESTIE_TOGGLE_JOURNEY")
+    assert journey.sources == ["character file", "record"]
+    q = row(km, "Q", "MULTIACTIONBAR1BUTTON1")
+    assert q.command_label == "Action Bar 2 Button 1"  # its category is not said twice
+    assert q.does.startswith("casts ")  # a slot's command still says what the slot holds
+
+
+def test_a_command_with_no_name_in_the_game_s_strings_says_what_it_is_constructed() -> None:
+    """RELOADUI is in the game's binding file with no English name; NONE
+    clears a key; an unknown name is an addon's."""
+    km = keymap.join_record(
+        account=lines("F1 RELOADUI", "F2 NONE", "F3 LABADDON_DO_THING"),
+        character=None,
+        record=None,
+    )
+    reload = row(km, "F1", "RELOADUI")
+    assert (reload.client_command, reload.command_label) == (True, None)
+    assert reload.does == "a binding of the game's own interface (under Debug), not an action slot"
+    assert row(km, "F2", "NONE").client_command is None
+    assert row(km, "F3", "LABADDON_DO_THING").client_command is False
