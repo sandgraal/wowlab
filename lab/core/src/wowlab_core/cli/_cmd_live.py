@@ -19,7 +19,6 @@ from wowlab_core import (
     charname,
     combatlog,
     crewbook,
-    crewdb,
     gear,
     labaddon,
     layout,
@@ -29,7 +28,6 @@ from wowlab_core import (
     worldpvp,
 )
 from wowlab_core.cli._cmd_char import _gear_change_words, _history_names
-from wowlab_core.cli._cmd_crew import _owner_guids
 from wowlab_core.cli._cmd_log import _logs_dir
 from wowlab_core.cli._common import (
     AccountOpt,
@@ -350,6 +348,11 @@ def live_recap(
     JSON: LiveRecapReport."""
     _, chosen, lay = _open_char(root, flavor, account)
     acct = _select_account(lay, account)
+    # Imported here: only `crew` loads the crew database's module until a
+    # recap is asked for (the lazy CLI).
+    from wowlab_core import crewdb
+    from wowlab_core.cli._cmd_crew import _owner_guids
+
     owners, _without = _owner_guids(lay, acct.folder)
     folder = _logs_dir(lay)
     logs = combatlog.find_logs(folder)[-_LIVE_MAX_LOGS:] if folder is not None else []
