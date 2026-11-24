@@ -29,6 +29,9 @@ version"); nothing about a flavor is known here (L6).
   the addon is `no_toc_for_client` rather than `out_of_date`, which is for
   an addon whose one TOC differs (domain review of M16-34, round 1);
 - `## LoadOnDemand:` (`1` is on), `## Version:`;
+- `partial` when the TOC was larger than wowlab reads whole and only its
+  header was read (`toc.parse_toc_header`, M22-21): every field above then
+  comes from the directives before its first file line;
 - the character folders whose `AddOns.txt` lists it, with the state word.
   An addon a file does not list is at the client's default, so a missing
   name is not "disabled" (LAB_FORMATS, amendment of 2026-09-22).
@@ -40,7 +43,9 @@ folder's TOCs declares `## SavedVariables:` (an account file) or
 addon. Blizzard's files (`SavedVariables.lua`, `Blizzard_*.lua`) are never
 orphans, and neither are the lab-addon's own records (`WowLab.lua`), which
 wowlab reads whether or not the lab-addon is installed: they are counted
-apart. A folder whose TOCs could not all be read is not judged, and the
+apart. A folder whose TOCs could not all be read is not judged, nor is
+one whose TOCs were read in part and declare nothing in their headers
+(the declaration may come after the part read), and the
 saved data of a folder with no TOC named after it (often an addon unzipped
 one folder too deep: installed, and wanted) is left out and named apart.
 """
@@ -98,6 +103,9 @@ class TocCheck(_Model):
     dependencies: tuple[Dependency, ...]  # `## RequiredDeps:` then `## Dependencies:`
     load_on_demand: bool  # `## LoadOnDemand: 1`
     version: FsText | None  # `## Version:` as written
+    # Larger than wowlab reads whole: the fields above come from its header
+    # alone, the directives before its first file line (M22-21).
+    partial: bool = False
 
 
 class CharacterState(_Model):
@@ -225,6 +233,7 @@ def _check_toc(
         dependencies=tuple(deps),
         load_on_demand=lod is not None and lod.strip() == "1",
         version=doc.get("Version"),
+        partial=doc.partial,
     )
 
 
@@ -376,6 +385,12 @@ def orphan_saved_variables(
                 not_judged[a.name] = None
             continue
         if _declares([t.document for t in tocs if t.document is not None], f.scope):
+            continue
+        if any(t.document is not None and t.document.partial for t in tocs):
+            # Read in part, declaring nothing in what was read: the
+            # declaration may come later in the file.
+            for a in folders:
+                not_judged[a.name] = None
             continue
         if _fold(f.addon) == _fold(LAB_ADDON_NAME):
             lab.append(f)

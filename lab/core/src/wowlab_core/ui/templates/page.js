@@ -6040,11 +6040,23 @@
     }
     const bare = counted.find((t) => t.interface_status === "none");
     if (bare) {
+      // A TOC read in part may declare it after its file list, unseen.
       return patchDayItem(read.flavor, addon.name, patchDayToc(addon, bare.file),
-        " has no Interface line in its TOC file.");
+        bare.partial === true ? " has no Interface line in the part of its TOC file wowlab read."
+          : " has no Interface line in its TOC file.");
     }
     if (read.interface === null) return null;
     return patchDayItem(read.flavor, addon.name, addon.path, " could not be checked against this game.");
+  }
+
+  // An addon one of whose counted TOCs was too large to read whole: `addons
+  // check` read only the lines before its file list (`partial`) and judged
+  // it by them. The sentence is the CLI's.
+  function patchDayPartial(read, addon) {
+    const toc = patchDayCounted(addon).find((t) => t.partial === true);
+    return patchDayItem(read.flavor, addon.name, patchDayToc(addon, toc ? toc.file : null),
+      " has a TOC file too large to read whole; only the lines before its file list were read, " +
+      "and anything it declares after them was not seen.");
   }
 
   // How many addons are current, when the game's interface is known.
@@ -6151,6 +6163,8 @@
     patchDayList(item, "Needs an addon that will not load", needy.map((a) => patchDayNeeds(read, a)));
     patchDayList(item, "Could not be checked",
       unchecked.map((a) => patchDayUnchecked(read, a)).filter((line) => line !== null));
+    const partial = addons.filter((a) => patchDayCounted(a).some((t) => t.partial === true));
+    patchDayList(item, "TOC files read in part", partial.map((a) => patchDayPartial(read, a)));
     const unread = read.unread || [];
     if (unread.length) {
       const lines = unread.map((f) => patchDayUnread(read, f, card));
