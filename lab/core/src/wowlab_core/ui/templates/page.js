@@ -7105,7 +7105,7 @@
     box.replaceChildren();
     const segments = listOf(report.segments);
     if (!segments.length) {
-      box.appendChild(make("p", report.file ? "No casts or damage of yours in this log." : "No combat log yet."));
+      box.appendChild(make("p", report.file ? "Nothing you cast or hit is in this log." : "No combat log yet."));
       return;
     }
     const rows = segments.map((seg) => {
@@ -7173,8 +7173,7 @@
       if (typeof note === "string") list.appendChild(make("li", visible(note)));
     }
     const missing = report.timings === "missing" && Array.isArray(report.fetch);
-    byId("practice-fetch").hidden = !missing;
-    byId("practice-fetch-note").hidden = !missing;
+    byId("practice-offer").hidden = !missing;
   }
 
   async function loadPractice(segment) {

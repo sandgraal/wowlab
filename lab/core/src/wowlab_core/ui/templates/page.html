@@ -317,9 +317,12 @@
 <div class="toolbar panel">
 <label>Combat log <select id="practice-log"></select></label>
 <button id="practice-read" type="button">Read the log</button>
-<button id="practice-fetch" type="button" hidden>Download spell timings</button>
 </div>
-<p id="practice-fetch-note" class="crew-words" hidden>Without the game's spell timings every global cooldown is taken as 1.5 s and cooldown use is not shown. The download is the game's public spell table from wago.tools, sending your game version, once.</p>
+<div id="practice-offer" class="names-offer" hidden>
+<p class="names-say"><strong>Spell timings need a one-time download.</strong> Until then every global cooldown is taken as 1.5 s and cooldown use is not shown.</p>
+<button id="practice-fetch" type="button">Download spell timings</button>
+<p class="names-note">Downloads the game's public spell table from wago.tools, sending your game version.</p>
+</div>
 <p id="practice-status" role="status"></p>
 <div id="practice-segments" class="panel hub-table" role="region" aria-label="Segments" tabindex="0"></div>
 <section id="practice-summary" class="panel crew-player" aria-labelledby="practice-summary-title" hidden>
@@ -328,7 +331,9 @@
 </section>
 <details class="about"><summary>About this data</summary>
 <p class="intro">Read only: this page runs <code>wowlab log practice</code> on a combat log in your game folder's Logs, and nothing else, except that <strong>Download spell timings</strong> runs <code>wowlab db2 fetch SpellCooldowns</code> once for your game version. Spell, buff and unit names are the log's own text.</p>
+<div id="practice-about" class="practice-about">
 <ul id="practice-notes" class="crew-notes"></ul>
+</div>
 </details>
 </section>
 <section id="backups-view" role="tabpanel" aria-labelledby="sec-backups" hidden>

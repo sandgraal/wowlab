@@ -258,12 +258,14 @@ def test_each_section_with_several_views_has_its_own_tabs() -> None:
         r'<nav id="([a-z]+)-tabs" class="tabs" role="tablist"[^>]*>(.*?)</nav>', html, re.S
     )
     assert [(name, re.findall(r'id="tab-([a-z]+)"', body)) for name, body in rows] == [
-        ("characters", ["account", "character", "crew", "lookup"]),
+        ("characters", ["account", "character", "crew", "lookup", "practice"]),
         ("advanced", ["explorer", "gaps", "commands", "looks"]),
     ]
     script = _template("page.js")
     assert 'characters: ["account", "character", "crew", "lookup"],' in script
     assert 'advanced: ["explorer", "gaps", "commands", "looks"],' in script
+    # M22-20: the Practice view adds itself to the lists, in its own section.
+    assert 'SECTIONS.characters.push("practice");' in script
 
 
 # ─── About this data ─────────────────────────────────────────────────────────
@@ -282,8 +284,9 @@ _ABOUT = re.compile(
     r'<details class="about"><summary>About this data</summary>\n<p class="(?:intro|patch-day-intro)">'
     # The character page's own facts and saves follow its intro (M18-05);
     # the crew book's own sentences follow the Crew tab's (M19-06); what a
-    # lookup left out follows the Look up tab's (M22-08).
-    r'(?:(?!</p>).)+</p>\n(?:<div id="(?P<part>char|crew|lookup)-about" class="(?P=part)-about">\n.*</div>\n)?'
+    # lookup left out follows the Look up tab's (M22-08); the Practice
+    # tab's standing notes follow its own (M22-20).
+    r'(?:(?!</p>).)+</p>\n(?:<div id="(?P<part>char|crew|lookup|practice)-about" class="(?P=part)-about">\n.*</div>\n)?'
     r"</details>\n</section>\n$",
     flags=re.DOTALL,
 )
@@ -297,6 +300,7 @@ def test_every_view_ends_with_one_closed_about_this_data() -> None:
         "character-view",
         "crew-view",
         "lookup-view",
+        "practice-view",  # M22-20
         "backups-view",
         "addons-view",
         "live-view",  # M22-05
@@ -405,7 +409,13 @@ def test_the_looks_network_line_stays_beside_its_button() -> None:
         "sending your game version.</p>\n"
     ) in html
     outside = re.sub(r'<details class="about">.*?</details>', "", html, flags=re.DOTALL)
-    assert outside.count("wago.tools") == 3
+    # M22-20: the Practice tab's spell-timing download, likewise.
+    assert (
+        '<button id="practice-fetch" type="button">Download spell timings</button>\n'
+        '<p class="names-note">Downloads the game\'s public spell table from wago.tools, '
+        "sending your game version.</p>\n"
+    ) in html
+    assert outside.count("wago.tools") == 4
 
 
 def test_the_keys_table_scrolls_inside_its_own_box() -> None:

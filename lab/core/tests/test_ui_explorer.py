@@ -537,6 +537,10 @@ def test_the_explorer_runs_only_listed_read_commands(server: Any) -> None:
         # M22-06: the Character tab's Twink panel runs the read `char twink`
         # on a click or a picker change; graded in test_ui_twink.py.
         ("char", "twink"),
+        # M22-20: the Practice tab runs the read `log practice`, and on a
+        # click its one-time `db2 fetch SpellCooldowns` into wowlab's cache.
+        ("log", "practice"),
+        ("db2", "fetch"),
         ("looks", "page"),
         ("snap", "create"),
         ("snap", "diff"),

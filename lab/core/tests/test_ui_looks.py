@@ -657,6 +657,7 @@ def test_the_looks_tab_starts_hidden_and_runs_nothing_until_asked(
         "character",
         "crew",
         "lookup",
+        "practice",
         "explorer",
         "gaps",
         "commands",
