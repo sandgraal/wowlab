@@ -11,7 +11,8 @@ name: macOS
 # A failed scheduled run is emailed to the owner by GitHub's default
 # notification settings (scheduled runs notify the user who last edited the
 # cron line); nothing here posts anywhere. The conductor reads the latest
-# runs on main with the Windows ones (docs/AGENT_WORKFLOW.md).
+# runs on main (docs/AGENT_WORKFLOW.md). The Windows suite it was read with
+# is paused since 2026-11-24 (ADR-0031 amendment of that date, M22-24).
 
 on:
   schedule:

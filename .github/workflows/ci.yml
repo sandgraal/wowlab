@@ -15,7 +15,8 @@ on:
 # after each merge to main; M15-21, owner decision), and neither is
 # required: `lab (macos)` in macos.yml (it was this file's
 # `lab-desktop` job until 2026-11-17, M18-15, owner decision) and
-# `lab (windows)` in windows.yml (ADR-0014 amendments of 2026-10-15).
+# `lab (windows)` in windows.yml (ADR-0014 amendments of 2026-10-15; paused
+# since 2026-11-24, ADR-0031 amendment of that date).
 # The whole Linux suite, with what `quality` leaves out since M15-21 (the
 # lab-addon mutation probes when no addon path changed, the serial pass),
 # runs every night in nightly.yml.

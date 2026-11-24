@@ -16,7 +16,8 @@ name: Nightly
 # commit main already graded.
 #
 # 09:17 UTC is 03:17 in the owner's local time (UTC-6, no daylight time), inside the
-# owner's quiet hours, with windows.yml and macos.yml; perf-nightly.yml runs
+# owner's quiet hours, with macos.yml (and windows.yml until it was paused on
+# 2026-11-24, ADR-0031 amendment of that date); perf-nightly.yml runs
 # at 08:47 UTC so it gets an idle runner first. GitHub can start a scheduled
 # run 30 to 60 minutes late at busy times. A failed scheduled run is emailed
 # to the owner by GitHub's default notification settings; nothing here posts

@@ -9,7 +9,13 @@ name: Release
 # ADR-0038), attested like the wheel and attached after the release is
 # published, with its line added to SHA256SUMS (`app_release`). Since M17-09
 # it carries the Windows app the same way, `wowlab-<version>-windows-x64.zip`
-# (`windows_app`, `windows_app_smoke`, `windows_app_release`). The release
+# (`windows_app`, `windows_app_smoke`, `windows_app_release`), until
+# 2026-11-24: those three jobs are PAUSED (`if: false`; ADR-0031 amendment of
+# 2026-11-24, owner decision, M22-24), so a release carries the wheel, the
+# sdist, SHA256SUMS and the macOS app only, and builds no Windows asset. The
+# jobs stay in the file, unchanged but for the `if`, so resuming is deleting
+# the three `if: false` lines (tests/packaging/test_windows_app.py and
+# tests/scripts/test_release.py pin the paused state). The release
 # never waits on an app, and neither app waits on the other: a failed app
 # build fails its own job and leaves the release as published. The
 # tag has to be exactly `v` plus the package version (docs/LAB_PLAN.md §15.3,
@@ -26,7 +32,7 @@ on:
     tags: ["v*"]
 
 # The token is read-only everywhere except the `release`, `app_release` and
-# `windows_app_release` jobs, which run no code from the repository: they download the checked
+# `windows_app_release` (paused, never runs) jobs, which run no code from the repository: they download the checked
 # files, attest them and call `gh`. `pypi` holds `id-token: write` and
 # nothing else: it reads no repository contents and runs no repository code.
 permissions:
@@ -345,8 +351,13 @@ jobs:
   # step, as those of windows-app.yml, which builds the app on a pull request
   # that changes it or by hand (tests/packaging/test_windows_app.py). Bash
   # (Git for Windows), so the checks read as the macOS jobs' do.
+  #
+  # PAUSED since 2026-11-24 (ADR-0031 amendment of 2026-11-24, owner
+  # decision; M22-24): `if: false` keeps this job, and with it
+  # `windows_app_smoke` and `windows_app_release`, from running.
   windows_app:
     name: Build the Windows app
+    if: false
     needs: [version, build]
     runs-on: windows-latest
     timeout-minutes: 30
@@ -426,8 +437,10 @@ jobs:
   # arguments, as a double-click starts it, serves its page to a recorded
   # browser and runs a command for it (scripts/app_smoke.py). Nothing here
   # reaches what `release` publishes.
+  # PAUSED since 2026-11-24 (ADR-0031 amendment of 2026-11-24; M22-24).
   windows_app_smoke:
     name: Smoke-test the Windows app
+    if: false
     needs: [version, windows_app]
     runs-on: windows-latest
     timeout-minutes: 15
@@ -695,8 +708,11 @@ jobs:
   # note above it holds for both). Its steps are `app_release`'s, step for
   # step, but for the artifact it downloads and the zip it attests
   # (tests/packaging/test_windows_app.py).
+  # PAUSED since 2026-11-24 (ADR-0031 amendment of 2026-11-24; M22-24): it
+  # never runs, so its write permissions are never granted to a run.
   windows_app_release:
     name: Attach the Windows app to the release
+    if: false
     needs: [version, build, windows_app, windows_app_smoke, release]
     runs-on: ubuntu-latest
     timeout-minutes: 15

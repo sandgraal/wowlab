@@ -23,10 +23,18 @@ name: Windows
 # as a ticket, not a reason to revert. The conductor checks the latest runs
 # on main at the start of each /conduct session and before a wave review
 # (.claude/skills/conduct/SKILL.md, docs/AGENT_WORKFLOW.md).
+#
+# PAUSED since 2026-11-24 (ADR-0031 amendment of 2026-11-24, owner decision:
+# "lets drop the windows version and the tests for it for now. lets come back
+# to it later"; M22-24). The nightly `schedule` trigger is removed, so the
+# suite runs only when someone starts it by hand. Its last nightly failures
+# are in docs/DATA_SOURCES.md, "The paused Windows suite". To resume, put
+# the trigger back:
+#   schedule:
+#     - cron: "17 9 * * *"
+# with tests/repo/test_desktop_ci_off_prs.py, which pins the paused state.
 
 on:
-  schedule:
-    - cron: "17 9 * * *"
   workflow_dispatch:
 
 permissions:
