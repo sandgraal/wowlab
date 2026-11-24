@@ -3975,6 +3975,8 @@ forevertwinking.com's terms forbid an AI agent from reading it, so this one is y
 
 Click each new link on one of your characters and on one opponent; copy one wowforeverbuilds build URL into the session (M21-07's oracle); import one `sim-export` into WoWSims; and say whether a Wowhead `/forever/item=` page with `?bonus=` shows the bonused item.
 
+
+*Owner, 2026-11-24:* done in one session with M22-O1's batched check, once v0.4 is ready.
 ---
 
 ## [ ] M21-11 — Addon fixes from the launch-build API list
@@ -4239,6 +4241,8 @@ The panel works like this:
 
 *Amended 2026-11-23 (bookmark review):* replies must cite every spell, item or NPC as `[Label](spell:id)` / `(item:id)` / `(npc:id)`; the validator checks each id against the player's spellbook, gear, `gamedata` or the lookup index and marks or refuses unknown ids (wow-ai-log-analyzer's pattern), and the panel renders cited ids as Wowhead links (M21-03). The engine gets a short set of question-to-read routes (gear, binds, crew, twink gaps, combat-log summary) with reference notes shipped in the package.
 
+*Amended 2026-11-24 (owner):* the engine is the player's own locally installed Claude Code CLI only ("My Claude Code"), run headless as a child process on the player's subscription; no API-key provider is built.
+
 **Acceptance:** tests with a stub engine; the packet is shown before the send; a malformed reply plans nothing; the child process gets no inherited secrets beyond its own config. Reviewed by `code-reviewer` and `security-reviewer`. User-facing: yes.
 
 ---
@@ -4329,8 +4333,17 @@ The owner's `_forever_/Cache/ADB/enUS/DBCache.bin` (header `XFTH`, version 9, bu
 
 ---
 
+## [ ] M22-24 — Pause Windows: no Windows build, no Windows suite
+**Size:** S · **Sources:** ADR-0031 amendment of 2026-11-24 (owner decision)
+
+Turn off the Windows workflows (`windows.yml` nightly, `windows-app.yml`) and the Windows jobs of `release.yml` (`windows_app`, `windows_app_smoke`, `windows_app_release`), keeping the files' history clear about why (a comment naming the ADR amendment), and update every test that pins those workflows or jobs (`tests/packaging/test_windows_app.py`, `tests/repo/*`, the release tests) so they pin the paused state instead. README (at the next release), INSTALL.md and the release notes say Windows is not supported for now. Nothing Windows-specific is deleted from the library. Record the paused suite's last failures (crew-database WinError 32 since 2026-11-20) in DATA_SOURCES for when it resumes.
+
+**Acceptance:** CI green with the Windows jobs off; `tests/repo` green; a release dry run builds no Windows asset. Reviewed by `code-reviewer` and `security-reviewer` (`.github`). User-facing: yes (install docs).
+
+---
+
 ## [ ] M22-14 — Wave review
-**Size:** S · **Depends on:** M22-01 to M22-13, M22-15 to M22-23, M22-O1
+**Size:** S · **Depends on:** M22-01 to M22-13, M22-15 to M22-24, M22-O1
 
 `docs/handoffs/M22-review.md`; dispatch stops until the owner's next pick.
 
