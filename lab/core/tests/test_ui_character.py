@@ -138,7 +138,9 @@ function charView() {
       return { cells: [textOf(tr, "gear-slot"), item ? item.textContent : null, levelOf(tr)], empty: has(tr, "gear-row-empty"),
         name: name ? name._text : null, nameText: name ? name.textContent : null,
         nameClass: name ? name.className : null, nameTitle: name ? name.title : null,
-        expanded: name ? name.getAttribute("aria-expanded") : null };
+        // Since M21-04 the name is the item's Wowhead link and its own
+        // Details button opens the row.
+        expanded: (firstOf(tr, "gear-more") || { getAttribute: () => null }).getAttribute("aria-expanded") };
     }),
     details: gearBox.all().filter((e) => has(e, "gear-detail")).map((tr) => ({
       hidden: tr.hidden, text: tr.textContent,
@@ -174,7 +176,7 @@ _STEPS = r"""
         ids["char-picker"].value = String(step.pick); ids["char-picker"].fire("change"); await tick();
         out.steps.push(Object.assign(charView(), { newRequests: requests.slice(before) }));
       } else if (step.item !== undefined) {
-        const names = ids["char-gear"].all().filter((e) => has(e, "gear-name"));
+        const names = ids["char-gear"].all().filter((e) => has(e, "gear-more"));
         if (!names[step.item]) { out.steps.push({ missing: "item " + step.item }); continue; }
         const before = requests.length;
         names[step.item].fire("click"); await tick();
@@ -674,8 +676,9 @@ def test_hostile_item_text_draws_as_inert_text_constructed(
         [r["cells"][0] for r in out["steps"][1]["rows"]].index("<b>⟨U+202E⟩ · <i>q</i>")
     ]
     assert row["name"] == IMG + "⟨U+202E⟩x⟨U+2028⟩</script>"
-    # A colour code no slot table could hold gets no class at all.
-    assert row["nameClass"] == "gear-name"
+    # A colour code no slot table could hold gets no class at all (the name
+    # is the item's Wowhead link since M21-04 when there is one).
+    assert [c for c in row["nameClass"].split() if c != "gear-wowhead"] == ["gear-name"]
     detail = next(d for d in out["steps"][1]["details"] if not d["hidden"])
     assert detail["link"] == "|cnIQ2:|Hitem:1|h[" + IMG + "⟨U+202E⟩x⟨U+2028⟩</script>]|h|r"
     drawn = json.dumps(out["steps"], ensure_ascii=False)

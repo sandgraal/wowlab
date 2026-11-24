@@ -730,6 +730,9 @@ if TYPE_CHECKING:
         _NAME_TABLES as _NAME_TABLES,
     )
     from wowlab_core.cli._cmd_char import (
+        _NO_GUILD_FIELD as _NO_GUILD_FIELD,
+    )
+    from wowlab_core.cli._cmd_char import (
         _OWN_TIME_SCHEMA as _OWN_TIME_SCHEMA,
     )
     from wowlab_core.cli._cmd_char import (
@@ -752,6 +755,9 @@ if TYPE_CHECKING:
     )
     from wowlab_core.cli._cmd_char import (
         CharHistoryReport as CharHistoryReport,
+    )
+    from wowlab_core.cli._cmd_char import (
+        CharItemLink as CharItemLink,
     )
     from wowlab_core.cli._cmd_char import (
         CharKeptReport as CharKeptReport,
@@ -779,6 +785,9 @@ if TYPE_CHECKING:
     )
     from wowlab_core.cli._cmd_char import (
         CharNames as CharNames,
+    )
+    from wowlab_core.cli._cmd_char import (
+        CharProfileLinks as CharProfileLinks,
     )
     from wowlab_core.cli._cmd_char import (
         CharShowReport as CharShowReport,
@@ -826,6 +835,9 @@ if TYPE_CHECKING:
         _char_binds_file as _char_binds_file,
     )
     from wowlab_core.cli._cmd_char import (
+        _char_links_field as _char_links_field,
+    )
+    from wowlab_core.cli._cmd_char import (
         _char_list_flavor as _char_list_flavor,
     )
     from wowlab_core.cli._cmd_char import (
@@ -860,6 +872,9 @@ if TYPE_CHECKING:
     )
     from wowlab_core.cli._cmd_char import (
         _gear_table_note as _gear_table_note,
+    )
+    from wowlab_core.cli._cmd_char import (
+        _guild_of as _guild_of,
     )
     from wowlab_core.cli._cmd_char import (
         _header_lines as _header_lines,
@@ -926,6 +941,12 @@ if TYPE_CHECKING:
     )
     from wowlab_core.cli._cmd_char import (
         _profession_words as _profession_words,
+    )
+    from wowlab_core.cli._cmd_char import (
+        _profile_link_lines as _profile_link_lines,
+    )
+    from wowlab_core.cli._cmd_char import (
+        _profile_links as _profile_links,
     )
     from wowlab_core.cli._cmd_char import (
         _record_values as _record_values,
