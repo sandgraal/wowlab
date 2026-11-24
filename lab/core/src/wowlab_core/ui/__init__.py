@@ -1245,8 +1245,17 @@ _KILLED_STORE_NOTE = (
 )
 # The leaves of the step whose confirmed run writes only the store (§16.1:
 # `snap gc` removes unreferenced objects, `doctor --yes` takes a first
-# snapshot). Any other leaf of the step gets `_KILLED_NOTE`.
-_STORE_ONLY: frozenset[tuple[str, ...]] = frozenset({("snap", "gc"), _DOCTOR})
+# snapshot), and those that write only wowlab's own list of saved links
+# (`char link set` and `forget`, M21-03; `_KILLED_LINKS_NOTE`). Any other
+# leaf of the step gets `_KILLED_NOTE`.
+_LINKS_ONLY: frozenset[tuple[str, ...]] = frozenset(
+    {("char", "link", "set"), ("char", "link", "forget")}
+)
+_STORE_ONLY: frozenset[tuple[str, ...]] = frozenset({("snap", "gc"), _DOCTOR}) | _LINKS_ONLY
+_KILLED_LINKS_NOTE = (
+    "It was stopped before it finished. It changes only wowlab's own list of your links, "
+    "never your game files, and that file is replaced whole or not at all: run it again."
+)
 
 
 def _confirmed_note(leaf: _Leaf, run: _Run) -> str | None:
@@ -1256,6 +1265,8 @@ def _confirmed_note(leaf: _Leaf, run: _Run) -> str | None:
     (`snap gc` and `doctor` make no record, and a refusal is shown as the
     CLI printed it)."""
     if run.timed_out or run.truncated:
+        if leaf.path in _LINKS_ONLY:
+            return _KILLED_LINKS_NOTE
         return _KILLED_STORE_NOTE if leaf.path in _STORE_ONLY else _KILLED_NOTE
     report = run.report()
     record = report.get("transaction") if report is not None else None
