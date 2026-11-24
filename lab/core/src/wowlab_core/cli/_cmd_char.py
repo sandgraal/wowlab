@@ -102,6 +102,7 @@ from wowlab_core.cli._common import (
     _wtf_file,
     char_app,
 )
+from wowlab_core.links import LookLink, NoLink
 from wowlab_core.region import Region
 
 # ─── char ────────────────────────────────────────────────────────────────────
@@ -1536,7 +1537,9 @@ class CharGearReport(_Out):
     # The character's look on Purist (M21-06, `links.purist_look`): race,
     # body type, class, the barber-shop choices and the equipped item ids in
     # the address's `#` part, with what it leaves out; or why there is none.
-    purist: links.LookLink | links.NoLink
+    # Annotated with the imported names: inside this class `links` is the
+    # field above, not the module.
+    purist: LookLink | NoLink
     # The flavor folder read, as the other `char` reports name it; just
     # before `dressing`, which stays last (M16-114).
     flavor_folder: str
