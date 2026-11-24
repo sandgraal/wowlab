@@ -28,8 +28,9 @@ from wowlab_core.layout import Classified, Inventory, Layout, classify
 
 FIXTURES = Path(__file__).resolve().parents[1] / "fixtures"
 INDEX = FIXTURES / "README.md"
-# `wowup/`: WowUp app records, which live outside any install (M22-16).
-NOT_INSTALL = frozenset({"wago", "wowup", "incoming"})
+# `wowup/` and `curseforge/`: addon managers' records, which live outside any
+# install (M22-16, M22-25).
+NOT_INSTALL = frozenset({"wago", "wowup", "curseforge", "incoming"})
 
 # Paths (relative to fixtures/) that classify() leaves Unclassified on
 # purpose, each with the reason. Empty: every captured path has a row.

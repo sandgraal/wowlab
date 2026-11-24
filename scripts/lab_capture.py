@@ -120,9 +120,12 @@ from __future__ import annotations
 
 import argparse
 import bisect
+import hashlib
 import importlib.util
+import os
 import re
 import secrets
+import stat
 import sys
 import unicodedata
 from collections import Counter
@@ -1134,6 +1137,7 @@ class Identity:
         country_tags: Sequence[tuple[int, int, bytes, str]] = (),
         bare_guids: bool = False,
         honorbound: Sequence[tuple[int, int, bytes, str]] = (),
+        outside: Sequence[tuple[int, int, bytes, str]] = (),
     ) -> ScrubResult:
         """Return `data` with identity replaced, plus every edit and any reason to refuse.
 
@@ -1150,7 +1154,10 @@ class Identity:
         `character-list-order.txt`, where any `<n>-<hex>` token left unmapped
         refuses (BARE_GUID_TOKEN_RE). `honorbound` are a
         `macros-cache.txt`'s `#HB<n>` hash values replaced by `0`s
-        (honorbound_scan), claimed in the same pass.
+        (honorbound_scan), claimed in the same pass. `outside` are a file
+        from outside an install's link tokens, app and account ids and home
+        folder (outside_scan, `--file`), claimed in a pass of their own after
+        the owner's GUIDs and before the identity strings.
         """
         # Three passes over the ORIGINAL bytes, highest priority first. Matches
         # within a pass never overlap each other; a match that overlaps a
@@ -1204,6 +1211,10 @@ class Identity:
         for start, end, new, reason in (*country_tags, *honorbound):
             claim(start, end, new, reason)
         close_pass()
+        if outside:
+            for start, end, new, reason in outside:
+                claim(start, end, new, reason)
+            close_pass()
         if others is not None:
             for start, end, new in others.edits:
                 claim(start, end, new, "other-name")
@@ -3679,6 +3690,443 @@ def discover_identity(root: Path, flavors: Sequence[Flavor], args: argparse.Name
     )
 
 
+# ─── one file from outside an install (M22-25) ───────────────────────────────
+
+# `--file PATH --source NAME` captures one file that lives outside any install,
+# such as an addon manager's records (WowUp's `addons.json`, CurseForge's
+# `AddonGameInstance.json`), into `<out>/<source>/<platform>/<file name>`. The
+# same detectors run on it as on an install's files, with the same refusal on
+# anything left over (Identity.scrub: an email address, a home path with a login
+# in it, a BattleTag, an unmapped GUID, an identity string). With `--root`, the
+# identity map is the install's (its account folders, `accountName` values and
+# the owner's GUIDs, as discover_identity builds it); nothing is captured from
+# that install. Without it, the map is `--extra-name` and `--own-guid` alone.
+#
+# What only such a file holds, the tool rewrites itself, byte for byte, never
+# parsing the file (OutsideScan):
+# - the value of a per-user link token in a URL query (`?link=`, WowUp's Wago
+#   download links; LINK_TOKEN_RE) becomes LINK_PLACEHOLDER;
+# - the value of a JSON key naming an app install or an account
+#   (APP_ID_KEY_RE: WowUp's `install_id`, CurseForge's `SyncProfileID`) gets a
+#   stand-in: a text value everywhere it appears, a number under its key only
+#   (one found anywhere else refuses the file, since a number cannot be told
+#   from a size or a count);
+# - this machine's home folder, in each spelling `home_forms` gives, becomes
+#   OUTSIDE_HOME (`/Volumes/Labdisk`, or `D:\Labdisk` for a home with a drive
+#   letter), spelled the same way. Any other home folder still refuses.
+#
+# Refused before anything is read: a path that is a link or not a regular file
+# (a FIFO is never waited on), one past `--max-bytes`, a file inside an install
+# (use `--root` for those), and a file whose name, or whose folder's name,
+# suggests a secret (OUTSIDE_SECRET_WORDS: a token, cookie, login, credentials
+# or session file is never opened). Refused after reading: an SQLite file, a
+# compressed, NUL-holding or non-UTF-8 file (the detectors read text), and a
+# file name the scrub would change (an app's file name is public). The
+# provenance row says the file came from outside an install, with its size,
+# modification time and SHA-256 before the scrub.
+
+OUTSIDE_MAX_BYTES = 64 * 1024 * 1024
+OUTSIDE_HOME = "/Volumes/Labdisk"
+OUTSIDE_HOME_DRIVE = "D:\\Labdisk"
+OUTSIDE_SECRET_WORDS = (
+    "sensitive",
+    "token",
+    "cookie",
+    "credential",
+    "login",
+    "secret",
+    "password",
+    "passwd",
+    "auth",
+    "session",
+    "keychain",
+    "private",
+)
+# The query parameters whose value is a per-user, server-issued token. `link`
+# is WowUp's (its Wago download addresses, 424 characters, seen 2026-11-23);
+# the rest are the common names of signed or keyed addresses.
+LINK_TOKEN_RE = re.compile(
+    rb"([?&](?i:link|token|access_token|auth|key|apikey|api_key|sig|signature|"
+    rb"x-amz-signature|x-amz-credential|x-amz-security-token)=)([^\"'&#\s\\<>]+)"
+)
+LINK_PLACEHOLDER = b"REDACTED"
+LINK_LABEL = "per-user link token not blanked"
+# A JSON key whose value names this app install or an account: WowUp's
+# `install_id` (sent with its telemetry when that is on), CurseForge's
+# `SyncProfileID` and `syncProfileID` (the server's id of the account's
+# SavedVariables sync), and the usual names of a user or account id. The
+# value is a JSON string or an integer.
+APP_ID_KEY_RE = re.compile(
+    rb'"((?i:install_?id|sync_?profile_?id|user_?id|account_?id|member_?id|twitch_?id))"'
+    rb'[ \t\r\n]*:[ \t\r\n]*("(?:[^"\\\r\n]|\\.)*"|-?[0-9]+)'
+)
+APP_ID_LABEL = "app or account id not replaced"
+APP_ID_ELSEWHERE_LABEL = "app or account id found outside its key"
+_APP_ID_TEXT = b"00000000-0000-4000-8000-%012d"
+_APP_ID_NUMBER = b"%d"
+OUTSIDE_NAME_LABEL = "file name the scrub would change"
+OUTSIDE_ROW_FLAVOR = "n/a (outside an install)"
+OUTSIDE_ROW_VERSION = "n/a (not a client file)"
+
+
+def _home_pairs(home: str) -> list[tuple[bytes, bytes]]:
+    """(this machine's home in one spelling, the stand-in spelled the same
+    way), longest first: as given, with `/`, with `\\`, and with `\\` doubled
+    (as JSON writes it)."""
+    drive = re.match(r"[A-Za-z]:", home) is not None
+    stand_in = OUTSIDE_HOME_DRIVE if drive else OUTSIDE_HOME
+    pairs: list[tuple[bytes, bytes]] = []
+    spellings: tuple[Callable[[str], str], ...] = (
+        lambda text: text,
+        lambda text: text.replace("\\", "/"),
+        lambda text: text.replace("/", "\\"),
+        lambda text: text.replace("/", "\\").replace("\\", "\\\\"),
+    )
+    for spell in spellings:
+        real = spell(home).rstrip("\\/")
+        if not [p for p in re.split(r"[\\/]", real) if p and not re.fullmatch(r"[A-Za-z]:", p)]:
+            continue  # a root names nobody
+        pair = (real.encode("utf-8", "surrogatepass"), spell(stand_in).encode("utf-8"))
+        if pair not in pairs:
+            pairs.append(pair)
+    return sorted(pairs, key=lambda pair: -len(pair[0]))
+
+
+@dataclass(frozen=True)
+class OutsideScan:
+    """The edits only a file from outside an install needs, against its
+    original bytes, and what must not survive them."""
+
+    edits: tuple[tuple[int, int, bytes, str], ...]
+    stand_ins: frozenset[bytes]  # every app or account id stand-in issued
+    numbers: frozenset[bytes]  # real numeric ids: refused anywhere outside their key
+
+
+def outside_scan(data: bytes, home: str | None = None) -> OutsideScan:
+    """Find the link tokens, app and account ids and this machine's home
+    folder in `data` (OutsideScan). `home` defaults to this machine's."""
+    edits: list[tuple[int, int, bytes, str]] = []
+    for m in LINK_TOKEN_RE.finditer(data):
+        if m.group(2) != LINK_PLACEHOLDER:
+            edits.append((m.start(2), m.end(2), LINK_PLACEHOLDER, "link-token"))
+    texts: dict[bytes, bytes] = {}
+    numbers: dict[bytes, bytes] = {}
+    for m in APP_ID_KEY_RE.finditer(data):
+        value = m.group(2)
+        if value.startswith(b'"'):
+            inner = value[1:-1]
+            if inner and inner not in texts:
+                texts[inner] = _APP_ID_TEXT % (len(texts) + len(numbers) + 1)
+        elif value not in numbers:
+            numbers[value] = _APP_ID_NUMBER % (len(texts) + len(numbers) + 1)
+        if not value.startswith(b'"'):
+            edits.append((m.start(2), m.end(2), numbers[value], "app-id"))
+    for real, stand_in in sorted(texts.items(), key=lambda kv: -len(kv[0])):
+        start = data.find(real)
+        while start != -1:
+            edits.append((start, start + len(real), stand_in, "app-id"))
+            start = data.find(real, start + len(real))
+    end = _redact._HOME_END.encode("ascii")
+    for real, stand_in in _home_pairs(str(Path.home()) if home is None else home):
+        for m in re.finditer(re.escape(real) + end, data, re.IGNORECASE):
+            edits.append((m.start(), m.end(), stand_in, "home-path"))
+    # One pass of the scrub: no two edits may overlap. The longer one at a
+    # place wins; whatever a dropped edit would have replaced is still found
+    # by outside_leftovers and refuses the file.
+    kept: list[tuple[int, int, bytes, str]] = []
+    for edit in sorted(edits, key=lambda e: (e[0], -(e[1] - e[0]))):
+        if not kept or edit[0] >= kept[-1][1]:
+            kept.append(edit)
+    issued = frozenset([*texts.values(), *numbers.values()])
+    return OutsideScan(tuple(kept), issued, frozenset(numbers))
+
+
+def outside_leftovers(scrubbed: bytes, scan: OutsideScan) -> list[str]:
+    """Why the scrubbed bytes still hold what OutsideScan replaces (an edit
+    dropped for overlapping another one, or a number outside its key).
+    Counts only: an offset would point at the token."""
+    problems: list[str] = []
+    links = sum(1 for m in LINK_TOKEN_RE.finditer(scrubbed) if m.group(2) != LINK_PLACEHOLDER)
+    if links:
+        problems.append(f"{LINK_LABEL} x{links}")
+    kept = 0
+    for m in APP_ID_KEY_RE.finditer(scrubbed):
+        value = m.group(2)
+        inner = value[1:-1] if value.startswith(b'"') else value
+        if inner and inner not in scan.stand_ins:
+            kept += 1
+    if kept:
+        problems.append(f"{APP_ID_LABEL} x{kept}")
+    elsewhere = sum(
+        len(re.findall(rb"(?<![0-9.\-])" + re.escape(n) + rb"(?![0-9.])", scrubbed))
+        for n in scan.numbers - scan.stand_ins  # a stand-in is no one's id
+    )
+    if elsewhere:
+        problems.append(f"{APP_ID_ELSEWHERE_LABEL} x{elsewhere}")
+    return problems
+
+
+def _secret_named(path: Path) -> bool:
+    """Whether the file's name or its folder's name suggests a secret."""
+    names = (path.name, path.parent.name)
+    return any(word in _fold(name) for name in names for word in OUTSIDE_SECRET_WORDS)
+
+
+def _in_an_install(path: Path) -> bool:
+    """Whether a folder above `path` is an install root (holds `.build.info`)."""
+    return any(child(folder, ".build.info") is not None for folder in path.parents)
+
+
+def read_outside(path: Path, limit: int) -> tuple[bytes, os.stat_result]:
+    """The bytes of the regular file `path`, opened read-only, never through a
+    link and never waited on (a FIFO is refused before it is opened, and the
+    open does not block), and its stat. Raises CaptureError for a link, a
+    file that is not regular, one past `limit` or one that changed while it
+    was opened; the message never quotes the path."""
+    try:
+        seen = path.lstat()
+    except OSError as error:
+        raise CaptureError(f"--file is {_os_reason(error)}") from None
+    if stat.S_ISLNK(seen.st_mode):
+        raise CaptureError(
+            "--file is a symbolic link, which is never followed; nothing is captured"
+        )
+    if not stat.S_ISREG(seen.st_mode):
+        raise CaptureError("--file is not a regular file; nothing is captured")
+    if seen.st_size > limit:
+        raise CaptureError(
+            f"--file is larger than {limit} bytes (--max-bytes); nothing is captured"
+        )
+    flags = os.O_RDONLY | getattr(os, "O_BINARY", 0) | getattr(os, "O_NOFOLLOW", 0)
+    flags |= getattr(os, "O_NONBLOCK", 0) | getattr(os, "O_CLOEXEC", 0)
+    try:
+        fd = os.open(path, flags)
+    except OSError as error:
+        raise CaptureError(f"--file is {_os_reason(error)}") from None
+    with os.fdopen(fd, "rb") as handle:
+        facts = os.fstat(handle.fileno())
+        if not stat.S_ISREG(facts.st_mode) or (facts.st_dev, facts.st_ino) != (
+            seen.st_dev,
+            seen.st_ino,
+        ):
+            raise CaptureError("--file changed while it was opened; nothing is captured")
+        data = handle.read(limit + 1)
+    if len(data) > limit:
+        raise CaptureError(
+            f"--file is larger than {limit} bytes (--max-bytes); nothing is captured"
+        )
+    return data, facts
+
+
+def _outside_content_refusals(data: bytes) -> list[str]:
+    problems: list[str] = []
+    if data.startswith(_COMPRESSED_SIGNATURES):
+        problems.append("file starts with a compressed-file signature")
+    if b"\x00" in data:
+        problems.append("file holds a NUL byte")
+    try:
+        data.decode("utf-8")
+    except UnicodeDecodeError:
+        problems.append("file is not valid UTF-8")
+    return problems
+
+
+@dataclass(frozen=True)
+class OutsideOutcome:
+    dest: PurePosixPath  # relative to --out: <source>/<platform>/<name>
+    result: ScrubResult
+    problems: list[str]
+    size: int
+    sha256: str
+    written: str  # the file's modification time, local, ISO 8601
+
+
+def process_outside(
+    data: bytes,
+    facts: os.stat_result,
+    name: str,
+    source: str,
+    platform: str,
+    identity: Identity,
+    home: str | None = None,
+) -> OutsideOutcome:
+    """Scrub one file from outside an install: OutsideScan's edits and the
+    identity map's, in one byte-level pass, then every detector over the
+    result."""
+    dest = PurePosixPath(source, platform, name)
+    when = datetime.fromtimestamp(facts.st_mtime).astimezone().isoformat(timespec="seconds")
+    digest = hashlib.sha256(data).hexdigest()
+    refused = [*sqlite_problems(data), *_outside_content_refusals(data)]
+    scrubbed_name, name_problems = identity.scrub_path(PurePosixPath(name))
+    if scrubbed_name.name != name:
+        name_problems.append(f"in path: {OUTSIDE_NAME_LABEL}")
+    if refused:
+        empty = ScrubResult(b"", (), tuple(refused))
+        return OutsideOutcome(dest, empty, [*refused, *name_problems], len(data), digest, when)
+    scan = outside_scan(data, home)
+    result = identity.scrub(data, outside=scan.edits)
+    problems = [
+        *result.problems,
+        *outside_leftovers(result.data, scan),
+        *sqlite_problems(result.data),
+        *name_problems,
+    ]
+    return OutsideOutcome(dest, result, problems, len(data), digest, when)
+
+
+def _shown_source(path: Path) -> str:
+    """Where the file was, as a provenance row may say it: under `~` when it
+    is in this machine's home, withheld when a login would show."""
+    text = str(path)
+    for real, _ in _home_pairs(str(Path.home())):
+        spelled = real.decode("utf-8", "surrogatepass")
+        if text.casefold().startswith(spelled.casefold() + os.sep.casefold()):
+            text = "~" + text[len(spelled) :]
+            break
+    return "<path withheld>" if HOME_RE.search(text.encode("utf-8", "surrogatepass")) else text
+
+
+def outside_row(
+    outcome: OutsideOutcome, src: Path, captured_by: str, consent: str, kind: str
+) -> str:
+    """The provenance row: the file is said to come from outside an install."""
+    result = outcome.result
+    scrub = [
+        f"{label}: {result.count(reason)}"
+        for reason, label in (
+            ("link-token", "link-tokens-blanked"),
+            ("app-id", "app-or-account-ids-replaced"),
+            ("home-path", "home-path-rewritten"),
+            ("identity", "identity-rewritten"),
+            ("guid", "guids-rewritten"),
+        )
+        if result.count(reason)
+    ]
+    if result.embedded:
+        scrub.append(f"embedded: {result.embedded}")
+    notes = [
+        f"from outside an install: `{_shown_source(src)}`, last written {outcome.written} "
+        f"(file time), {outcome.size} bytes, sha256 {outcome.sha256} before the scrub; "
+        f"{len(result.data)} bytes after; captured by `lab_capture.py --file`",
+        *describe_bytes(result.data),
+    ]
+    cells = [
+        f"`{outcome.dest}`",
+        kind,
+        OUTSIDE_ROW_FLAVOR,
+        OUTSIDE_ROW_VERSION,
+        outcome.dest.parts[1],
+        captured_by,
+        consent,
+        "; ".join(scrub) or "none",
+        "; ".join(notes),
+    ]
+    return "| " + " | ".join(cell.replace("|", "\\|") for cell in cells) + " |"
+
+
+_INSTALL_ONLY_OPTIONS = (
+    ("flavor", "--flavor"),
+    ("account", "--account"),
+    ("character", "--character"),
+    ("sv", "--sv"),
+    ("confirm_free_text", "--confirm-free-text"),
+    ("toc", "--toc"),
+    ("combat_log", "--combat-log"),
+    ("pseudonymise_other_players", "--pseudonymise-other-players"),
+    ("kind", "--kind"),
+)
+
+
+def run_outside(args: argparse.Namespace) -> int:
+    """`--file`: capture one file from outside an install."""
+    given = [flag for attr, flag in _INSTALL_ONLY_OPTIONS if getattr(args, attr)]
+    if given:
+        raise CaptureError(f"{', '.join(given)}: an install option, not for --file")
+    source = args.source
+    if source is None or not re.fullmatch(r"[a-z0-9][a-z0-9_-]*", source):
+        raise CaptureError(
+            "--file needs --source, the fixture folder it goes under: lower-case letters, "
+            "digits, `-` and `_` (for example curseforge)"
+        )
+    platform = args.platform or default_platform()
+    if platform is None:
+        raise CaptureError(
+            "--platform is required here: say which machine wrote this file (macos, windows)"
+        )
+    if not re.fullmatch(r"[A-Za-z0-9_-]+", platform):
+        raise CaptureError("--platform must be a plain folder name")
+    src = args.file.absolute()  # not resolved: a link must be seen as one
+    out = args.out.resolve()
+    if _secret_named(src):
+        raise CaptureError(
+            "--file: its name or its folder's name suggests a token, cookie, login, "
+            "credentials or session file, which is never opened; nothing is captured"
+        )
+    if _in_an_install(src):
+        raise CaptureError(
+            "--file is inside an install (a folder above it holds .build.info); capture "
+            "install files with --root; nothing is captured"
+        )
+    if inside(out, src.parent.resolve()):
+        raise CaptureError(
+            "--out is inside the folder --file is in; that folder is never written to"
+        )
+    if args.root is not None:
+        root = args.root.resolve()
+        if not root.is_dir():
+            raise CaptureError(f"--root {args.root} is not a directory")
+        if inside(out, root):
+            raise CaptureError("--out is inside the install; the install is never written to (L1)")
+        identity = discover_identity(root, discover_flavors(root), args)
+    else:
+        identity = Identity(
+            extras=args.extra_name or [],
+            guids={_own_guid_arg(g) for g in args.own_guid or []},
+            cvars=(*IDENTITY_CVARS, *(args.blank_cvar or [])),
+            show_names=args.show_map,
+        )
+    data, facts = read_outside(src, args.max_bytes)
+    outcome = process_outside(data, facts, src.name, source, platform, identity)
+    mode = "DRY RUN, nothing will be written" if args.dry_run else f"writing under {out}"
+    print(f"lab_capture: one file from outside an install; {mode}")
+    print(
+        f"identity map: {len(identity.names)} names, {len(identity.guids)} own GUIDs"
+        + ("" if args.root is not None else " (no --root: --extra-name and --own-guid only)")
+    )
+    if args.show_map:
+        for real, pseudonym in identity.names.items():
+            print(f"  {real!r} -> {pseudonym!r}")
+    shown = outcome.dest
+    if any(p.startswith(("in path", "unsafe path")) for p in outcome.problems):
+        shown = PurePosixPath(*outcome.dest.parts[:2], "<path withheld>")
+    if outcome.problems:
+        print(f"REFUSED  {shown}: {'; '.join(outcome.problems)}", file=sys.stderr)
+        print("\n1 file REFUSED; nothing was written for it", file=sys.stderr)
+        return 1
+    target = out.joinpath(*outcome.dest.parts)
+    if not inside(target.resolve(), out) or target.resolve() == src.resolve():
+        print(f"REFUSED  {shown}: destination escapes --out", file=sys.stderr)
+        return 1
+    if (target.exists() or target.is_symlink()) and not args.reuse_out:
+        raise CaptureError(
+            f"{target} already exists; use an empty --out, or pass --reuse-out to write over it"
+        )
+    if target.is_symlink() or (target.exists() and not target.is_file()):
+        raise CaptureError(f"{target} is not a regular file; nothing is written")
+    result = outcome.result
+    if not args.dry_run:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(result.data)
+    verb = "would write" if args.dry_run else "wrote"
+    print(f"{verb:<8} {shown} ({len(result.data)} bytes, {len(result.edits)} edits)")
+    for note in result.notes:
+        print(f"  look   {note}")
+    kind = f"{source}-{re.sub(r'[^a-z0-9]+', '-', src.name.casefold()).strip('-')}"
+    print("\nprovenance row for lab/core/tests/fixtures/README.md:")
+    print(outside_row(outcome, src, args.captured_by, args.consent, kind))
+    return 0
+
+
 # ─── command line ────────────────────────────────────────────────────────────
 
 
@@ -3687,7 +4135,29 @@ def parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
         prog="lab_capture.py",
         description="Copy the fixture capture set out of a WoW install and scrub identity from it.",
     )
-    parser.add_argument("--root", required=True, type=Path, help="install root (has .build.info)")
+    parser.add_argument(
+        "--root",
+        type=Path,
+        help="install root (has .build.info); with --file, the install whose identity map "
+        "the file is checked against (nothing else is read from it)",
+    )
+    parser.add_argument(
+        "--file",
+        type=Path,
+        help="capture this one file from outside an install (an addon manager's records) "
+        "instead of an install's files; needs --source",
+    )
+    parser.add_argument(
+        "--source",
+        help="with --file: the fixture folder it goes under, such as curseforge "
+        "(written to <out>/<source>/<platform>/<file name>)",
+    )
+    parser.add_argument(
+        "--max-bytes",
+        type=int,
+        default=OUTSIDE_MAX_BYTES,
+        help="with --file: the largest file it reads",
+    )
     parser.add_argument("--out", required=True, type=Path, help="staging directory to write into")
     parser.add_argument("--dry-run", action="store_true", help="print the plan; write nothing")
     parser.add_argument(
@@ -3752,7 +4222,10 @@ def parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
         action="store_true",
         help="print real name -> pseudonym (keep that output off the internet)",
     )
-    return parser.parse_args(argv)
+    args = parser.parse_args(argv)
+    if args.root is None and args.file is None:
+        parser.error("one of --root (an install) or --file (one file from outside one) is needed")
+    return args
 
 
 def default_platform() -> str | None:
@@ -3823,6 +4296,10 @@ def _ordinal(n: int) -> str:
 
 
 def run(args: argparse.Namespace) -> int:
+    if args.file is not None:
+        return run_outside(args)
+    if args.source is not None:
+        raise CaptureError("--source is for --file only")
     root = args.root.resolve()
     out = args.out.resolve()
     if not root.is_dir():
