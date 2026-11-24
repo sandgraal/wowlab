@@ -22,9 +22,7 @@ the user config directory, never in an install; it is never logged,
 printed, put in a report, an error message or a saved answer.
 `Credentials` hides it from `repr`, and neither it nor a `Request` (whose
 headers hold the secret or the token) can be pickled, copied or
-`asdict`-ed. The token lives in this process's memory only. The first
-build kept the file in the data folder; it is moved once, under the same
-refusals as every write.
+`asdict`-ed. The token lives in this process's memory only.
 
 The network (ADR-0040 (2)): stdlib `urllib` with certificate checks on, an
 opener that has an https handler and no other (no plain http, no file, no
@@ -37,8 +35,7 @@ by the client's version. For Forever the namespace and the address shape
 come from community forum notes and are [verify]; the owner's `@live` test
 is the check (`docs/BACKLOG.md` M22-11, note of 2026-11-23).
 
-Writes: only `credentials_path()` (and the removal of the first build's
-copy in the data folder) and the files under `profiles_dir()`,
+Writes: only `credentials_path()` and the files under `profiles_dir()`,
 each through a temporary file beside it made with `O_EXCL` and no link
 followed, then moved into place; a folder inside a game install is refused
 (L1).
@@ -175,7 +172,7 @@ KEEP_FETCHES = 20
 
 def blizzard_dir() -> Path:
     """`<user data dir>/wowlab/blizzard`, read at call time: the saved
-    profiles' folder (and, in the first build, the API client's)."""
+    profiles' folder."""
     return platformdirs.user_data_path("wowlab") / _FOLDER
 
 
@@ -188,12 +185,6 @@ def config_dir() -> Path:
 def credentials_path() -> Path:
     """The file that holds the API client's id and secret."""
     return config_dir() / _CREDENTIALS
-
-
-def _old_credentials_path() -> Path:
-    """Where the first build kept the API client: the data folder. Read once
-    when it is there, moved to `credentials_path()`, then removed."""
-    return blizzard_dir() / _CREDENTIALS
 
 
 def profiles_dir() -> Path:
@@ -346,55 +337,19 @@ def _guarded_folder(folder: Path) -> bool:
     return True
 
 
-def _same_file(a: Path, b: Path) -> bool:
-    """Whether `a` and `b` name one file: equal absolute paths, or, when
-    both are there, the same file on disk (`Path.samefile`)."""
-    if a.absolute() == b.absolute():
-        return True
-    try:
-        return a.exists() and b.exists() and a.samefile(b)
-    except OSError:
-        return False
-
-
-def _move_old_credentials() -> None:
-    """The first build's place for the API client (the data folder), under
-    the same refusals as every write: its folder in a game install, or a
-    link, is refused before anything is read, written or removed. Nothing
-    happens when the old folder is not there, or when the old place and
-    `credentials_path()` are one file (on macOS and Windows the config and
-    data folders are the same folder). Otherwise a file there is copied to
-    `credentials_path()` when none is there yet, and the old one is removed
-    only when the new one is a different file that now holds the same
-    client; a different client already in the config folder wins, and the
-    old file is left alone."""
-    old = _old_credentials_path()
-    new = credentials_path()
-    if _same_file(old, new):
-        return
-    if not _guarded_folder(blizzard_dir()):
-        return
-    _refuse_file(old)
-    data = _read_file(old)
-    if data is None:
-        return
-    creds = _parse_credentials(old, data)
-    if not (new.exists() or new.is_symlink()):
-        _write_private(new, _credentials_bytes(creds), outside=True)
-    if _same_file(old, new):
-        return
-    moved = _read_file(new)
-    if moved is None:
-        return
-    held = _parse_credentials(new, moved)
-    if (held.client_id, held.secret()) == (creds.client_id, creds.secret()):
-        old.unlink()
+def _refuse_blizzard_folders() -> None:
+    """Before the API client is written or removed: wowlab's own blizzard
+    folders (the saved profiles' in the data folder, and the client's in the
+    config folder, one folder on macOS and Windows), when there, must not be
+    in a game install or be a link. Reads nothing, writes nothing."""
+    _guarded_folder(blizzard_dir())
+    _guarded_folder(config_dir())
 
 
 def save_credentials(credentials: Credentials) -> Path:
     """Keep the API client's id and secret in `credentials_path()` (0600),
     replacing what was there; return the path."""
-    _move_old_credentials()
+    _refuse_blizzard_folders()
     path = credentials_path()
     _write_private(path, _credentials_bytes(credentials), outside=True)
     return path
@@ -404,7 +359,6 @@ def read_credentials() -> Credentials | None:
     """The saved API client, or None when none is saved. A file that cannot
     be read as one, or that other users can read, raises `BnetError` and
     never quotes the file."""
-    _move_old_credentials()
     path = credentials_path()
     if not _guarded_folder(path.parent):
         return None
@@ -416,7 +370,7 @@ def clear_credentials() -> bool:
     """Remove the saved API client; whether there was one. Refused, nothing
     removed, where a write is refused: a folder in a game install or that
     is a link, or a file that is a link or not a regular file."""
-    _move_old_credentials()
+    _refuse_blizzard_folders()
     path = credentials_path()
     if not _guarded_folder(path.parent):
         return False

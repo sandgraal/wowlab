@@ -170,8 +170,7 @@ _SIM_FILE = (
 _BNET = "lab/core/src/wowlab_core/bnet.py"
 _BNET_FILES = (
     "Blizzard profiles (M22-11, ADR-0040 (2)): only <user config>/wowlab/blizzard/client.json "
-    "(the player's API client, 0600), the first build's copy of it at <user data>/wowlab/"
-    "blizzard/client.json (moved, then removed), and <user data>/wowlab/blizzard/profiles/"
+    "(the player's API client, 0600) and <user data>/wowlab/blizzard/profiles/"
     "<32 hex>/<stamp>-<8 hex>.json (saved fetches); every folder is refused before and after "
     "it is made, and before anything in it is removed, when it or any folder above it holds "
     ".build.info or .flavor.info, and when it is a link; the file is refused when it is a link "
@@ -195,8 +194,6 @@ ALLOWED: dict[tuple[str, str], str] = {
         _BNET_FILES + "; this opens a file read-only (O_RDONLY, no link followed, no wait on a "
         "pipe) and writes nothing"
     ),
-    (_BNET, "old.unlink()"): _BNET_FILES
-    + "; the first build's client.json in the data folder, once moved to the config folder",
     (_BNET, "path.unlink()"): _BNET_FILES + "; `blizzard logout`: client.json only",
     (_BNET, "old.unlink(missing_ok=True)"): _BNET_FILES
     + "; a saved fetch older than the newest KEEP_FETCHES of its character",
