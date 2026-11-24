@@ -87,7 +87,7 @@ roleplay-pvp = "pvp-rp"
 #
 # A name is read as Unicode letters (NFC), with what each rule allows:
 # `case` "lower" or "keep"; `spaces`, `apostrophes` and `hyphens` each
-# "refuse" (the name gets no link), "drop", or the text that replaces it;
+# "refuse" (the name gets no link), or the text that replaces it ("" drops it);
 # `accents` (a letter past ASCII) "percent" (its UTF-8 bytes, %XX) or
 # "refuse". Anything else in a name (a quote, `<`, `#`, `?`, `/`, a dot, a
 # digit, a control or format character) gives no link. `max_length` counts
