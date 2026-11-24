@@ -546,6 +546,10 @@ def test_the_explorer_runs_only_listed_read_commands(server: Any) -> None:
         # which writes only into wowlab's own game-table cache; that only
         # the home runs it, on a click, is graded in test_ui_home.py.
         ("names", "fetch"),
+        # M21-07: the Character tab's Download the talent tables runs `db2
+        # fetch`, which writes only into wowlab's own game-table cache, on a
+        # click; graded in test_ui_talents.py.
+        ("db2", "fetch"),
         # M18-06: a character kept only in a backup opens from the read
         # `char kept`; graded in test_ui_kept.py.
         ("char", "kept"),
@@ -558,6 +562,11 @@ def test_the_explorer_runs_only_listed_read_commands(server: Any) -> None:
         # M20-18: its "Read the combat logs not read before" runs `crew scan-log`, which
         # writes only into wowlab's crew database (graded in test_ui_crew.py).
         ("crew", "scan-log"),
+        # M22-22: and, when a read says the game's map table is missing,
+        # "Download the game's map table" runs `db2 fetch` for `Map`, which
+        # writes only into wowlab's own game-table cache, on a click
+        # (graded in test_ui_crew_map_table.py).
+        ("db2", "fetch"),
         # M22-16: the Addons view's "Where they came from" reads `addons list`
         # (graded in test_ui_addon_sources.py).
         ("addons", "list"),

@@ -55,7 +55,7 @@ import re
 import sqlite3
 import stat
 import time
-from collections.abc import Callable, Iterator, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from pathlib import Path
 from typing import Literal
 
@@ -68,6 +68,7 @@ from wowlab_core import (
     crewedit,
     guard,
     layout,
+    links,
     nemesis,
     snapshot,
     worldpvp,
@@ -77,7 +78,7 @@ from wowlab_core.region import Region, region_of
 
 # ─── constants ───────────────────────────────────────────────────────────────
 
-SCHEMA = 5
+SCHEMA = 7
 """The database's own schema (`PRAGMA user_version`)."""
 APPLICATION_ID = 0x574C4342  # "WLCB": wowlab crew book
 """`PRAGMA application_id` of every crew database; `_SQL_SET_APP_ID` holds
@@ -151,6 +152,8 @@ _SQL_SET_VERSION: dict[int, str] = {
     3: "PRAGMA user_version = 3",
     4: "PRAGMA user_version = 4",
     5: "PRAGMA user_version = 5",
+    6: "PRAGMA user_version = 6",
+    7: "PRAGMA user_version = 7",
 }
 _SQL_BEGIN = "BEGIN IMMEDIATE"
 _SQL_COMMIT = "COMMIT"
@@ -195,7 +198,11 @@ _SQL_CREATE: tuple[str, ...] = (
     " spec TEXT,"
     " honor_level INTEGER,"
     " score TEXT,"
-    " score_at INTEGER"
+    " score_at INTEGER,"
+    " resolved_name TEXT,"
+    " resolved_realm TEXT,"
+    " resolved_eighth INTEGER,"
+    " resolved_at INTEGER"
     ") STRICT",
     "CREATE INDEX players_last ON players (last_at)",
     "CREATE INDEX players_rating ON players (rating)",
@@ -240,7 +247,8 @@ _SQL_CREATE: tuple[str, ...] = (
     " end_at INTEGER NOT NULL,"
     " zone TEXT,"
     " instance_id INTEGER,"
-    " died INTEGER NOT NULL CHECK (died IN (0, 1))"
+    " died INTEGER NOT NULL CHECK (died IN (0, 1)),"
+    " by_map INTEGER NOT NULL DEFAULT 0 CHECK (by_map IN (0, 1, 2))"
     ") STRICT",
     "CREATE INDEX world_encounters_start ON world_encounters (start_at)",
     "CREATE TABLE world_encounter_players ("
@@ -293,6 +301,25 @@ _SQL_CREATE: tuple[str, ...] = (
 # second name, the realm and the region as written, one row per key the
 # log named so, in a table of its own (`log_names`). A row of the beta's
 # three-part names has none, so its key's second part stays a realm.
+#
+# 5 -> 6 (M22-22): how an open-world encounter's place was judged
+# (`by_map`): 0 by the zone line's difficulty, which a dungeon's line can
+# share (no map table yet); 1 the open world by the game's map table; 2 set
+# aside: its map is not in the table that was read, so it is kept but
+# counted nowhere (likely a map a hotfix added, which the published table
+# lacks: once its log is gone nothing could rebuild it). Every stored
+# encounter starts as 0: the database cannot read the table, which is
+# build-keyed and fetched by the caller, so the step only adds the column,
+# after the `.before-schema-5` copy. `recheck_world`, run by `crew
+# scan-log` once the table is read, judges each 0 and 2 again: the open
+# world is marked 1, a map the table does not hold 2, and only a map the
+# table names as an instance is deleted. Running it again changes nothing. An encounter a read keeps while the table is missing is
+# marked the same way, so it is checked once the table is there.
+#
+# 6 -> 7 (M21-12): what the lab-addon's book (schema 3) asked the game for a
+# player's GUID: the name in the in-game form, the realm with it, the eighth
+# value (probably the level, not yet confirmed) and when it was asked. Every
+# new column starts empty. The book's region is a `meta` row, not a column.
 #
 # Keyed by (schema it starts from, order within the step); each value one
 # constant statement, so the static check reads every one.
@@ -353,6 +380,12 @@ _MIGRATIONS: dict[tuple[int, int], str] = {
     " realm TEXT,"
     " region TEXT"
     ") STRICT",
+    (5, 1): "ALTER TABLE world_encounters ADD COLUMN by_map INTEGER NOT NULL DEFAULT 0"
+    " CHECK (by_map IN (0, 1, 2))",
+    (6, 1): "ALTER TABLE players ADD COLUMN resolved_name TEXT",
+    (6, 2): "ALTER TABLE players ADD COLUMN resolved_realm TEXT",
+    (6, 3): "ALTER TABLE players ADD COLUMN resolved_eighth INTEGER",
+    (6, 4): "ALTER TABLE players ADD COLUMN resolved_at INTEGER",
 }
 
 _SQL_META_ALL = "SELECT name, value FROM meta"
@@ -365,7 +398,8 @@ _SQL_PLAYERS_ALL = (
     " where_name, where_id, rating, note, met_seen, in_book, marks_changed, marks_agreed,"
     " rating_own, note_own, allied, faced, allied_won, faced_won, pvp_last, pvp_map,"
     " pvp_side, allied_seen, faced_seen, allied_won_seen, faced_won_seen, guid, race,"
-    " faction, spec, honor_level, score, score_at"
+    " faction, spec, honor_level, score, score_at, resolved_name, resolved_realm,"
+    " resolved_eighth, resolved_at"
     " FROM players"
 )
 _SQL_PLAYER_INSERT = (
@@ -373,9 +407,10 @@ _SQL_PLAYER_INSERT = (
     " last_at, where_name, where_id, rating, note, met_seen, in_book, marks_changed,"
     " marks_agreed, rating_own, note_own, allied, faced, allied_won, faced_won, pvp_last,"
     " pvp_map, pvp_side, allied_seen, faced_seen, allied_won_seen, faced_won_seen, guid,"
-    " race, faction, spec, honor_level, score, score_at)"
+    " race, faction, spec, honor_level, score, score_at, resolved_name, resolved_realm,"
+    " resolved_eighth, resolved_at)"
     " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,"
-    " ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+    " ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
 )
 _SQL_PLAYER_UPDATE = (
     "UPDATE players SET name = ?, realm = ?, class = ?, level = ?, role = ?, guild = ?,"
@@ -384,7 +419,8 @@ _SQL_PLAYER_UPDATE = (
     " rating_own = ?, note_own = ?, allied = ?, faced = ?, allied_won = ?, faced_won = ?,"
     " pvp_last = ?, pvp_map = ?, pvp_side = ?, allied_seen = ?, faced_seen = ?,"
     " allied_won_seen = ?, faced_won_seen = ?, guid = ?, race = ?, faction = ?, spec = ?,"
-    " honor_level = ?, score = ?, score_at = ?"
+    " honor_level = ?, score = ?, score_at = ?, resolved_name = ?, resolved_realm = ?,"
+    " resolved_eighth = ?, resolved_at = ?"
     " WHERE player_key = ?"
 )
 # Matches (§21.3 rule 3, M20-09): one row per match, told apart by `at` and
@@ -420,6 +456,11 @@ _SQL_KEYS_ON_MAP = (
     " WHERE matches.map LIKE ? ESCAPE '\\'"
 )
 
+# The `meta` row that keeps the region the lab-addon's book recorded (M21-12).
+BOOK_REGION_META = "book_region"
+# ... and when the book first recorded it (fix round 1).
+BOOK_REGION_AT_META = "book_region_at"
+
 # ─── errors and models ───────────────────────────────────────────────────────
 
 
@@ -444,6 +485,13 @@ class Target(_Model):
     flavor_path: str
     account: str
     file: str
+
+
+NamesFrom = Literal["game", "log", "borrowed", "key"]
+RegionFrom = Literal["log", "book", "borrowed", "settings"]
+
+# One profile link of a player (M21-05): an address, or why there is none.
+type ProfileLink = links.Link | links.NoLink
 
 
 class CrewRow(crewbook.CrewPlayer):
@@ -510,10 +558,41 @@ class CrewRow(crewbook.CrewPlayer):
     first_name: str = ""
     second_name: str | None = None
     region: Region | None = None
-    # Where `region` came from (M21-02): `log`, a combat log's unit name for
-    # this player (the launch client's writes one); `settings`, the
-    # flavor's Config.wtf; None when there is no region.
-    region_from: Literal["log", "settings"] | None = None
+    # Where `region` came from (M21-02, M21-12), first that gives one:
+    # `log`, a combat log's unit name for this player (the launch client's
+    # writes one); `book`, the region the lab-addon's crew book recorded
+    # from the game (`GetCurrentRegionName()`), for a player the game's
+    # list gave; `borrowed`, a combat-log-only player's, from the row with
+    # the same GUID that the game's list gave (`borrowed_from`); `settings`,
+    # the flavor's Config.wtf; None when there is no region.
+    region_from: RegionFrom | None = None
+    # Where `first_name`, `second_name` and `game_name` came from (M21-12),
+    # first that gives them: `game`, the name the game gave for the
+    # player's GUID when the lab-addon asked (`resolved_name`, the in-game
+    # form; `realm` is then `resolved_realm` when not empty); `log`, a
+    # combat log's four-part unit name; `borrowed`, a combat-log-only
+    # player's, from the row with the same GUID that the game's list gave
+    # (`borrowed_from`; `realm` stays the one this row's own key gave);
+    # `key`, the stored key's two parts.
+    names_from: NamesFrom = "key"
+    # The stored key the names or the region were borrowed from (M21-12);
+    # None when nothing was borrowed.
+    borrowed_from: str | None = None
+    # When the crew book first recorded the region (fix round 1), for a
+    # region from the book or borrowed from it; None otherwise.
+    region_recorded_at: int | None = None
+    # The book's region and the settings' region when they differ (fix
+    # round 1): then `region` is None for a row whose region would come from
+    # either, since wowlab cannot tell which is right. Empty otherwise.
+    region_conflict: list[Region] = Field(default_factory=list)
+    # Links out (M21-05): the player's profile pages, as `links.profiles`
+    # builds them from `first_name`, `second_name` and `region` for the
+    # flavor's game version: the armory, the Journey Companion and
+    # Raider.IO, in that order, each an address or why there is none. Built
+    # by the crew commands, which know the game version; empty in a row
+    # read without one, and in `crew list --json --no-links`. Never a ForeverTwinking link: those are the
+    # player's own, pasted for their own characters (M21-03).
+    links: list[ProfileLink] = Field(default_factory=list)
 
 
 class CrewMatchRow(_Model):
@@ -1014,6 +1093,12 @@ class _Row:
     honor_level: int | None = None
     score: str | None = None
     score_at: int | None = None
+    # What the lab-addon asked the game for the player's GUID (M21-12, book
+    # schema 3): the latest answer the saved file gave.
+    resolved_name: str | None = None
+    resolved_realm: str | None = None
+    resolved_eighth: int | None = None
+    resolved_at: int | None = None
 
     def values(self) -> tuple[object, ...]:
         return (
@@ -1054,6 +1139,10 @@ class _Row:
             self.honor_level,
             self.score,
             self.score_at,
+            self.resolved_name,
+            self.resolved_realm,
+            self.resolved_eighth,
+            self.resolved_at,
         )
 
 
@@ -1107,19 +1196,34 @@ def _aliases(rows: Sequence[_Row]) -> dict[str, list[str]]:
     return out
 
 
-def _public(
-    row: _Row,
-    book: crewbook.CrewBook | None,
-    aliases: dict[str, list[str]] | None = None,
-    world: dict[str, _WorldPart] | None = None,
-    region: Region | None = None,
-    second_names: bool = False,
-    logged: _LogName | None = None,
-    records: dict[str, nemesis.Record] | None = None,
-) -> CrewRow:
-    kept = {p.key: p for p in book.players} if book is not None else {}
-    held = kept.get(row.key)
-    part = (world or {}).get(row.key) or _WorldPart()
+@dataclasses.dataclass(frozen=True)
+class _Naming:
+    """A row's names and region, and where each came from (M21-12)."""
+
+    names: charname.KeyNames
+    names_from: NamesFrom = "key"
+    region: Region | None = None
+    region_from: RegionFrom | None = None
+    borrowed_from: str | None = None
+    region_recorded_at: int | None = None
+    region_conflict: tuple[Region, ...] = ()
+
+
+def _own_names(
+    row: _Row, second_names: bool, logged: _LogName | None
+) -> tuple[charname.KeyNames, NamesFrom]:
+    """A row's names from what it holds itself: the game's answer for its
+    GUID, else a four-part log name, else its key."""
+    if row.resolved_name:
+        # The in-game form the game gave (`<First> <Second>` on Forever).
+        first, second = charname.split_game_name(row.resolved_name)
+        realm = row.resolved_realm or None
+        if realm is None and logged is not None and logged.second_name:
+            realm = logged.realm
+        if realm is None and second is None:
+            # A name with no second part: the key's other part is a realm.
+            realm = row.realm or None
+        return charname.KeyNames(first, second, charname.game_name(first, second), realm), "game"
     if logged is not None and logged.second_name:
         # A four-part unit name gave the second name and the realm.
         names = charname.KeyNames(
@@ -1128,14 +1232,111 @@ def _public(
             charname.game_name(row.name, logged.second_name),
             logged.realm,
         )
-    else:
-        # A key's second part is a second name only where the lab-addon
-        # wrote the key on a second-name flavor; a key only a three-part
-        # (beta) unit name gave keeps it as a realm.
-        names = charname.key_names(
-            row.name, row.realm, second_names=second_names and _from_book(row)
-        )
-    from_log = region_of(logged.region) if logged is not None else None
+        return names, "log"
+    # A key's second part is a second name only where the lab-addon wrote
+    # the key on a second-name flavor; a key only a three-part (beta) unit
+    # name gave keeps it as a realm.
+    names = charname.key_names(row.name, row.realm, second_names=second_names and _from_book(row))
+    return names, "key"
+
+
+def _lender(row: _Row, by_key: dict[str, _Row], aliases: dict[str, list[str]]) -> _Row | None:
+    """For a player only a combat log named, the row with the same GUID
+    that the game's list gave (the GUID aliases of §21.3), to borrow names
+    and region from: one the game named by GUID first, then the latest
+    seen, then the first key. None for a row the game's list gave, or with
+    no such row."""
+    if _from_book(row):
+        return None
+    found = [by_key[k] for k in aliases.get(row.key, []) if k in by_key and _from_book(by_key[k])]
+    if not found:
+        return None
+
+    def rank(r: _Row) -> tuple[int, int, str]:
+        seen = _newest(r.last, r.pvp_last) or 0
+        return (0 if r.resolved_name else 1, -seen, r.key)
+
+    return min(found, key=rank)
+
+
+def _namings(
+    rows: Sequence[_Row],
+    aliases: dict[str, list[str]],
+    log_names: dict[str, _LogName],
+    region: Region | None,
+    book_region: Region | None,
+    second_names: bool,
+    book_region_at: int | None = None,
+) -> dict[str, _Naming]:
+    """Each row's names and region with their sources (M21-12): its own
+    (`_own_names`; the region from a log name, else the book's for a player
+    the game's list gave), then, for a combat-log-only player whose own
+    names are only its key's, what the row with the same GUID has
+    (`_lender`), then the flavor's settings for the region. When the book's
+    region and the settings' both name a region and differ (fix round 1),
+    a row whose region would come from either has none, and says both
+    (`region_conflict`): wowlab cannot tell which is right."""
+    conflict: tuple[Region, ...] = ()
+    if book_region is not None and region is not None and book_region != region:
+        conflict = (book_region, region)
+    by_key = {r.key: r for r in rows}
+    own: dict[str, tuple[charname.KeyNames, NamesFrom, Region | None, RegionFrom | None]] = {}
+    for r in rows:
+        logged = log_names.get(r.key)
+        names, names_from = _own_names(r, second_names, logged)
+        from_log = region_of(logged.region) if logged is not None else None
+        got: Region | None = from_log
+        got_from: RegionFrom | None = "log" if from_log else None
+        if got is None and book_region is not None and _from_book(r):
+            got, got_from = book_region, "book"
+        own[r.key] = (names, names_from, got, got_from)
+    out: dict[str, _Naming] = {}
+    for r in rows:
+        names, names_from, got, got_from = own[r.key]
+        lender = _lender(r, by_key, aliases)
+        borrowed_from = None
+        if lender is not None:
+            lent_names, _, lent_region, _ = own[lender.key]
+            if names_from == "key" and lent_names.second_name is not None:
+                # The lender's first and second name; this row's own realm
+                # (the one its log name gave).
+                names = charname.KeyNames(
+                    lent_names.first_name,
+                    lent_names.second_name,
+                    lent_names.game_name,
+                    names.realm,
+                )
+                names_from = "borrowed"
+                borrowed_from = lender.key
+            if got is None and lent_region is not None:
+                got, got_from = lent_region, "borrowed"
+                borrowed_from = lender.key
+        if got is None and region is not None:
+            got, got_from = region, "settings"
+        if conflict and got_from != "log":
+            out[r.key] = _Naming(
+                names, names_from, None, None, borrowed_from, book_region_at, conflict
+            )
+            continue
+        at = book_region_at if got_from in ("book", "borrowed") else None
+        out[r.key] = _Naming(names, names_from, got, got_from, borrowed_from, at)
+    return out
+
+
+def _public(
+    row: _Row,
+    book: crewbook.CrewBook | None,
+    aliases: dict[str, list[str]] | None = None,
+    world: dict[str, _WorldPart] | None = None,
+    naming: _Naming | None = None,
+    records: dict[str, nemesis.Record] | None = None,
+) -> CrewRow:
+    kept = {p.key: p for p in book.players} if book is not None else {}
+    held = kept.get(row.key)
+    part = (world or {}).get(row.key) or _WorldPart()
+    if naming is None:
+        naming = _Naming(charname.key_names(row.name, row.realm, second_names=False))
+    names = naming.names
     return CrewRow(
         key=row.key,
         class_token=row.class_token,
@@ -1178,12 +1379,21 @@ def _public(
         world_last=part.last,
         world_zone=part.zone,
         record=(records or {}).get(row.key),
+        resolved_name=row.resolved_name,
+        resolved_realm=row.resolved_realm,
+        resolved_eighth=row.resolved_eighth,
+        resolved_at=row.resolved_at,
+        resolve_tried_at=held.resolve_tried_at if held is not None else None,
         game_name=names.game_name,
         realm=names.realm,
         first_name=names.first_name,
         second_name=names.second_name,
-        region=from_log or region,
-        region_from="log" if from_log else "settings" if region else None,
+        region=naming.region,
+        region_from=naming.region_from,
+        names_from=naming.names_from,
+        borrowed_from=naming.borrowed_from,
+        region_recorded_at=naming.region_recorded_at,
+        region_conflict=list(naming.region_conflict),
     )
 
 
@@ -1214,9 +1424,11 @@ def read(
     there is no database yet. Writes nothing but what SQLite itself needs
     to finish a change an earlier run left half done. `book`, when given,
     lends each player still in it its saved-file-only facts (in the group
-    at the last save, unknown fields). `region` is the book's own region,
-    given to every row, and `second_names` says the flavor's characters
-    have second names, so a key's second part is one (M21-02)."""
+    at the last save, unknown fields). `region` is the flavor's region from
+    its settings, the last fallback for every row's, and `second_names` says
+    the flavor's characters have second names, so a key's second part is
+    one (M21-02). Each row's names and region say where they came from
+    (M21-12, `_namings`)."""
     path = database_path(flavor_folder, account)
     try:
         conn = _open(path, create=False)
@@ -1225,15 +1437,19 @@ def read(
     if conn is None:
         return []
     try:
-        rows = list(_rows(conn).values())
+        # M22-22: a player only set-aside encounters hold is not listed.
+        aside = {str(k) for (k,) in conn.execute(_SQL_ASIDE_ONLY_KEYS)}
+        rows = [r for r in _rows(conn).values() if r.key not in aside]
         aliases = _aliases(rows)
         world = _world_parts(conn)
-        names = _log_names(conn)
+        meta = _meta(conn)
+        book_region = region_of(_text(meta.get(BOOK_REGION_META)))
+        book_region_at = _number(meta.get(BOOK_REGION_AT_META))
+        namings = _namings(
+            rows, aliases, _log_names(conn), region, book_region, second_names, book_region_at
+        )
         records = _records(conn, world)
-        return [
-            _public(r, book, aliases, world, region, second_names, names.get(r.key), records)
-            for r in rows
-        ]
+        return [_public(r, book, aliases, world, namings[r.key], records) for r in rows]
     except sqlite3.Error as exc:
         raise CrewDbError(f"The crew database {path} cannot be read ({exc}).") from exc
     finally:
@@ -1343,8 +1559,15 @@ _TEXTS = (
     ("race", "race", TEXT_MAX_BYTES),
     ("faction", "faction", TEXT_MAX_BYTES),
     ("spec", "specialization", TEXT_MAX_BYTES),
+    ("resolved_name", "name the game gave for the character's id", TEXT_MAX_BYTES),
+    ("resolved_realm", "realm the game gave for the character's id", TEXT_MAX_BYTES),
 )
-_TIMES = (("first", "first-grouped time"), ("last", "last-grouped time"))
+_TIMES = (
+    ("first", "first-grouped time"),
+    ("last", "last-grouped time"),
+    ("resolved_at", "time the game was asked for the name"),
+    ("resolve_tried_at", "time the game was last asked for a name it did not give"),
+)
 
 
 def _refused(kind: str, rule: str) -> str:
@@ -1710,6 +1933,18 @@ def _with_seen(
     ):
         new.score = _score_text(score)
         new.score_at = score.at
+    # M21-12: the name the game gave by GUID, all four together, from the
+    # saved file when it holds one asked no earlier than the row's.
+    if p.resolved_name is not None and (
+        row is None
+        or row.resolved_name is None
+        or row.resolved_at is None
+        or (p.resolved_at is not None and p.resolved_at >= row.resolved_at)
+    ):
+        new.resolved_name = p.resolved_name
+        new.resolved_realm = p.resolved_realm
+        new.resolved_eighth = p.resolved_eighth
+        new.resolved_at = p.resolved_at
     return new
 
 
@@ -1996,9 +2231,13 @@ def _elsewhere(path: Path, root: object, flavor_folder: object, account: str) ->
 
 
 def _meta_rows(
-    target: Target, book: crewbook.CrewBook, data: bytes, journal: str | None
+    target: Target,
+    book: crewbook.CrewBook,
+    data: bytes,
+    journal: str | None,
+    kept: dict[str, object] | None = None,
 ) -> dict[str, object]:
-    return {
+    rows: dict[str, object] = {
         "schema": SCHEMA,
         "last_sync": int(time.time()),
         "book_sha256": hashlib.sha256(data).hexdigest(),
@@ -2008,6 +2247,18 @@ def _meta_rows(
         "install_root": target.install_root,
         "journal_record": journal,
     }
+    # M21-12: the region the book recorded (`GetCurrentRegionName()`), when
+    # it is a region wowlab knows; a book with none leaves the one kept.
+    book_region = region_of(book.region)
+    if book_region is not None:
+        rows[BOOK_REGION_META] = book_region
+        # When the book recorded it; a book from before fix round 1 names no
+        # time, so the first sync that saw this region stands for it.
+        before = kept or {}
+        same = before.get(BOOK_REGION_META) == book_region
+        kept_at = _number(before.get(BOOK_REGION_AT_META)) if same else None
+        rows[BOOK_REGION_AT_META] = book.region_at or kept_at or rows["last_sync"]
+    return rows
 
 
 def sync(
@@ -2242,7 +2493,7 @@ def _sync_open(
         added, updated, plan = _changes(rows, book, mode, now, unsynced)
         games = _new_matches(conn, book)
         plan = plan.model_copy(update={"matches_added": len(games)})
-        _write(conn, added, updated, _meta_rows(target, book, data, newest), games)
+        _write(conn, added, updated, _meta_rows(target, book, data, newest, meta), games)
     total = len(rows) + len(added)
     return SyncOutcome(
         state="synced",
@@ -2426,6 +2677,31 @@ def _clear_temps(path: Path) -> None:
 
 
 _SQL_COUNT_PLAYERS = "SELECT count(*), coalesce(sum(in_book), 0) FROM players"
+# M22-22: a player only a set-aside encounter holds (`by_map` 2: its map not
+# in the game's map table) is kept, for a later table, but neither counted
+# nor listed: never in the game's list, no group, no match, no rating or
+# note, and no encounter that is not set aside.
+_SQL_ASIDE_ONLY_KEYS = (
+    "SELECT player_key FROM players WHERE in_book = 0 AND met = 0 AND met_seen = 0"
+    " AND allied = 0 AND faced = 0 AND allied_seen = 0 AND faced_seen = 0"
+    " AND pvp_last IS NULL AND rating IS NULL AND note IS NULL"
+    " AND player_key NOT IN (SELECT player_key FROM match_players)"
+    " AND player_key IN (SELECT p.player_key FROM world_encounter_players AS p"
+    " JOIN world_encounters AS e ON e.encounter_id = p.encounter_id WHERE e.by_map = 2)"
+    " AND player_key NOT IN (SELECT p.player_key FROM world_encounter_players AS p"
+    " JOIN world_encounters AS e ON e.encounter_id = p.encounter_id WHERE e.by_map != 2)"
+)
+_SQL_COUNT_PLAYERS_6 = (
+    "SELECT count(*), coalesce(sum(in_book), 0) FROM players WHERE player_key NOT IN"
+    " (SELECT player_key FROM players WHERE in_book = 0 AND met = 0 AND met_seen = 0"
+    " AND allied = 0 AND faced = 0 AND allied_seen = 0 AND faced_seen = 0"
+    " AND pvp_last IS NULL AND rating IS NULL AND note IS NULL"
+    " AND player_key NOT IN (SELECT player_key FROM match_players)"
+    " AND player_key IN (SELECT p.player_key FROM world_encounter_players AS p"
+    " JOIN world_encounters AS e ON e.encounter_id = p.encounter_id WHERE e.by_map = 2)"
+    " AND player_key NOT IN (SELECT p.player_key FROM world_encounter_players AS p"
+    " JOIN world_encounters AS e ON e.encounter_id = p.encounter_id WHERE e.by_map != 2))"
+)
 _SQL_COUNT_MATCHES = "SELECT count(*) FROM matches"
 
 
@@ -2465,11 +2741,17 @@ def _counts(path: Path) -> tuple[int, int, int, tuple[int, int, int] | None] | s
         version = conn.execute(_SQL_READ_VERSION).fetchone()[0]
         if version > SCHEMA:
             return "a newer wowlab wrote it; update wowlab to read it"
-        players, in_book = conn.execute(_SQL_COUNT_PLAYERS).fetchone()
+        if version >= 6:
+            players, in_book = conn.execute(_SQL_COUNT_PLAYERS_6).fetchone()
+        else:
+            players, in_book = conn.execute(_SQL_COUNT_PLAYERS).fetchone()
         (matches,) = conn.execute(_SQL_COUNT_MATCHES).fetchone()
         world: tuple[int, int, int] | None = None
         if _has_world(conn):
-            encounters, opponents, logs = conn.execute(_SQL_COUNT_WORLD).fetchone()
+            if version >= 6:
+                encounters, opponents, logs = conn.execute(_SQL_COUNT_WORLD_6).fetchone()
+            else:
+                encounters, opponents, logs = conn.execute(_SQL_COUNT_WORLD).fetchone()
             world = (int(encounters), int(opponents), int(logs))
     except sqlite3.Error:
         return "wowlab could not read it now"
@@ -3009,7 +3291,8 @@ _SQL_WORLD_PARTS = (
     "SELECT p.player_key, p.side, p.killed_by_you, p.killed_you, e.start_at, e.end_at, e.zone"
     " FROM world_encounter_players AS p"
     " JOIN world_encounters AS e ON e.encounter_id = p.encounter_id"
-    " WHERE e.instance_id IS NULL OR e.instance_id NOT IN (SELECT map_id FROM matches)"
+    " WHERE (e.instance_id IS NULL OR e.instance_id NOT IN (SELECT map_id FROM matches))"
+    " AND e.by_map != 2"
     " ORDER BY e.end_at, e.encounter_id"
 )
 _SQL_WORLD_LOG_BY_PATH = (
@@ -3030,8 +3313,26 @@ _SQL_WORLD_LOG_UPDATE = (
 _SQL_WORLD_LOG_DROP = "DELETE FROM world_logs WHERE path = ? AND log_id != ?"
 _SQL_WORLD_COUNT = "SELECT count(*) FROM world_encounters"
 _SQL_WORLD_INSERT = (
-    "INSERT INTO world_encounters (log_id, owner_guid, start_at, end_at, zone, instance_id, died)"
-    " VALUES (?, ?, ?, ?, ?, ?, ?)"
+    "INSERT INTO world_encounters"
+    " (log_id, owner_guid, start_at, end_at, zone, instance_id, died, by_map)"
+    " VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
+)
+# The 5 -> 6 re-check of stored encounters against the map table
+# (`recheck_world`, M22-22).
+_SQL_RECHECK_PENDING = (
+    "SELECT encounter_id, instance_id, by_map FROM world_encounters"
+    " WHERE by_map IN (0, 2) ORDER BY encounter_id"
+)
+_SQL_RECHECK_PART_KEYS = (
+    "SELECT DISTINCT player_key FROM world_encounter_players WHERE encounter_id = ?"
+)
+_SQL_RECHECK_DROP_PARTS = "DELETE FROM world_encounter_players WHERE encounter_id = ?"
+_SQL_RECHECK_DROP_ENCOUNTER = "DELETE FROM world_encounters WHERE encounter_id = ?"
+_SQL_RECHECK_MARK = "UPDATE world_encounters SET by_map = 1 WHERE encounter_id = ?"
+_SQL_RECHECK_SET_ASIDE = "UPDATE world_encounters SET by_map = 2 WHERE encounter_id = ?"
+_SQL_RECHECK_DROP_ORPHAN_NAMES = (
+    "DELETE FROM log_names WHERE player_key = ?"
+    " AND player_key NOT IN (SELECT player_key FROM players)"
 )
 _SQL_WORLD_PLAYER_INSERT = (
     "INSERT INTO world_encounter_players"
@@ -3042,14 +3343,15 @@ _SQL_SET_GUID_IF_NONE = "UPDATE players SET guid = ? WHERE player_key = ? AND gu
 _SQL_WORLD_ENCOUNTERS_ALL = (
     "SELECT encounter_id, owner_guid, start_at, end_at, zone, instance_id, died"
     " FROM world_encounters"
-    " WHERE instance_id IS NULL OR instance_id NOT IN (SELECT map_id FROM matches)"
+    " WHERE (instance_id IS NULL OR instance_id NOT IN (SELECT map_id FROM matches))"
+    " AND by_map != 2"
     " ORDER BY start_at DESC, encounter_id DESC"
 )
 _SQL_WORLD_ENCOUNTERS_OF = (
     "SELECT encounter_id, owner_guid, start_at, end_at, zone, instance_id, died"
     " FROM world_encounters"
     " WHERE (instance_id IS NULL OR instance_id NOT IN (SELECT map_id FROM matches))"
-    " AND encounter_id IN"
+    " AND by_map != 2 AND encounter_id IN"
     " (SELECT encounter_id FROM world_encounter_players WHERE player_key = ?)"
     " ORDER BY start_at DESC, encounter_id DESC"
 )
@@ -3068,6 +3370,18 @@ _SQL_COUNT_WORLD = (
     " (SELECT count(DISTINCT p.player_key) FROM world_encounter_players AS p"
     " JOIN world_encounters AS e ON e.encounter_id = p.encounter_id"
     " WHERE p.side = 'foe'"
+    " AND (e.instance_id IS NULL OR e.instance_id NOT IN (SELECT map_id FROM matches))),"
+    " (SELECT count(*) FROM world_logs)"
+)
+# The same from schema 6 on (M22-22): an encounter set aside (`by_map` 2,
+# its map not in the game's map table) counts nowhere.
+_SQL_COUNT_WORLD_6 = (
+    "SELECT"
+    " (SELECT count(*) FROM world_encounters WHERE by_map != 2"
+    " AND (instance_id IS NULL OR instance_id NOT IN (SELECT map_id FROM matches))),"
+    " (SELECT count(DISTINCT p.player_key) FROM world_encounter_players AS p"
+    " JOIN world_encounters AS e ON e.encounter_id = p.encounter_id"
+    " WHERE p.side = 'foe' AND e.by_map != 2"
     " AND (e.instance_id IS NULL OR e.instance_id NOT IN (SELECT map_id FROM matches))),"
     " (SELECT count(*) FROM world_logs)"
 )
@@ -3187,7 +3501,9 @@ class WorldOutcome(_Model):
     this book exists for another install root or flavor folder: `crew sync
     --adopt`). `read_from` and `read_to` are the log's offsets; the counts
     are of this scan: fights counted, fights in a battleground, arena or
-    instance (`outside_world`), before the log's first zone line
+    instance (`outside_world`), on a map the game's map table does not
+    hold (`unknown_map`, not counted; `unknown_maps` their instance ids, at
+    most `worldpvp.MAX_UNKNOWN_MAPS`), before the log's first zone line
     (`no_zone`) or with a time that could not be read (`no_time`); the
     encounters kept and left out (past the cap, or a time out of range);
     the opponents and allies in them, the players added to the database,
@@ -3207,12 +3523,17 @@ class WorldOutcome(_Model):
     read_to: int
     fights: int = 0
     outside_world: int = 0
+    unknown_map: int = 0
+    unknown_maps: list[int] = Field(default_factory=list)
     no_zone: int = 0
     no_time: int = 0
     bad_lines: int = 0
     pet_hits_no_owner: int = 0
     parts: int = 1
     encounters_added: int = 0
+    # M22-22: encounters kept but set aside: on a map the game's map table
+    # does not hold (`by_map` 2), counted nowhere until a later table names it.
+    encounters_set_aside: int = 0
     encounters_left_out: int = 0
     opponents: int = 0
     allies: int = 0
@@ -3398,6 +3719,8 @@ def record_world(
         "read_to": scan.end,
         "fights": scan.fights,
         "outside_world": scan.outside_world,
+        "unknown_map": scan.unknown_map,
+        "unknown_maps": scan.unknown_maps,
         "no_zone": scan.no_zone,
         "no_time": scan.no_time,
         "bad_lines": scan.bad_lines,
@@ -3476,7 +3799,8 @@ def _record_open(
     log, size, head = seen
     ident = _ident(path)
     now_ns = time.time_ns()
-    added = left_out = players_added = players_left_out = 0
+    added = left_out = players_left_out = set_aside = 0
+    inserted: set[str] = set()  # the players this read added a row for
     foes: set[str] = set()
     allies: set[str] = set()
     with _transaction(conn):
@@ -3510,10 +3834,22 @@ def _record_open(
                 continue
             players, out = _world_players(e)
             players_left_out += out
-            values = (log_id, e.owner_guid, e.start, e.end, e.zone, e.instance_id, int(e.died))
+            values = (
+                log_id,
+                e.owner_guid,
+                e.start,
+                e.end,
+                e.zone,
+                e.instance_id,
+                int(e.died),
+                2 if e.unknown_map else int(e.by_map),
+            )
             encounter_id = conn.execute(_SQL_WORLD_INSERT, values).lastrowid
             kept += 1
-            added += 1
+            if e.unknown_map:
+                set_aside += 1
+            else:
+                added += 1
             for p in players:
                 if p.key not in rows and len(rows) >= MAX_PLAYERS:
                     # A player only the log names counts against the
@@ -3533,7 +3869,8 @@ def _record_open(
                         int(p.killed_you),
                     ),
                 )
-                (foes if p.side == "foe" else allies).add(p.key)
+                if not e.unknown_map:
+                    (foes if p.side == "foe" else allies).add(p.key)
                 logged = _log_name_values(p)
                 if logged is not None:  # M21-02: a four-part unit name
                     conn.execute(_SQL_LOG_NAMES_SET, (p.key, *logged))
@@ -3551,15 +3888,16 @@ def _record_open(
                 )  # fmt: skip
                 conn.execute(_SQL_PLAYER_INSERT, (row.key, *row.values()))
                 rows[p.key] = row
-                players_added += 1
+                inserted.add(p.key)
         carried, not_carried = _carry_marks(conn, rows, seen_full)
     outcome = _world_outcome("scanned", "", base).model_copy(
         update={
             "encounters_added": added,
+            "encounters_set_aside": set_aside,
             "encounters_left_out": left_out + scan.left_out,
             "opponents": len(foes),
             "allies": len(allies - foes),
-            "players_added": players_added,
+            "players_added": len(inserted & (foes | allies)),
             "players_left_out": players_left_out,
             "read_again": read_again,
             "logs_kept_old_keys": kept_old,
@@ -3568,6 +3906,129 @@ def _record_open(
         }
     )
     return outcome.model_copy(update={"words": scanned_words(outcome)})
+
+
+class WorldRecheck(_Model):
+    """What `recheck_world` did (M22-22): how many stored encounters it
+    judged against the game's map table (`checked`), how many of them it
+    removed because the table names their map as an instance (`removed`:
+    a dungeon, raid or battleground, or another type that is not the open
+    world; that 4 is an arena is not yet confirmed), how many it set aside
+    because the table does not hold their map (`set_aside`: kept, counted
+    nowhere, judged again by a later table), how many set aside before it
+    brought back because a later table names their map as the open world
+    (`brought_back`), and how many players it removed with the removed ones
+    (`players_removed`: held by nothing else). `skipped`: another wowlab
+    was writing the database, so nothing was judged (the next read does
+    it)."""
+
+    checked: int = 0
+    removed: int = 0
+    set_aside: int = 0
+    brought_back: int = 0
+    players_removed: int = 0
+    skipped: bool = False
+
+
+def _rejudged(maps: Mapping[int, int], instance_id: object, by_map: object) -> str | None:
+    """What the re-check does with one stored encounter: `world`, `aside`
+    or `remove`, or None when nothing would change (one already set aside
+    whose map this table does not hold either, or one whose zone line gave
+    no instance id: the difficulty decided it, and still does)."""
+    if not isinstance(instance_id, int):
+        return None  # no map to look up: the difficulty decided it, and stays
+    state = worldpvp.ZoneState(instance_id=instance_id)
+    if worldpvp.in_open_world(state, maps=maps):
+        return "world"
+    if worldpvp.unknown_map(state, maps):
+        return None if by_map == 2 else "aside"
+    return "remove"
+
+
+def recheck_world(target: Target, maps: Mapping[int, int]) -> WorldRecheck:
+    """The 5 -> 6 step's re-check (M22-22): each stored encounter not yet
+    judged by the game's map table (`by_map` 0) or set aside before
+    (`by_map` 2) is judged by `worldpvp.in_open_world`'s rule with the table
+    (`maps`, `worldpvp.map_types`). The open world is marked 1. A map the
+    table does not hold is set aside (2): kept, but counted nowhere, since
+    it is likely a map a hotfix added that the published table lacks, and
+    once its log is gone nothing could rebuild it. Only a map the table
+    names as an instance is removed, with its players' parts, and so is
+    each of those players' rows that nothing else holds (never in the
+    game's list, no group, no match, no rating or note, no other encounter)
+    and its `log_names` row; no other row is touched, so a player in the
+    crew book, rated or noted is never removed. One transaction under the
+    write lock, after today's copy, and only when something would change;
+    the `.before-schema-5` copy the migration kept holds every encounter as
+    it was. Running it again changes nothing. No database, a database for
+    another install root, or nothing to change: nothing is written."""
+    path = database_path(target.flavor_folder, target.account)
+    if not os.path.lexists(path):
+        return WorldRecheck()
+    try:
+        conn = _open(path, create=False)
+    except sqlite3.OperationalError as exc:
+        if _locked(exc):
+            return WorldRecheck(skipped=True)
+        raise CrewDbError(f"The crew database {path} cannot be opened ({exc}).") from exc
+    if conn is None:
+        return WorldRecheck()
+    try:
+        meta = _meta(conn)
+        if "install_root" in meta and meta.get("install_root") != target.install_root:
+            return WorldRecheck()
+        if not any(
+            _rejudged(maps, i, b) is not None for _, i, b in conn.execute(_SQL_RECHECK_PENDING)
+        ):
+            return WorldRecheck()
+        ident = _ident(path)
+        checked = removed = aside = back = players_removed = 0
+        with _transaction(conn):
+            _still(path, ident)
+            pending = [
+                (e, i, b, _rejudged(maps, i, b))
+                for e, i, b in conn.execute(_SQL_RECHECK_PENDING).fetchall()
+            ]
+            if any(what is not None for *_, what in pending):
+                _daily_copy(conn, path)
+            held: set[str] = set()
+            for encounter_id, _instance, was, what in pending:
+                if what is None:
+                    continue
+                checked += 1
+                if what == "world":
+                    conn.execute(_SQL_RECHECK_MARK, (encounter_id,))
+                    back += was == 2
+                elif what == "aside":
+                    conn.execute(_SQL_RECHECK_SET_ASIDE, (encounter_id,))
+                    aside += 1
+                else:
+                    held.update(
+                        str(k) for (k,) in conn.execute(_SQL_RECHECK_PART_KEYS, (encounter_id,))
+                    )
+                    conn.execute(_SQL_RECHECK_DROP_PARTS, (encounter_id,))
+                    conn.execute(_SQL_RECHECK_DROP_ENCOUNTER, (encounter_id,))
+                    removed += 1
+            for key in sorted(held):
+                players_removed += conn.execute(_SQL_REQUEUE_DROP_LOG_ONLY_PLAYER, (key,)).rowcount
+                conn.execute(_SQL_RECHECK_DROP_ORPHAN_NAMES, (key,))
+        return WorldRecheck(
+            checked=checked,
+            removed=removed,
+            set_aside=aside,
+            brought_back=back,
+            players_removed=players_removed,
+        )
+    except _Replaced:
+        return WorldRecheck(skipped=True)
+    except sqlite3.OperationalError as exc:
+        if _locked(exc):
+            return WorldRecheck(skipped=True)
+        raise CrewDbError(f"The crew database {path} could not be written ({exc}).") from exc
+    except sqlite3.Error as exc:
+        raise CrewDbError(f"The crew database {path} could not be written ({exc}).") from exc
+    finally:
+        conn.close()
 
 
 def world_encounters(
@@ -3652,6 +4113,7 @@ _SQL_FIGHTS_WORLD_ALL = (
     " JOIN world_encounters AS e ON e.encounter_id = p.encounter_id"
     " WHERE p.side = 'foe'"
     " AND (e.instance_id IS NULL OR e.instance_id NOT IN (SELECT map_id FROM matches))"
+    " AND e.by_map != 2"
     " ORDER BY e.start_at, e.encounter_id, p.player_key"
 )
 _SQL_FIGHTS_WORLD_OF = (
@@ -3660,6 +4122,7 @@ _SQL_FIGHTS_WORLD_OF = (
     " JOIN world_encounters AS e ON e.encounter_id = p.encounter_id"
     " WHERE p.side = 'foe' AND p.player_key = ?"
     " AND (e.instance_id IS NULL OR e.instance_id NOT IN (SELECT map_id FROM matches))"
+    " AND e.by_map != 2"
     " ORDER BY e.start_at, e.encounter_id"
 )
 
@@ -3793,6 +4256,7 @@ __all__ = [
     "SyncPlan",
     "Target",
     "WorldOutcome",
+    "WorldRecheck",
     "WorldResume",
     "adopt",
     "check_book",
@@ -3810,6 +4274,7 @@ __all__ = [
     "match_problems",
     "matches",
     "read",
+    "recheck_world",
     "record_world",
     "scanned_words",
     "summaries",

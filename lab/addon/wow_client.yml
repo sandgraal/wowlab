@@ -254,6 +254,13 @@ globals:
   UnitGUID:
     args:
       - type: string
+  # Crew.lua (M21-12, schema 3): a kept player's name, realm and probably
+  # level, asked by their GUID; and the client's region, once per book.
+  GetPlayerInfoByGUID:
+    args:
+      - type: string
+  GetCurrentRegionName:
+    args: []
   UnitFactionGroup:
     args:
       - type: string

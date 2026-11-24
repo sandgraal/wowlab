@@ -739,9 +739,12 @@ so world PvP can be read from the log at the desk:
   `LoggingCombat`, or the log does not change when asked out of combat: one
   line, no error; the record keeps its count and says why (`dormant`), and
   `/wowlab combatlog` says "stopped switching this session".
-- **Log files.** Each switch-on may start a new `WoWCombatLog-*.txt` in
-  `Logs/` [verify]; they pile up there, and deleting old ones is yours to
-  do. `wowlab crew scan-log` with no file reads every log not read before
+- **Log files.** A switch-on within one session adds to the log file
+  already there: a new header and zone lines at its end (seen in the
+  owner's log of 2026-11-23, which holds three). Whether a logout or another
+  character starts a new `WoWCombatLog-*.txt` in `Logs/` is not yet
+  confirmed [verify]; the files pile up there, and deleting old ones is
+  yours to do. `wowlab crew scan-log` with no file reads every log not read before
   (the newest 1,000), oldest first; one it cannot open is skipped and named,
   and the others are read.
 - The record, `WowLabCharDB.combatlog`: `idle_minutes`, `switches` (a count
@@ -755,7 +758,7 @@ so world PvP can be read from the log at the desk:
 `LoggingCombat` and lets a call switch the log, out of combat and in combat;
 that `LoggingCombat()` with no argument returns `true` or `false`; that the
 log stays on across `/reload` and across a logout to another character;
-whether each switch-on starts a new log file; whether entering an instance
+whether a switch-on after a logout starts a new log file; whether entering an instance
 fires `ZONE_CHANGED_NEW_AREA` before the 15 s check; the setting's name
 `advancedCombatLogging`; since M21-11, that `C_ChatInfo.IsLoggingCombat`
 answers addons with the log's state and the advanced flag (read first;
@@ -851,7 +854,7 @@ records nothing.
 
 What it keeps: the account-wide `WowLabCrewDB` in the account's
 `WowLab.lua` (`## SavedVariables: WowLabDB, WowLabCrewDB`), with its own
-`schema = 2` (1 before this version); the per-character schema does not change. "Account-wide" is
+`schema = 3` (2 from M20, 1 before); the per-character schema does not change. "Account-wide" is
 narrower than it sounds: one book per game account folder in one flavor
 folder, and a renamed flavor folder leaves the book where it was. The
 record's layout is in `docs/LAB_PLAN.md` §20.1 and `docs/LAB_FORMATS.md`
@@ -887,6 +890,44 @@ before the scoreboard data is asked for (the request is made after its
 reads), so 0 rows and no fields in it mean the data had not arrived yet, not
 that a call is missing; the second is the one to read. Every call, event
 and answer here is **[verify]** until the owner's battleground check (M20-06).
+
+Full names and the region (schema 3, M21-12). The book records the
+game's region once (`region`, the text `GetCurrentRegionName()` gives:
+`"US"` on the owner's launch client, 2026-11-23, with `region_at`, when),
+and, for each kept player with a `guid` and no name from the game yet,
+asks `GetPlayerInfoByGUID`: its sixth value is kept as `resolved_name`
+(`"Tay Soulrend"`, the in-game `<First> <Second>`, on Forever), the
+seventh as `resolved_realm` (empty for the player checked on 2026-11-23;
+retail leaves it empty for your own realm, not yet confirmed), the eighth
+as `resolved_eighth` (22 for a level-22 character, so probably the level,
+not yet confirmed) and the time as `resolved_at`. Both run at the end of a
+roster pass and of the scoreboard pass, so only while the book is on and
+out of combat. The client is believed to name only a player it has met
+lately, so the names are asked in this order (fix round 1, 2026-11-24):
+players met this session (a group member, a scoreboard row), with no
+limit; then players never asked; then one more ask, at a pass at least 5 s
+later (`RETRY_SECONDS`), of a GUID that gave nothing this session (the
+client has no event for a late answer, so asking again is the only way to
+collect one); then players that gave nothing in an earlier session, the
+oldest ask first. All but the first kind share 100 asks per pass
+(`MAX_RESOLVES`), and the last kind also 100 per login or `/reload`. A
+GUID that gives no name keeps the time of the ask (`resolve_tried_at`), so
+it goes to the back of the queue; a name clears it. So players the client
+cannot name never keep it from naming a player met now, and a full book is
+asked a little at a time. The migration
+gives a schema 2 book only the new number (a schema 1 book also its empty
+`matches`), for a book that is on, as before; an older WowLab leaves a
+schema 3 book alone. **[verify]** in game: whether the client answers for
+a player met in an earlier session (after a cold start, not a `/reload`),
+whether a second ask a few seconds later collects an answer the first did
+not give, and the eighth value. `/wowlab crew` says "No names by character
+id" when the client has no `GetPlayerInfoByGUID`. The desk fills each crew
+row's first and second name and region from these, and a player only a
+combat log named borrows them from the book's row with the same GUID
+(`crew list --json`: `names_from`, `region_from`, `borrowed_from`). An
+open-world opponent from `crew scan-log` is never in the book; on the
+launch client their names and region come from the combat log's four-part
+unit name, not from this lookup.
 
 How it records: on `GROUP_ROSTER_UPDATE` and `UNIT_NAME_UPDATE`, debounced
 by 2 s, and once 15 s after entering the world (so `/wowlab crew off` can be
@@ -1210,6 +1251,8 @@ on from one, fails the test until someone lists it on purpose.
 | `GetGuildInfo` | crew book: `guild` (first return only), never cleared by a nil; identity (schema 5): the character's `guild` | [verify] | yes |
 | `GetInstanceInfo` | crew book: `where` (the name, with `\|` removed) and `where_id` (eighth return), left out when the type is `none` (the open world) | [verify] | yes |
 | `UnitGUID` | crew book: a member's `guid`, and the player's own, to find the own scoreboard row and leave it out (also left out by its name-realm, from `UnitName("player")`); identity (schema 5): the character's `guid` | [verify] | yes |
+| `GetPlayerInfoByGUID` | crew book (schema 3, M21-12): for a kept player with a `guid` and no `resolved_name`, its sixth return as `resolved_name`, seventh as `resolved_realm` and eighth as `resolved_eighth`; out of combat; players met this session first, with no limit, then the never asked, one more ask at least 5 s after a miss, then earlier sessions' misses oldest first, at most 100 a pass and 100 earlier misses a login; no name: only `resolve_tried_at` stored (fix round 1, 2026-11-24). *2026-11-23 (owner's check, Forever launch client):* it returned `"Warlock","WARLOCK","Undead","Scourge",3,"Tay Soulrend","",22`, so the name is `<First> <Second>`, the realm was empty for that player (retail leaves it empty for your own realm, [verify]), and the eighth value is probably the level (22 for a level-22 character, [verify]); whether it answers for a player met in an earlier session, and whether a second ask collects a late answer, is [verify] | [verify] | yes |
+| `GetCurrentRegionName` | crew book (schema 3, M21-12): the book's `region`, once per book, as given, with `region_at`; the owner's check of 2026-11-23 returned `"US"` on the Forever launch client | [verify] | yes |
 | `UnitFactionGroup` | crew book: a member's `faction` (first return, the English name) | [verify] | yes |
 | `UnitHonorLevel` | crew book: a member's `honor_level` | [verify] | yes |
 | `TooltipDataProcessor.AddTooltipPostCall` | crew book: the tooltip line's hook, installed once per session while the book is on and out of combat, for tooltips that show a unit | [verify] | no: a FrameXML table these six files do not list (forever-addon-kit's 69893 list had it); defined in `Blizzard_SharedXMLGame`'s `TooltipDataHandler.lua` at 71037 |

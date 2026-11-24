@@ -373,6 +373,9 @@ shows; anything wider is **[verify]**.
 - File name `WoWCombatLog-MMDDYY_HHMMSS.txt`, matching the first line's
   local time. Whether the client starts a new file each time logging is
   turned on, and whether the header repeats inside a file, are **[verify]**.
+  *Resolved 2026-11-23 (M22-22, see Amendments):* switched on again within
+  one session, the client appends a new header and zone lines to the same
+  file.
 - Header `COMBAT_LOG_VERSION,22,ADVANCED_LOG_ENABLED,1,BUILD_VERSION,1.60.1,PROJECT_ID,18`.
   `BUILD_VERSION` is the patch only (the retail example above is
   illustrative; retail writing the patch only is community documentation
@@ -1852,6 +1855,21 @@ Dated entries, newest last. Each names the fixture that prompted it.
   with it. How the client writes the lists (positional entries with
   `-- [n]` comments, §4.2) is expected and not yet seen in a capture
   **[verify]**, as is every field the addon of M20-05 and M20-08 writes.
+- **2026-11-24, §4, schema 3 of the crew book (M21-12; no fixture yet: the
+  reader is graded on constructed books).** `WowLabCrewDB.schema` 3 is
+  schema 2 plus, at the top level, `region` (text, as the client's
+  `GetCurrentRegionName()` gave it, `"US"` on the owner's launch client;
+  left out until read, never changed after) and `region_at` (a time, when
+  it was recorded), and on each player entry `resolved_name` and
+  `resolved_realm` (text: `GetPlayerInfoByGUID`'s sixth and seventh values,
+  `"<First> <Second>"` on Forever and `""` for the player checked on
+  2026-11-23; retail leaves the realm empty for your own realm **[verify]**),
+  `resolved_eighth` (a whole number, its eighth value, probably the level
+  **[verify]**) and `resolved_at` (a time), all left out until the client
+  answered for the player's GUID, and `resolve_tried_at` (a time: the last
+  ask the client gave no name to; removed once it does). The addon's migration gives a schema 2
+  book that is on only the new number. `wowlab` reads schema 1 to 3; at 1
+  and 2 the new fields are keys it does not know.
 - **2026-11-19, §12, bone tracks and their keys (M15-26,
   `macos-70959/derived/charmodel.json`, rows `sheath_rotation_keys` and
   `hand_bone_keys`; read by `scripts/charmodel_facts.py`, the library
@@ -1950,6 +1968,48 @@ Dated entries, newest last. Each names the fixture that prompted it.
   hyphen, which would make a four-part name ambiguous, is **[verify]**; so is
   whether the launch client writes the owner's own unit name in four parts
   too (the slice holds no line of the owner's).
+- **2026-11-23, §8, a dungeon's zone line, and logging switched on again
+  within one file (M22-22; fixture
+  `macos-71037/forever/Logs/WoWCombatLog-012427_232527.txt`, build
+  1.60.1.71037, 50 whole lines of the owner's log
+  `WoWCombatLog-112326_133025.txt` of 2026-11-23, 9,395 lines; table
+  `wago/Map.1.60.1.71037.csv`).** The launch client writes
+  `ZONE_CHANGE,33,"Shadowfang Keep",0` on entering a dungeon: the third
+  field, the difficulty, is 0, as on the open world's
+  `ZONE_CHANGE,0,"Tirisfal Glades",0`. So the difficulty does not tell an
+  instance from the open world. The first field is the map's id in the
+  game's `Map` table (33 is Shadowfang Keep there, `InstanceType` 1; the
+  open-world zones of the same log are on maps 0 and 1, `InstanceType` 0);
+  wowlab now decides the open world by that table's `InstanceType` (0 the
+  open world; 1 dungeon, 2 raid, 3 battleground; 4 arena by community
+  documentation **[verify]**: no map of this build has it, and the one map
+  named for an arena, 2999 "Ruins of Lordaeron", is type 1), and by the
+  difficulty only when the table is not cached. With the table read, a map
+  it does not hold is not taken for the open world: its fights are kept set
+  aside, counted nowhere, until a later table names the map. A city on a continent
+  map is the open world by its zone line: the fixture's
+  `ZONE_CHANGE,1,"Orgrimmar",0` (Orgrimmar on Kalimdor, map 1, type 0).
+  Map 2996, "Warsong Gulch (Winter)", is type 0 in the table although it
+  is named for a battleground; whether a player can enter it is
+  **[verify]**, and a fight there counts as the open world unless wowlab
+  keeps a match on that map. What a battleground's or a raid's zone line
+  holds is still **[verify]** (no log enters one).
+  Second: logging switched on again within one session appends to the same
+  file. The owner's 13:30 log holds three `COMBAT_LOG_VERSION` headers (at
+  13:30:25, 14:11:01 and 14:30:36 local time, after gaps of about 30 and 8
+  minutes with no line), each followed within a millisecond by a
+  `ZONE_CHANGE` and one or two `MAP_CHANGE` lines; the file name keeps the
+  first header's time. This answers the **[verify]** above ("whether the
+  header repeats inside a file": it does) and M20-19's "each switch-on may
+  start a new `WoWCombatLog-*.txt`" for a switch within one session: it
+  does not. Whether a logout, or a switch on another character, starts a
+  new file is still **[verify]**. Every header of that log says
+  `ADVANCED_LOG_ENABLED,0`, yet its damage and cast lines carry the
+  advanced block: the beta log (flag 1, `macos/`) and both launch logs
+  (flag 0) have the same field counts (`SWING_DAMAGE` 38,
+  `SPELL_CAST_SUCCESS` 31, `SPELL_AURA_APPLIED` 13), so in these logs the
+  flag does not change a line's shape, and wowlab finds the block by its
+  field count, never by the flag. What the flag reports is **[verify]**.
 - **2026-11-23, §6 and §7, the client's own commands (M22-18; the fixtures
   `macos-70425/…/Labchard-Labrealme/SavedVariables/WowLab.lua`,
   `macos-70888/…/Sandgraal-Rizzen/` (its `bindings-cache.wtf`,

@@ -14,11 +14,12 @@ it first). Every result is checked before it is returned: parsed again, it
 must hold exactly the change asked for and nothing else (every other
 top-level variable, and every other field of the book, as it was).
 
-Schema 1 and schema 2 (§21.2, M20-03) are both edited, and each is written
-back at the schema it was read at: no edit changes `schema`. At schema 2 a
-forget also takes the key out of every match's `team` and `foes`, and a
-forget of every player empties `matches`; `probe`, `warned`, `matched` and
-any field this wowlab does not know keep their bytes.
+Schema 1, schema 2 (§21.2, M20-03) and schema 3 (M21-12) are edited, and
+each is written back at the schema it was read at: no edit changes
+`schema`. From schema 2 a forget also takes the key out of every match's
+`team` and `foes`, and a forget of every player empties `matches`; `probe`,
+`warned`, `matched`, schema 3's `region` and any field this wowlab does not
+know keep their bytes.
 """
 
 from __future__ import annotations
