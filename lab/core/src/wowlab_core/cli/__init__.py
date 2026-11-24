@@ -963,6 +963,9 @@ if TYPE_CHECKING:
         _talent_table as _talent_table,
     )
     from wowlab_core.cli._cmd_char import (
+        _talents_line as _talents_line,
+    )
+    from wowlab_core.cli._cmd_char import (
         _time_notes as _time_notes,
     )
     from wowlab_core.cli._cmd_char import (
