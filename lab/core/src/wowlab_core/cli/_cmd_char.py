@@ -102,6 +102,7 @@ from wowlab_core.cli._common import (
     _wtf_file,
     char_app,
 )
+from wowlab_core.links import LookLink, NoLink
 from wowlab_core.region import Region
 
 # ─── char ────────────────────────────────────────────────────────────────────
@@ -408,6 +409,85 @@ def _unseen_words(n: int) -> str:
     )
 
 
+# ─── links out: a character's profiles and guild (M21-04) ────────────────────
+
+
+class CharProfileLinks(_Out):
+    """A character's links out (M21-04), each an address the player's
+    browser opens only when they click it; nothing is fetched. `profiles`:
+    the Blizzard armory and the Journey Companion, then Raider.IO only when
+    the character's ruleset is known (no report gives it yet, so not now);
+    each a `Link` (`url`) or a `NoLink` (`why`, in the player's words). The
+    ForeverTwinking page is never built: it is the address the player saved
+    (`saved_links` of `char gear`). `guild` is the guild the lab-addon
+    recorded (`GetGuildInfo`), or None with `guild_absent` saying why;
+    `guild_link` its armory page, or None when there is no guild."""
+
+    profiles: list[links.Link | links.NoLink]
+    guild: str | None
+    guild_absent: str | None
+    guild_link: links.Link | links.NoLink | None
+
+
+_NO_GUILD_FIELD = (
+    "this record does not hold the guild; log in and out on this character with a current "
+    "lab-addon (wowlab addon install lab updates it)"
+)
+
+
+def _guild_of(record: labaddon.CharDB | None) -> tuple[str | None, str]:
+    """The guild the record holds, or None and why."""
+    if not isinstance(record, labaddon.CharDBV5):
+        return None, _NO_GUILD_FIELD
+    section = record.identity
+    if not isinstance(section, labaddon.IdentityV5):
+        return None, "the record's identity section is not there"
+    if section.guild is not None:
+        return section.guild, ""
+    if section.guild_absent in labaddon.NO_GUILD_REASONS:
+        return None, "no guild, or the guild was not loaded yet when the game saved"
+    return None, section.guild_absent or section.guild_set_aside or "not recorded"
+
+
+def _profile_links(
+    first: str,
+    second: str | None,
+    region_found: str | None,
+    *,
+    version: str | None,
+    record: labaddon.CharDB | None,
+) -> CharProfileLinks:
+    """The links out of one character: its first and second name, its
+    region, the client's version (it picks the sites' pages) and its record
+    (the guild). Never raises: a link that cannot be made is a `NoLink`
+    saying why."""
+    ruleset: str | None = None  # no report gives it yet (M22-11)
+    made = links.profiles(first, second, region_found, version=version, ruleset=ruleset)
+    shown = [m for m in made if ruleset is not None or m.link != "raiderio"]
+    guild, absent = _guild_of(record)
+    return CharProfileLinks(
+        profiles=shown,
+        guild=guild,
+        guild_absent=None if guild is not None else absent,
+        guild_link=(
+            links.armory_guild(guild, region_found, version=version) if guild is not None else None
+        ),
+    )
+
+
+def _profile_link_lines(made: CharProfileLinks) -> list[str]:
+    """The text form: one line per address, then, when no profile has one,
+    why not (once)."""
+    lines = [f"{m.label}: {m.url}" for m in made.profiles if isinstance(m, links.Link)]
+    if not lines:
+        whys = list(dict.fromkeys(m.why for m in made.profiles if isinstance(m, links.NoLink)))
+        if whys:
+            lines.append(f"Profile links: none ({'; '.join(whys)})")
+    if isinstance(made.guild_link, links.Link):
+        lines.append(f"Guild {made.guild} on the armory: {made.guild_link.url}")
+    return lines
+
+
 # ─── char list --summary: the account hub's table (M17-01) ───────────────────
 
 
@@ -455,6 +535,10 @@ class CharSummaryRow(_Out):
     game_name: layout.FsText
     region: Region | None
     region_absent: str | None
+    # The character's profile and guild links (M21-04), built from the
+    # names, the region and `version`; the guild from the record, when one
+    # was read.
+    links: CharProfileLinks
     file: layout.FsText
     # The file's modification time: the client's last logout or /reload,
     # unless something wrote the file since. None when no file was read.
@@ -656,6 +740,21 @@ def _char_region_fields(
     return {"region": found, "region_absent": absent}
 
 
+def _char_links_field(
+    realm_folder: str,
+    folder: str,
+    reading: region.RegionReading,
+    *,
+    version: str | None,
+    record: labaddon.CharDB | None,
+) -> dict[str, object]:
+    """A row's `links` (M21-04) for a character folder, its flavor's region
+    reading, the client's version and its record (None when none was read)."""
+    first, second = charname.split_folder(folder, numeric=charname.is_numeric_folder(realm_folder))
+    made = _profile_links(first, second, reading.region, version=version, record=record)
+    return {"links": made}
+
+
 def _summary_row(
     e: labaddon.CharacterFile,
     version: str | None,
@@ -673,6 +772,13 @@ def _summary_row(
         "mtime_ns": e.mtime_ns,
         **_char_name_fields(e.realm_folder, e.label),
         **_char_region_fields(regions, e.flavor),
+        **_char_links_field(
+            e.realm_folder,
+            e.label,
+            _char_region_reading(regions, e.flavor),
+            version=version,
+            record=e.record if e.no_lab_record is None else None,
+        ),
     }
     if e.no_lab_record is not None:
         return CharSummaryRow.model_validate(
@@ -932,6 +1038,13 @@ def _kept_rows(
             **_char_region_fields(regions, copy.flavor_folder),
         }
         record = charkept.read_copy(store, copy)
+        base |= _char_links_field(
+            copy.realm_folder,
+            copy.character_folder,
+            _char_region_reading(regions, copy.flavor_folder),
+            version=copy.snapshot_version or names_version,
+            record=None if isinstance(record, str) else record,
+        )
         if isinstance(record, str):
             row = CharKeptRow.model_validate(base | {"state": "not_read", "error": record})
             out.append((row, None, copy))
@@ -1370,6 +1483,14 @@ def _saved_links(key: linkstore.CharacterKey) -> tuple[list[CharLinkRow], str | 
         return [], f"Your saved addresses could not be read: {exc}"
 
 
+class CharItemLink(_Out):
+    """One filled slot's item page on Wowhead (M21-04): the slot number as
+    `slots` gives it, and a `Link` (`url`) or a `NoLink` (`why`)."""
+
+    slot: int
+    link: links.Link | links.NoLink
+
+
 class CharGearReport(_Out):
     """`wowlab char gear --json`: one character's equipped gear from the
     lab-addon's `gear` record, slot by slot in the client's slot order, each
@@ -1408,6 +1529,17 @@ class CharGearReport(_Out):
     # link set`), each checked again as it is read; empty for a character
     # kept only in a backup.
     saved_links: list[CharLinkRow] = Field(default_factory=list)
+    # The character's profile and guild links (M21-04), and each filled
+    # slot's Wowhead page by slot number, in the order of `slots` (the item
+    # name stays the link's text; nothing is fetched).
+    links: CharProfileLinks
+    item_links: list[CharItemLink]
+    # The character's look on Purist (M21-06, `links.purist_look`): race,
+    # body type, class, the barber-shop choices and the equipped item ids in
+    # the address's `#` part, with what it leaves out; or why there is none.
+    # Annotated with the imported names: inside this class `links` is the
+    # field above, not the module.
+    purist: LookLink | NoLink
     # The flavor folder read, as the other `char` reports name it; just
     # before `dressing`, which stays last (M16-114).
     flavor_folder: str
@@ -1642,7 +1774,59 @@ def _gear_report(
         game_name=charname.game_name(first, second),
         region=reading.region,
         region_absent=reading.absent,
+        links=_profile_links(first, second, reading.region, version=version, record=record),
+        item_links=[
+            CharItemLink(slot=s.slot, link=links.wowhead_item(s.item_id, version=version))
+            for s in filled
+        ],
+        purist=_purist_look(
+            record, identity, filled, charname.game_name(first, second), version=version
+        ),
         dressing=dressing.build(identity, filled, version=version, level=level),
+    )
+
+
+def _purist_look(
+    record: labaddon.CharDB,
+    identity: labaddon.CharIdentity,
+    filled: Sequence[gear.GearSlot],
+    name: str,
+    *,
+    version: str | None,
+) -> links.LookLink | links.NoLink:
+    """The character's look on Purist: race, body type and class from the
+    identity, the barber-shop choices when the record's barber-shop record
+    is of the same race and body type, and the equipped items."""
+    left_out: list[str] = []
+    choices: list[tuple[int, int]] = []
+    try:
+        made = labaddon.customization_import(record)
+    except labaddon.NoCustomizationError:
+        if isinstance(record.customization, labaddon.Customization):
+            left_out.append("the face and hair: the barber-shop record cannot be read as a look")
+        else:
+            left_out.append("the face and hair: the record holds no barber-shop visit")
+    else:
+        if (made.race_id, made.body_type) != (identity.race_id, identity.sex):
+            left_out.append(
+                "the face and hair: the last barber-shop visit was of another race or body type"
+            )
+        else:
+            choices = list(made.choices.items())
+            if made.without_choice:
+                left_out.append(
+                    "some face and hair options: the barber-shop record holds no choice for them"
+                )
+    return links.purist_look(
+        name,
+        identity.race_id,
+        identity.sex,
+        identity.class_id,
+        choices,
+        [(s.slot, s.item_id) for s in filled],
+        version=version,
+        slot_names={s.slot: s.slot_name for s in filled if s.slot_name},
+        left_out=left_out,
     )
 
 
@@ -1717,6 +1901,8 @@ def char_gear(
     _say(f"File: {target.path}")
     _say(f"Written: {_local_time(target.mtime_ns)} ({_SAVED_AT})")
     _say(_region_text(report.region, report.region_absent))
+    for line in _profile_link_lines(report.links):
+        _say(line)
     for row in report.saved_links:
         _say(f"{row.label}: {row.url}")
     for line in _header_lines(report):
