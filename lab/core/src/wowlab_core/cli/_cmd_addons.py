@@ -44,28 +44,31 @@ class AddonsReport(_Out):
     flavor_folder: str
     addons: list[layout.Addon]
     # Where each folder came from, as the addon managers wowlab reads
-    # recorded it (M22-16): WowUp's records of this game folder.
+    # recorded it (M22-16, M22-25): WowUp's and the CurseForge app's records
+    # of this game folder, in that order.
     sources: addonsource.AddonSources
 
 
 _SOURCES_FOLDERS = (
-    "WowUp keeps one list for every game folder it manages and records which game folder "
-    "each addon went into; only this game folder's records are matched to its addons. A "
-    "folder here that shares a name with an addon WowUp installed into another game folder "
-    "is not counted as WowUp's."
+    "WowUp and the CurseForge app each keep one list for every game folder they manage and "
+    "record which game folder each addon went into; only this game folder's records are "
+    "matched to its addons. A folder here that shares a name with an addon an app installed "
+    "into another game folder is not counted as that app's."
 )
 _SOURCES_STALE = (
     "A record is out of date when a folder it lists is not here, or when the addon's "
-    "TOC files give a version and none of them agrees with the version WowUp installed: "
-    "the addon was changed after WowUp last wrote its list, by hand or by another app."
+    "TOC files give a version and none of them agrees with the version the app installed: "
+    "the addon was changed after the app last wrote its list, by hand or by another app. "
+    "CurseForge records only the name of the file it installed, such as Auctionator-352; "
+    "a name with no version in it is not compared."
 )
 _SOURCES_UPDATE = (
-    "An update is the one WowUp knew of when it last checked; wowlab fetches nothing, "
+    "An update is the one the app knew of when it last checked; wowlab fetches nothing, "
     "so a newer one may exist."
 )
 _SOURCES_OTHERS = (
-    "Only WowUp's list is read. An addon installed by hand, or by another app such "
-    "as CurseForge's, shows as not in WowUp's list."
+    "Only the lists of WowUp and the CurseForge app are read. An addon installed by hand, "
+    "or by another app, shows as in neither list."
 )
 _SOURCES_NOTES = [_SOURCES_FOLDERS, _SOURCES_STALE, _SOURCES_UPDATE, _SOURCES_OTHERS]
 
@@ -87,24 +90,27 @@ def _toc_words(versions: Sequence[addonsource.TocVersion]) -> str:
     return "the TOCs here say " + ", ".join(parts)
 
 
-def _wowup_record_words(match: addonsource.RecordMatch) -> str:
+def _source_record_words(match: addonsource.RecordMatch) -> str:
     """What one record says about its addon, for the line of each folder it
     claims."""
+    app = match.manager
     if not match.provider_known:
-        source = "in WowUp's list, which does not know where it came from"
+        source = f"in {app}'s list, which does not know where it came from"
+    elif match.provider and match.provider.casefold() == app.casefold():
+        source = f"through the {app} app"
     elif match.provider:
-        source = f"from {match.provider} through WowUp"
+        source = f"from {match.provider} through {app}"
     else:
-        source = "through WowUp"
+        source = f"through {app}"
     recorded = match.installed_version
     if not match.stale:
         words = f"{source}, {recorded}" if recorded else source
         if match.ignored:
-            words += ", WowUp is set to leave it alone"
+            words += f", {app} is set to leave it alone"
         elif match.update_available and match.latest_version:
             words += f", update {match.latest_version} available"
         return words
-    words = f"{source}, WowUp's record is out of date"
+    words = f"{source}, {app}'s record is out of date"
     if recorded:
         words += f": it installed {recorded}"
         if match.version_check == "differs":
@@ -114,16 +120,22 @@ def _wowup_record_words(match: addonsource.RecordMatch) -> str:
     return words
 
 
+def _lists(managers: Sequence[str]) -> str:
+    """ "WowUp's list", or "WowUp's or CurseForge's list"."""
+    return " or ".join(f"{m}'s" for m in managers) + " list"
+
+
 def _scope_lines(sources: addonsource.AddonSources) -> list[str]:
-    """What is said first: which game folders WowUp's list is for."""
+    """What is said first: which game folders each app's list is for."""
     lines = []
     for file, scope in zip(sources.files, sources.scopes, strict=True):
         if file.state != "read":
             continue
+        app = file.manager
         others = "; ".join(
             f"{_home_words(o.folder)} ({_plural(o.records, 'addon')})" for o in scope.others
         )
-        hinted = sum(1 for f in sources.folders if f.same_name_as)
+        hinted = sum(1 for f in sources.folders if any(c.manager == app for c in f.same_name_as))
         shares = (
             f", and {_plural(hinted, 'folder')} here "
             f"{'shares' if hinted == 1 else 'share'} a name with one of them"
@@ -131,7 +143,7 @@ def _scope_lines(sources: addonsource.AddonSources) -> list[str]:
             else ""
         )
         if scope.manages is False and not scope.by_name:
-            line = "WowUp does not manage this game folder"
+            line = f"{app} does not manage this game folder"
             line += f"; its list is for {others}" if others else "; its list holds no addon"
             lines.append(line + shares + ".")
             continue
@@ -141,17 +153,22 @@ def _scope_lines(sources: addonsource.AddonSources) -> list[str]:
             elif file.settings_state == "unreadable":
                 why = f"its settings file could not be read: {file.settings_error}"
             else:
+                # CurseForge's game folders are in its list itself.
+                where = (
+                    "its list does not describe"
+                    if file.settings_path == file.path
+                    else "its settings do not list"
+                )
                 why = (
                     f"{_plural(scope.by_name, 'record')} "
-                    f"{'names' if scope.by_name == 1 else 'name'} a game folder its settings "
-                    "do not list"
+                    f"{'names' if scope.by_name == 1 else 'name'} a game folder {where}"
                 )
             lines.append(
-                f"wowlab cannot tell which game folder WowUp's list is for ({why}), so its "
+                f"wowlab cannot tell which game folder {app}'s list is for ({why}), so its "
                 "records are matched to these addons by folder name."
             )
         if others:
-            lines.append(f"WowUp's list also holds addons for {others}{shares}.")
+            lines.append(f"{app}'s list also holds addons for {others}{shares}.")
     return lines
 
 
@@ -164,16 +181,17 @@ def addons_list(
     notes_out: NotesOpt = False,
 ) -> None:
     """Every folder under Interface/AddOns/ with its TOC files, and where it
-    came from when the WowUp app installed it into this game folder: the
-    site, the version, an update WowUp knew of, and whether WowUp's record is
-    out of date. A folder not in WowUp's list is marked. Reads only; WowUp's
-    own files are read, never changed, and nothing is fetched.
+    came from when the WowUp app or the CurseForge app installed it into this
+    game folder: the site, the version, an update the app knew of, and
+    whether its record is out of date. A folder in neither list is marked,
+    and so is one both apps list. Reads only; the apps' own files are read,
+    never changed, and nothing is fetched.
 
     \f
     JSON: AddonsReport."""
     _, chosen, lay = _open(root, flavor)
     addons = list(lay.addons())
-    files = (addonsource.read_wowup(),)
+    files = addonsource.read_managers()
     sources = addonsource.match_sources(addons, files, lay.flavor_path)
     report = AddonsReport(flavor_folder=chosen.folder, addons=addons, sources=sources)
     if json_out:
@@ -201,16 +219,21 @@ def addons_list(
         if a.blizzard:
             bits.append("named like a Blizzard addon")
         for claim in where.claims:
-            bits.append(_wowup_record_words(matches[(claim.manager, claim.record_id)]))
+            bits.append(_source_record_words(matches[(claim.manager, claim.record_id)]))
+        if len(where.managers) > 1:
+            bits.append(f"both {' and '.join(where.managers)} list it")
         if where.unclaimed:
-            bits.append("not in WowUp's list")
+            bits.append(f"not in {_lists(sources.judged_by)}")
         _say("  ".join(bits))
-    elsewhere = [m for m in sources.records if "no_folder_here" in m.stale_why]
-    if elsewhere:
-        names = ", ".join(m.name or m.record_id for m in elsewhere)
-        their = "its" if len(elsewhere) == 1 else "their"
-        _say(f"WowUp also lists {names}, with none of {their} folders here.")
-    caveat = None
+    for app in addonsource.MANAGERS:
+        elsewhere = [
+            m for m in sources.records if m.manager == app and "no_folder_here" in m.stale_why
+        ]
+        if elsewhere:
+            names = ", ".join(m.name or m.record_id for m in elsewhere)
+            their = "its" if len(elsewhere) == 1 else "their"
+            _say(f"{app} also lists {names}, with none of {their} folders here.")
+    unread: list[str] = []
     read = False
     keep: list[str] = []
     for file in sources.files:
@@ -218,12 +241,13 @@ def addons_list(
         if file.state == "read" and file.written_ns is not None:
             read = True
             _say(
-                f"WowUp's list: {where_file}, last written {_source_date(file.written_ns)}, "
-                f"{_plural(len(file.records), 'addon')}."
+                f"{file.manager}'s list: {where_file}, last written "
+                f"{_source_date(file.written_ns)}, {_plural(len(file.records), 'addon')}."
             )
         elif file.state == "unreadable":
-            caveat = f"wowlab could not read WowUp's list at {where_file}: {file.error}."
+            unread.append(f"{file.manager}'s list at {where_file}: {file.error}")
             keep += [where_file, file.error or ""]
+    caveat = f"wowlab could not read {'; nor '.join(unread)}." if unread else None
     if read or caveat is not None:
         _say_notes(_SOURCES_NOTES, notes_out, caveat, keep=keep)
 

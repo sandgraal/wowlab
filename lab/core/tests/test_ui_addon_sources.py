@@ -49,6 +49,7 @@ function sourcesView() {
     items: li.all().filter((e) => has(e, "sources-item")).map((e) => e.textContent),
     clear: li.all().filter((e) => has(e, "sources-clear")).map((e) => e.textContent),
     loose: li.all().filter((e) => has(e, "sources-loose")).map((e) => e.textContent),
+    both: li.all().filter((e) => has(e, "sources-both")).map((e) => e.textContent),
     notes: li.all().filter((e) => has(e, "sources-note")).map((e) => e.textContent),
     errors: li.all().filter((e) => has(e, "sources-error")).map((e) => e.textContent),
   }));
@@ -207,7 +208,7 @@ def test_the_records_the_stale_ones_and_the_folders_no_one_claims_constructed(
     assert [a.split(":")[0] for a in away] == ["RareScanner", "Pawn", "Baganator", "Syndicator"]
     assert beta["loose"] == []
     assert beta["notes"] == [
-        "An out-of-date record means the addon changed after WowUp last wrote its list, by "
+        "An out-of-date record means the addon changed after its app last wrote its list, by "
         "hand or by another app."
     ]
     forever = blocks[FOREVER]
@@ -240,9 +241,8 @@ def test_a_stale_record_and_folders_no_one_claims_constructed(
     listed = json.loads(_list_run(scenario, FOREVER)["stdout"])["sources"]["folders"]
     loose = [f["folder"] for f in listed if f["unclaimed"] is True]
     assert "Auctionator" in loose and "BanterBlocker" in loose
-    assert forever["what"][-1] == (
-        f"Not in WowUp's list, the only addon manager's list wowlab reads ({len(loose)})"
-    )
+    # CurseForge's list is not in this home (M22-25): only WowUp's judged.
+    assert forever["what"][-1] == f"Not in WowUp's list ({len(loose)})"
     assert forever["loose"] == [", ".join(loose)]
 
 
@@ -264,8 +264,8 @@ def test_with_no_wowup_list_the_panel_says_so_constructed(
     out = _drive(tmp_path / "node", _scenario(server, [{"sources_open": True}]))
     for block in out["steps"][0]["sources"]["blocks"]:
         assert block["clear"] == [
-            "wowlab found no WowUp list on this computer, so it cannot tell where these "
-            "addons came from."
+            "wowlab found no WowUp or CurseForge list on this computer, so it cannot tell "
+            "where these addons came from."
         ]
         assert block["items"] == [] and block["loose"] == [] and block["notes"] == []
 

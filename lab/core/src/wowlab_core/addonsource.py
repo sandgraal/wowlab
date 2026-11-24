@@ -1,7 +1,7 @@
 """addonsource: where each installed addon came from, as an addon manager
-recorded it (M22-16; LAB_IDEAS **addon-provenance**, its first slice).
+recorded it (M22-16, M22-25; LAB_IDEAS **addon-provenance**).
 
-The one manager read so far is WowUp. It keeps the addons it installed in
+Two managers are read: WowUp and the CurseForge app. WowUp keeps the addons it installed in
 `addons.json` under its own user-data folder, outside the install (on macOS
 `~/Library/Application Support/WowUp/`, seen 2026-11-23; on Windows
 `%APPDATA%\\WowUp\\` and on Linux `~/.config/WowUp/`, Electron's rule,
@@ -54,6 +54,30 @@ by hand, by another app, or by a manager wowlab does not read); that is
 said only when WowUp's list was read and WowUp manages this game folder or
 which one it manages cannot be told. The lab-addon is wowlab's own and is
 never called unclaimed.
+
+The CurseForge app (M22-25) keeps one file for every game folder it
+manages, `agent/GameInstances/AddonGameInstance.json` under its own
+user-data folder (on macOS `~/Library/Application Support/CurseForge/`,
+seen 2026-11-24; on Windows `%APPDATA%\\CurseForge\\`, Electron's rule,
+**[verify]**), `docs/LAB_FORMATS.md` §16. It is opened with the same rules,
+and the two folders between are refused when they are links; nothing else
+there is opened (its cookies, local storage and `app.db` never are). The
+file is a list of game instances, each with its `guid` and `installPath`
+(the flavor folder itself), and its `installedAddons`. Each of those is a
+record: `instanceID` (the record's id), `name`, `addonID` (CurseForge's
+project id, which a TOC's `## X-Curse-Project-ID:` names),
+`webSiteURL`, `gameInstanceID` (its instance's `guid`), `dateInstalled`,
+`preferenceIsIgnored`, and from `installedFile` and `latestFile` the `id`
+and `fileName` (no version is recorded, only the file name, such as
+`Auctionator-352.zip`, kept without its `.zip`), and from `installedFile`
+the `foldername` of each of its `modules`, the folders it claims. Its
+instances are its installations, each matched by `installPath` as WowUp's
+by location. An update is known when the latest file's `id` differs from
+the installed one's. A file name agrees with a TOC's version when that
+version stands in the name between separators (`file_name_has_version`:
+`ForeverLevelingBiS-v1.4.7-forever` and `v1.4.7` agree), or by
+`versions_agree`; a name with no digit in it (`LFGForever`) says nothing.
+A folder claimed by records of both managers says so (`FolderSource.managers`).
 """
 
 from __future__ import annotations
@@ -76,6 +100,10 @@ from wowlab_core.layout import FsText
 from wowlab_core.wtfconfig import fold_name
 
 __all__ = [
+    "CURSEFORGE_APP",
+    "CURSEFORGE_RECORDS",
+    "MANAGERS",
+    "MAX_CURSEFORGE_BYTES",
     "MAX_PREFERENCES_BYTES",
     "MAX_RECORDS_BYTES",
     "PREFERENCES_FILE",
@@ -86,12 +114,17 @@ __all__ = [
     "FolderSource",
     "Installation",
     "ManagerFile",
+    "ManagerRecord",
     "ManagerScope",
     "OtherInstallation",
     "RecordMatch",
     "TocVersion",
     "WowUpRecord",
+    "curseforge_folder",
+    "file_name_has_version",
     "match_sources",
+    "read_curseforge",
+    "read_managers",
     "read_wowup",
     "versions_agree",
     "wowup_folder",
@@ -104,12 +137,19 @@ PREFERENCES_FILE = "preferences.json"
 # file past its bound is not read.
 MAX_RECORDS_BYTES = 16 * 1024 * 1024
 MAX_PREFERENCES_BYTES = 1024 * 1024
-# The TOC directive naming an addon's Wago project, per provider (the one
-# seen: DBM-Core's `## X-Wago-ID: qv633o6b`, its record's `externalId`).
-_PROJECT_DIRECTIVES = {"wago": "X-Wago-ID"}
+CURSEFORGE_APP = "CurseForge"  # the app's user-data folder name
+CURSEFORGE_RECORDS = ("agent", "GameInstances", "AddonGameInstance.json")
+# The owner's file holds 22 records in 1.2 MB, almost all of it the path of
+# every file each addon installed; a file past this bound is not read.
+MAX_CURSEFORGE_BYTES = 64 * 1024 * 1024
+# The TOC directive naming an addon's project, per provider (seen: DBM-Core's
+# `## X-Wago-ID: qv633o6b`, its WowUp record's `externalId`; Auctionator's
+# `## X-Curse-Project-ID:` and the others', each its CurseForge `addonID`).
+_PROJECT_DIRECTIVES = {"wago": "X-Wago-ID", "curseforge": "X-Curse-Project-ID"}
 _UNKNOWN_PROVIDER = "unknown"
 
-Manager = Literal["WowUp"]
+Manager = Literal["WowUp", "CurseForge"]
+MANAGERS: tuple[Manager, ...] = ("WowUp", "CurseForge")  # in the order they are read
 StaleWhy = Literal["no_folder_here", "folders_missing", "version_differs"]
 FileState = Literal["read", "missing", "unreadable"]
 
@@ -118,10 +158,10 @@ class _Model(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
 
-class WowUpRecord(_Model):
-    """One addon in WowUp's `addons.json`, as written (no field is required)."""
+class ManagerRecord(_Model):
+    """One addon in a manager's records, as written (no field is required)."""
 
-    id: str  # the key the record is stored under
+    id: str  # WowUp: the key the record is stored under; CurseForge: `instanceID`
     name: str | None
     provider: str | None  # `providerName`: "Wago", "CurseForge", "GitHub", …
     external_id: str | None
@@ -133,13 +173,25 @@ class WowUpRecord(_Model):
     installation_id: str | None  # WowUp's id of the game folder it installed into
     installed_at: str | None  # `installedAt` as written (ISO 8601 text)
     ignored: bool | None  # `isIgnored`: the player told WowUp to leave it alone
+    # CurseForge: the ids of the installed and latest files (an update is
+    # known when they differ), and its versions are file names.
+    installed_file_id: int | None = None
+    latest_file_id: int | None = None
+    version_is_file_name: bool = False
+
+
+WowUpRecord = ManagerRecord  # the name M22-16 gave it
 
 
 class Installation(_Model):
-    """One `wow_installations` entry of WowUp's `preferences.json`."""
+    """One `wow_installations` entry of WowUp's `preferences.json`, or one
+    game instance of CurseForge's records."""
 
     id: str
-    location: str  # as written: the client's `.app` or `.exe` in its flavor folder
+    # As written. WowUp: the client's `.app` or `.exe` in its flavor folder;
+    # CurseForge: the flavor folder itself (`location_is_folder`).
+    location: str
+    location_is_folder: bool = False
 
 
 class ManagerFile(_Model):
@@ -152,9 +204,10 @@ class ManagerFile(_Model):
     state: FileState
     error: str | None
     written_ns: int | None  # the file's modification time, when it was read
-    records: tuple[WowUpRecord, ...]
+    records: tuple[ManagerRecord, ...]
     skipped: int  # entries that were not an object, so not records
-    # The manager's own list of the game folders it manages.
+    # The manager's own list of the game folders it manages (CurseForge's is
+    # in the records file itself: the same path and state).
     settings_path: str
     settings_state: FileState
     settings_error: str | None
@@ -214,13 +267,16 @@ class FolderSource(_Model):
 
     folder: FsText
     claims: tuple[Claim, ...]
+    # The managers whose records claim it, in MANAGERS order: two when both
+    # WowUp and CurseForge say they installed it.
+    managers: tuple[Manager, ...] = ()
     # Records of another game folder that list a folder of this name: a
     # hint, never a claim.
     same_name_as: tuple[Claim, ...]
-    # True: WowUp's list was read, it manages this game folder (or which it
-    # manages cannot be told) and no record claims this folder. None: no
-    # list was read, or WowUp does not manage this game folder. Never True
-    # for the lab-addon.
+    # True: a manager's list was read, it manages this game folder (or
+    # which it manages cannot be told; `AddonSources.judged_by`) and no
+    # record claims this folder. None: no such list was read. Never True for
+    # the lab-addon.
     unclaimed: bool | None
     lab_addon: bool
 
@@ -253,6 +309,9 @@ class AddonSources(_Model):
     scopes: tuple[ManagerScope, ...]  # one per file, in file order
     records: tuple[RecordMatch, ...]  # in file order
     folders: tuple[FolderSource, ...]  # in the order of the addons given
+    # The managers whose lists were read and that manage this game folder,
+    # or of which wowlab cannot tell: the lists a folder is unclaimed from.
+    judged_by: tuple[Manager, ...] = ()
 
 
 # ─── finding and reading WowUp's files ───────────────────────────────────────
@@ -347,10 +406,10 @@ def _folders(entry: dict[str, Any]) -> tuple[str, ...]:
     return tuple(dict.fromkeys(n for n in names if n))
 
 
-def _record(key: str, entry: dict[str, Any]) -> WowUpRecord:
+def _record(key: str, entry: dict[str, Any]) -> ManagerRecord:
     client = entry.get("clientType")
     ignored = entry.get("isIgnored")
-    return WowUpRecord(
+    return ManagerRecord(
         id=key,
         name=_text(entry.get("name")),
         provider=_text(entry.get("providerName")),
@@ -404,7 +463,7 @@ def read_wowup(folder: Path | None = None) -> ManagerFile:
         state: FileState,
         error: str | None = None,
         written_ns: int | None = None,
-        records: tuple[WowUpRecord, ...] = (),
+        records: tuple[ManagerRecord, ...] = (),
         skipped: int = 0,
     ) -> ManagerFile:
         return ManagerFile(
@@ -442,6 +501,150 @@ def read_wowup(folder: Path | None = None) -> ManagerFile:
     return made("read", None, written_ns, tuple(records), skipped)
 
 
+# ─── finding and reading CurseForge's file ───────────────────────────────────
+
+
+def curseforge_folder(platform: str | None = None) -> Path:
+    """The CurseForge app's user-data folder on this machine, by the rule
+    `wowup_folder` follows (both are Electron apps): on macOS
+    `~/Library/Application Support/CurseForge` (seen 2026-11-24), elsewhere
+    `platformdirs`' roaming config folder (`%APPDATA%\\CurseForge` on Windows,
+    **[verify]**; the app has no Linux build)."""
+    platform = sys.platform if platform is None else platform
+    if platform == "darwin":
+        return Path.home() / "Library" / "Application Support" / CURSEFORGE_APP
+    return platformdirs.user_config_path(CURSEFORGE_APP, appauthor=False, roaming=True)
+
+
+def _no_link_between(base: Path, names: Sequence[str]) -> None:
+    """Refuse a link in the folders between `base` and the file: the file's
+    own open does not follow one, and neither does the way to it. Raises
+    FileNotFoundError when one is missing."""
+    folder = base
+    for name in names:
+        folder = folder / name
+        try:
+            seen = folder.lstat()
+        except FileNotFoundError:
+            raise
+        except OSError as exc:
+            raise _UnreadableError(exc.strerror or type(exc).__name__) from exc
+        if stat.S_ISLNK(seen.st_mode):
+            raise _UnreadableError(f"{name} is a link, not followed")
+        if not stat.S_ISDIR(seen.st_mode):
+            raise _UnreadableError(f"{name} is not a folder")
+
+
+def _int(value: Any) -> int | None:
+    return value if isinstance(value, int) and not isinstance(value, bool) else None
+
+
+def _file_name(file: Any) -> str | None:
+    """A CurseForge file's name without its `.zip`, as its version."""
+    name = _text(file.get("fileName")) if isinstance(file, dict) else None
+    if name is None:
+        return None
+    return name[:-4] if name.casefold().endswith(".zip") and len(name) > 4 else name
+
+
+def _modules(file: Any) -> tuple[str, ...]:
+    modules = file.get("modules") if isinstance(file, dict) else None
+    if not isinstance(modules, list):
+        return ()
+    names = [m.get("foldername") for m in modules if isinstance(m, dict)]
+    return tuple(dict.fromkeys(n.strip() for n in names if isinstance(n, str) and n.strip()))
+
+
+def _curseforge_record(entry: dict[str, Any], instance: str | None, at: int) -> ManagerRecord:
+    installed = entry.get("installedFile")
+    latest = entry.get("latestFile")
+    addon = _int(entry.get("addonID"))
+    key = _text(entry.get("instanceID"))
+    ignored = entry.get("preferenceIsIgnored")
+    return ManagerRecord(
+        id=key or (f"{instance}/{addon}" if addon is not None else f"#{at}"),
+        name=_text(entry.get("name")),
+        provider=CURSEFORGE_APP,
+        external_id=None if addon is None else str(addon),
+        external_url=_text(entry.get("webSiteURL")),
+        installed_version=_file_name(installed),
+        latest_version=_file_name(latest),
+        folders=_modules(installed),
+        client_type=None,
+        installation_id=_text(entry.get("gameInstanceID")) or instance,
+        installed_at=_text(entry.get("dateInstalled")),
+        ignored=ignored if isinstance(ignored, bool) else None,
+        installed_file_id=_int(installed.get("id")) if isinstance(installed, dict) else None,
+        latest_file_id=_int(latest.get("id")) if isinstance(latest, dict) else None,
+        version_is_file_name=True,
+    )
+
+
+def read_curseforge(folder: Path | None = None) -> ManagerFile:
+    """The CurseForge app's records in `folder` (default:
+    `curseforge_folder()`), read only, and its game instances from the same
+    file. Missing, unreadable and the reasons as `read_wowup`."""
+    base = curseforge_folder() if folder is None else folder
+    path = base.joinpath(*CURSEFORGE_RECORDS)
+
+    def made(
+        state: FileState,
+        error: str | None = None,
+        written_ns: int | None = None,
+        records: tuple[ManagerRecord, ...] = (),
+        skipped: int = 0,
+        installations: tuple[Installation, ...] = (),
+    ) -> ManagerFile:
+        return ManagerFile(
+            manager="CurseForge",
+            path=str(path),
+            state=state,
+            error=error,
+            written_ns=written_ns,
+            records=records,
+            skipped=skipped,
+            settings_path=str(path),
+            settings_state=state,
+            settings_error=error,
+            installations=installations,
+        )
+
+    try:
+        _no_link_between(base, CURSEFORGE_RECORDS[:-1])
+        data, written_ns = _read_bounded(path, MAX_CURSEFORGE_BYTES)
+        parsed = _json(data)
+    except FileNotFoundError:
+        return made("missing")
+    except _UnreadableError as exc:
+        return made("unreadable", str(exc))
+    if not isinstance(parsed, list):
+        return made("unreadable", "not a JSON list of game folders")
+    records: list[ManagerRecord] = []
+    installations: list[Installation] = []
+    skipped = 0
+    for instance in parsed:
+        if not isinstance(instance, dict):
+            skipped += 1
+            continue
+        key, where = _text(instance.get("guid")), _text(instance.get("installPath"))
+        if key and where:
+            installations.append(Installation(id=key, location=where, location_is_folder=True))
+        listed = instance.get("installedAddons")
+        if not isinstance(listed, list):
+            continue
+        for entry in listed:
+            if isinstance(entry, dict):
+                records.append(_curseforge_record(entry, key, len(records)))
+            else:
+                skipped += 1
+    return made("read", None, written_ns, tuple(records), skipped, tuple(installations))
+
+
+def read_managers() -> tuple[ManagerFile, ...]:
+    """Every manager's records on this machine, in MANAGERS order."""
+    return (read_wowup(), read_curseforge())
+
+
 # ─── whether a TOC's version agrees with the recorded one ────────────────────
 
 _UI_ESCAPE = re.compile(r"\|c[0-9A-Fa-f]{8}|\|r")
@@ -477,6 +680,37 @@ def _found_inside(short: str, long: str) -> bool:
     return False
 
 
+_NAME_SEPARATORS = "-_ +"
+
+
+def file_name_has_version(file_name: str, toc_version: str) -> bool | None:
+    """Whether a CurseForge file name (`ForeverLevelingBiS-v1.4.7-forever`)
+    carries a TOC's `## Version:` (`v1.4.7`): the version, folded as
+    `versions_agree` folds it, stands in the name after its start, a
+    separator (`-`, `_`, a space or `+`) or a `v` that follows one, and
+    before its end or a separator; or `versions_agree` says they agree.
+    None when the name has no digit, so it names no version
+    (`LFGForever`)."""
+    if not any(c.isdigit() for c in file_name):
+        return None
+    if versions_agree(toc_version, file_name):
+        return True
+    short = _plain(toc_version)
+    name = _UI_ESCAPE.sub("", file_name).strip().casefold()
+    if not short:
+        return False
+    start = name.find(short)
+    while start != -1:
+        end = start + len(short)
+        before = start == 0 or name[start - 1] in _NAME_SEPARATORS
+        if not before and name[start - 1] == "v":
+            before = start == 1 or name[start - 2] in _NAME_SEPARATORS
+        if before and (end == len(name) or name[end] in _NAME_SEPARATORS):
+            return True
+        start = name.find(short, start + 1)
+    return False
+
+
 def versions_agree(toc_version: str, recorded: str) -> bool:
     """Whether a TOC's `## Version:` and a manager's recorded version name
     the same release (the rule in the module docstring)."""
@@ -503,7 +737,7 @@ def _toc_values(addon: layout.Addon, key: str) -> tuple[str, ...]:
     return tuple(dict.fromkeys(found))
 
 
-def _judged(record: WowUpRecord, here: list[layout.Addon]) -> list[layout.Addon]:
+def _judged(record: ManagerRecord, here: list[layout.Addon]) -> list[layout.Addon]:
     """The folders whose versions are judged: those whose TOC names the
     record's project, when any does; else all of them."""
     directive = _PROJECT_DIRECTIVES.get((record.provider or "").casefold())
@@ -535,14 +769,17 @@ def _inside(location: str, flavor: Path) -> bool:
     return where == root or root in where.parents
 
 
-def _location_folder(location: str) -> str:
-    """The folder holding the client WowUp names: the flavor folder."""
-    return str(Path(location).parent)
+def _location_folder(installation: Installation) -> str:
+    """The flavor folder an installation names: the folder holding the
+    client WowUp names, or the folder CurseForge names."""
+    if installation.location_is_folder:
+        return installation.location.rstrip("\\/") or installation.location
+    return str(Path(installation.location).parent)
 
 
 def _match(
     manager: Manager,
-    record: WowUpRecord,
+    record: ManagerRecord,
     by_name: dict[str, layout.Addon],
     where: Literal["this_folder", "other_folder", "unknown"],
     other: str | None,
@@ -558,11 +795,12 @@ def _match(
     provider_known = bool(record.provider) and (
         (record.provider or "").strip().casefold() != _UNKNOWN_PROVIDER
     )
-    update = (
-        None
-        if record.installed_version is None or record.latest_version is None
-        else record.installed_version.strip() != record.latest_version.strip()
-    )
+    if record.installed_file_id is not None and record.latest_file_id is not None:
+        update: bool | None = record.installed_file_id != record.latest_file_id
+    elif record.installed_version is None or record.latest_version is None:
+        update = None
+    else:
+        update = record.installed_version.strip() != record.latest_version.strip()
     common: dict[str, Any] = {
         "manager": manager,
         "record_id": record.id,
@@ -591,8 +829,12 @@ def _match(
     judged = _judged(record, here)
     versions = _versions(judged)
     recorded = record.installed_version
+    check: Literal["agrees", "differs", "unknown"]
     if recorded is None or not recorded.strip() or not versions:
-        check: Literal["agrees", "differs", "unknown"] = "unknown"
+        check = "unknown"
+    elif record.version_is_file_name:
+        said = [file_name_has_version(recorded, v.version) for v in versions]
+        check = "unknown" if None in said else ("agrees" if any(said) else "differs")
     elif any(versions_agree(v.version, recorded) for v in versions):
         check = "agrees"
     else:
@@ -628,7 +870,7 @@ def _scope(
             mine = _inside(inst.location, flavor)
             place[inst.id] = "this_folder" if mine else "other_folder"
             if not mine:
-                folder_of[inst.id] = _location_folder(inst.location)
+                folder_of[inst.id] = _location_folder(inst)
     if file.state != "read" or file.settings_state != "read" or flavor is None:
         manages: bool | None = None
     else:
@@ -674,12 +916,13 @@ def match_sources(
     scopes: list[ManagerScope] = []
     claims: dict[str, list[Claim]] = {}
     hints: dict[str, list[Claim]] = {}
-    judged = False
+    judged_by: list[Manager] = []
     for file in files:
         scope, place, folder_of = _scope(file, flavor)
         scopes.append(scope)
-        if file.state == "read" and scope.manages is not False:
-            judged = True
+        judges = file.state == "read" and scope.manages is not False
+        if judges and file.manager not in judged_by:
+            judged_by.append(file.manager)
         for record in file.records:
             key = record.installation_id
             where: Literal["this_folder", "other_folder", "unknown"] = (
@@ -698,11 +941,13 @@ def match_sources(
         key = fold_name(addon.name)
         held = tuple(claims.get(key, ()))
         is_lab = key == lab
-        unclaimed = None if not judged else (not held and not is_lab)
+        unclaimed = None if not judged_by else (not held and not is_lab)
+        managers = tuple(m for m in MANAGERS if any(c.manager == m for c in held))
         folders.append(
             FolderSource(
                 folder=addon.name,
                 claims=held,
+                managers=managers,
                 same_name_as=tuple(hints.get(key, ())),
                 unclaimed=unclaimed,
                 lab_addon=is_lab,
@@ -713,4 +958,5 @@ def match_sources(
         scopes=tuple(scopes),
         records=tuple(matches),
         folders=tuple(folders),
+        judged_by=tuple(m for m in MANAGERS if m in judged_by),
     )

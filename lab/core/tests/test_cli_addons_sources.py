@@ -133,10 +133,12 @@ def test_the_beta_capture_is_joined_to_the_real_list_constructed(beta: Path, hom
     path = _wowup()
     _settings(beta / BETA)
     sources = _report().sources
-    [file] = sources.files
+    # WowUp's list, then CurseForge's, which this home does not hold (M22-25).
+    file, curseforge = sources.files
+    assert (curseforge.manager, curseforge.state) == ("CurseForge", "missing")
     assert (file.state, file.path, file.written_ns) == ("read", str(path), WRITTEN_NS)
     assert len(file.records) == 6
-    [scope] = sources.scopes
+    scope, _ = sources.scopes
     assert scope.manages is True and scope.others == () and scope.by_name == 0
     by_id = {m.record_id: m for m in sources.records}
     assert {m.installation for m in sources.records} == {"this_folder"}
@@ -186,7 +188,7 @@ def test_a_folder_wowup_does_not_manage_gets_no_claim(forever: Path, home: Path)
     _wowup()
     _settings()
     sources = _report().sources
-    [scope] = sources.scopes
+    scope, _ = sources.scopes
     assert scope.manages is False and scope.installation_ids == ()
     [other] = scope.others
     assert other.folder == "/Volumes/Labdisk/Games/World of Warcraft/_classic_beta_"
@@ -261,7 +263,8 @@ def test_several_folders_name_their_versions_constructed(forever: Path, home: Pa
 
 def test_with_no_wowup_list_nothing_is_said_about_sources(forever: Path, home: Path) -> None:
     sources = _report().sources
-    [file] = sources.files
+    file, curseforge = sources.files
+    assert curseforge.state == "missing"
     assert file.state == "missing" and file.records == ()
     assert file.path == str(addonsource.wowup_folder() / "addons.json")
     assert sources.records == ()
@@ -274,7 +277,7 @@ def test_with_no_wowup_list_nothing_is_said_about_sources(forever: Path, home: P
 def test_an_unreadable_list_is_said_once_constructed(forever: Path, home: Path) -> None:
     _wowup(b"{ not json")
     report = _report()
-    [file] = report.sources.files
+    file, _ = report.sources.files
     assert file.state == "unreadable" and file.error and file.error.startswith("not JSON")
     assert [f.unclaimed for f in report.sources.folders] == [None, None, None]
     out = ok("addons", "list")

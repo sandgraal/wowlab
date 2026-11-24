@@ -59,10 +59,14 @@ def redirect_user_dirs(
 
 def no_wowup_list(monkeypatch: pytest.MonkeyPatch, folder: Path) -> None:
     """Make `folder` (inside the test's `tmp_path`, and empty) WowUp's
-    user-data folder, so `wowlab addons list` never reads the machine's own
-    WowUp list (M22-16). A test that moves the home folder with
+    user-data folder, and `folder / "CurseForge"` the CurseForge app's, so
+    `wowlab addons list` never reads the machine's own WowUp or CurseForge
+    list (M22-16, M22-25). A test that moves the home folder with
     `redirect_user_dirs` needs no more; one that leaves the home as it is
     calls this."""
     from wowlab_core import addonsource
 
     monkeypatch.setattr(addonsource, "wowup_folder", lambda platform=None: folder)
+    monkeypatch.setattr(
+        addonsource, "curseforge_folder", lambda platform=None: folder / "CurseForge"
+    )

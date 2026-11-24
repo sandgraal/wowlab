@@ -40,6 +40,8 @@ RECORD = {
 def _setup(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *, settings: bool) -> None:
     home = tmp_path / "home"
     monkeypatch.setattr(addonsource, "wowup_folder", lambda platform=None: home / "WowUp")
+    # M22-25: `addons list` reads CurseForge's records too; never the machine's.
+    monkeypatch.setattr(addonsource, "curseforge_folder", lambda platform=None: home / "CF")
     monkeypatch.delenv(install.ENV_FLAVOR, raising=False)
     root = tmp_path / "World of Warcraft"
     addon = root / "_x_" / "Interface" / "AddOns" / "Foo"
