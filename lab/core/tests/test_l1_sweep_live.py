@@ -92,7 +92,7 @@ from typing import Any
 import platformdirs
 import pytest
 
-from wowlab_core import gamedata, guard, install, looks, process, snapshot, ui
+from wowlab_core import gamedata, guard, install, looks, process, snapshot, twink, ui
 
 FIXTURES = Path(__file__).resolve().parent / "fixtures"
 CAPTURE = FIXTURES / "macos-70888"  # a whole captured flavor, with its .build.info
@@ -803,6 +803,14 @@ def run_commands(inst: install.Install, sweep: Sweep) -> None:
         # M21-08: `char sim-export` reads only without --out, which the sweep never passes.
         for sub in ("show", "gear", "binds", "macros", "history", "sim-export"):
             sweep.cli("char", sub, *ch, "--json")
+        # M22-06: `char twink` downloads its game tables on a first run, so it
+        # runs only when every one is already cached for this version.
+        if _cached(twink.TABLES, f.version):
+            sweep.cli("char", "twink", *ch, "--json")
+        else:
+            sweep.skipped.append(
+                f"char twink: {f.folder}'s item tables are not cached, so it would go online"
+            )
         if _has_combat_log(f.path):
             sweep.cli("binds", "coach", *ch, "--json")
         else:

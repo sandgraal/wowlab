@@ -320,6 +320,10 @@ LOOKS_FRAME = (
 # not an origin); a link to it opens only on the player's click
 # (ADR-0019's and ADR-0031's amendments of 2026-10-19).
 DRESSING_ORIGIN = 'const DRESSING_ORIGIN = "https://www.wowhead.com";'
+# The second (M22-06): the Twink panel's "Plan on ForeverTwinking" link, checked
+# against it the same way (test_ui_twink.py drives it with hostile addresses);
+# the panel's Wowhead link is checked against DRESSING_ORIGIN.
+PLANNER_ORIGIN = 'const PLANNER_ORIGIN = "https://forevertwinking.com";'
 # The check itself parses the address with the URL constructor, whose name,
 # lower-cased, reads as CSS's `url(`; it constructs a parser and fetches
 # nothing.
@@ -335,7 +339,8 @@ def test_no_external_url_appears_in_the_page(server: Any) -> None:
     body = without_font_faces(body)
     assert body.count(LOOKS_FRAME) == 1
     assert body.count(DRESSING_ORIGIN) == 1 and body.count(DRESSING_PARSE) == 1
-    body = body.replace(LOOKS_FRAME, "").replace(DRESSING_ORIGIN, "")
+    assert body.count(PLANNER_ORIGIN) == 1
+    body = body.replace(LOOKS_FRAME, "").replace(DRESSING_ORIGIN, "").replace(PLANNER_ORIGIN, "")
     # Not an origin (M17-03): the SVG namespace the history charts are made
     # in, which `createElementNS` needs; nothing is fetched from it.
     assert body.count(SVG_NS_LINE) == 1
@@ -421,7 +426,10 @@ _HTML_SINKS = [
 LOOKS_SRCDOC = "frame.srcdoc = read.page;"
 # The one URL sink (M15-02): the dressing-room link's href, set only to an
 # address that parsed, is https: and has exactly DRESSING_ORIGIN as its
-# origin (test_ui_dressing.py drives it with hostile addresses).
+# origin (test_ui_dressing.py drives it with hostile addresses). Since M22-06
+# it is `pointLink`'s one line, which the Twink panel's two static links also
+# go through, each with an address checked against its own origin constant
+# (test_ui_twink.py).
 DRESSING_HREF = "link.href = checked;"
 # The SVG the history charts draw (M17-03): the namespace, named once, and
 # the closed sets of elements and attributes the harness also enforces. None
@@ -531,6 +539,9 @@ def test_the_explorer_runs_only_listed_read_commands(server: Any) -> None:
         # M21-08: the Character tab's Copy for WoWSims runs `char sim-export`
         # on a click, never with --out; graded in test_ui_sim_export.py.
         ("char", "sim-export"),
+        # M22-06: the Character tab's Twink panel runs the read `char twink`
+        # on a click or a picker change; graded in test_ui_twink.py.
+        ("char", "twink"),
         ("looks", "page"),
         ("snap", "create"),
         ("snap", "diff"),
