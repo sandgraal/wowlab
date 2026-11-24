@@ -394,3 +394,41 @@ def test_the_help_says_what_it_reads() -> None:
     out = ok("addons", "list", "--help")
     assert "WowUp" in out and "--notes" in out
     assert hits(out) == []
+
+
+def test_a_second_game_folder_is_named_with_its_same_name_folders_constructed(
+    forever: Path, home: Path, tmp_path: Path
+) -> None:
+    # Review round 2: WowUp manages this folder and another; the line about
+    # the other also counts the folders here that share a name with it.
+    here = forever / FOREVER
+    there = forever / "_other_"
+    records = {
+        "mine": {
+            "name": "Baganator",
+            "installedVersion": "850",
+            "installedFolderList": ["Baganator"],
+            "installationId": "i-here",
+        },
+        "theirs": {
+            "name": "Auctionator",
+            "installedVersion": "1",
+            "installedFolderList": ["Auctionator"],
+            "installationId": "i-there",
+        },
+    }
+    _wowup(json.dumps(records).encode("utf-8"))
+    settings = {
+        "wow_installations": [
+            {"id": "i-here", "location": str(here / "World of Warcraft.app")},
+            {"id": "i-there", "location": str(there / "World of Warcraft.app")},
+        ]
+    }
+    (_folder() / "preferences.json").write_text(json.dumps(settings), encoding="utf-8")
+    out = ok("addons", "list")
+    said = " ".join(out.split())
+    assert (
+        f"WowUp's list also holds addons for {there} (1 addon), and 1 folder here shares a "
+        "name with one of them." in said
+    ), out
+    assert "does not manage" not in out

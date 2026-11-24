@@ -123,16 +123,17 @@ def _scope_lines(sources: addonsource.AddonSources) -> list[str]:
         others = "; ".join(
             f"{_home_words(o.folder)} ({_plural(o.records, 'addon')})" for o in scope.others
         )
-        if scope.manages is False:
-            hinted = sum(1 for f in sources.folders if f.same_name_as)
+        hinted = sum(1 for f in sources.folders if f.same_name_as)
+        shares = (
+            f", and {_plural(hinted, 'folder')} here "
+            f"{'shares' if hinted == 1 else 'share'} a name with one of them"
+            if hinted
+            else ""
+        )
+        if scope.manages is False and not scope.by_name:
             line = "WowUp does not manage this game folder"
             line += f"; its list is for {others}" if others else "; its list holds no addon"
-            if hinted:
-                line += (
-                    f", and {_plural(hinted, 'folder')} here "
-                    f"{'shares' if hinted == 1 else 'share'} a name with one of them"
-                )
-            lines.append(line + ".")
+            lines.append(line + shares + ".")
             continue
         if scope.by_name:
             if file.settings_state == "missing":
@@ -150,7 +151,7 @@ def _scope_lines(sources: addonsource.AddonSources) -> list[str]:
                 "records are matched to these addons by folder name."
             )
         if others:
-            lines.append(f"WowUp's list also holds addons for {others}.")
+            lines.append(f"WowUp's list also holds addons for {others}{shares}.")
     return lines
 
 

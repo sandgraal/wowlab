@@ -6081,15 +6081,15 @@
   function sourcesScope(item, read, file, scope) {
     const others = objects(scope.others).filter((o) => typeof o.folder === "string")
       .map((o) => shown(o.folder) + " (" + sourcesCount(hubNum(o.records), " addon") + ")").join("; ");
-    if (scope.manages === false) {
-      const hinted = read.folders.filter((f) => objects(f.same_name_as).length > 0).length;
+    const hinted = read.folders.filter((f) => objects(f.same_name_as).length > 0).length;
+    const shares = hinted ? ", and " + sourcesCount(hinted, " folder") + " here " +
+      (hinted === 1 ? "shares" : "share") + " a name with one of them" : "";
+    const byName = hubNum(scope.by_name) || 0;
+    if (scope.manages === false && byName === 0) {
       sourcesLine(item, "sources-clear", "WowUp does not manage this game folder" +
-        (others ? "; its list is for " + others : "; its list holds no addon") +
-        (hinted ? ", and " + sourcesCount(hinted, " folder") + " here " + (hinted === 1 ? "shares" : "share") +
-          " a name with one of them" : "") + ".");
+        (others ? "; its list is for " + others : "; its list holds no addon") + shares + ".");
       return;
     }
-    const byName = hubNum(scope.by_name) || 0;
     if (byName > 0) {
       const why = file.settings_state === "missing" ? "its settings file is not there"
         : file.settings_state === "unreadable"
@@ -6099,7 +6099,7 @@
       sourcesLine(item, "sources-note", "wowlab cannot tell which game folder WowUp's list is for (" + why +
         "), so its records are matched to these addons by folder name.");
     }
-    if (others) sourcesLine(item, "sources-note", "WowUp's list also holds addons for " + others + ".");
+    if (others) sourcesLine(item, "sources-note", "WowUp's list also holds addons for " + others + shares + ".");
   }
 
   function sourcesBlock(read, several) {

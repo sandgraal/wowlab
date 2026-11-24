@@ -236,8 +236,10 @@ class ManagerScope(_Model):
 
     manager: Manager
     # True: an installation's location is inside this flavor folder;
-    # False: its installations are read and none is; None: the records
-    # file was not read, or its installations could not be.
+    # False: its installations are read, none is, and every record names
+    # one of them; None: the records file was not read, its installations
+    # could not be, or a record names one they do not list (so it is joined
+    # by name and may be this folder's).
     manages: bool | None
     installation_ids: tuple[str, ...]  # this flavor folder's installations
     others: tuple[OtherInstallation, ...]  # the installations with records elsewhere
@@ -639,6 +641,9 @@ def _scope(
             counts[key] = counts.get(key, 0) + 1
         elif key is None or key not in place:
             by_name += 1
+    if by_name and manages is False:
+        # A record joined by name may be this folder's: wowlab cannot tell.
+        manages = None
     others = tuple(
         OtherInstallation(installation_id=k, folder=folder_of[k], records=n)
         for k, n in counts.items()

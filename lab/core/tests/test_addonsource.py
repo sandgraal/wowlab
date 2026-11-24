@@ -658,3 +658,17 @@ def test_toc_versions_name_the_folders_that_carry_them_constructed(tmp_path: Pat
 )
 def test_versions_agree_at_the_edges(toc: str, recorded: str, agree: bool) -> None:
     assert addonsource.versions_agree(toc, recorded) is agree
+
+
+def test_an_unlisted_installation_makes_the_folder_unknown_constructed(tmp_path: Path) -> None:
+    # Review round 2: the settings list only another game folder and a
+    # record names one they do not list; it is joined by name, so wowlab
+    # cannot say WowUp does not manage this folder.
+    here, there = _flavors(tmp_path)
+    record = {**_record(["Thing"], "1", "1"), "installationId": "GONE"}
+    file = _managed(tmp_path, {"r": record}, [{"id": "B", "location": str(there / "C.app")}])
+    sources = addonsource.match_sources([_versioned("Thing", "1")], [file], here)
+    [scope] = sources.scopes
+    assert scope.manages is None and scope.by_name == 1 and scope.others == ()
+    assert sources.records[0].installation == "unknown"
+    assert sources.folders[0].claims and sources.folders[0].unclaimed is False
