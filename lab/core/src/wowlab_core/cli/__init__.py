@@ -1149,6 +1149,9 @@ if TYPE_CHECKING:
         _crew_version as _crew_version,
     )
     from wowlab_core.cli._cmd_crew import (
+        _linked as _linked,
+    )
+    from wowlab_core.cli._cmd_crew import (
         _profile_lines as _profile_lines,
     )
     from wowlab_core.cli._cmd_crew import (

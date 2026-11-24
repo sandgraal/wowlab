@@ -416,15 +416,13 @@ def _from_database(
     outcome: crewdb.SyncOutcome | None = None
     if opened.book.state != "not_turned_on" and opened.data is not None:
         outcome = crewdb.sync(target, opened.data, opened.book, reread=_rereader(opened))
-    rows = crewdb.read(
+    return outcome, crewdb.read(
         target.flavor_folder,
         target.account,
         opened.book,
         region=reading.region if reading is not None else None,
         second_names=_crew_second_names(opened),
     )
-    version = _crew_version(opened)
-    return outcome, [r.model_copy(update={"links": _profile_links(r, version)}) for r in rows]
 
 
 def _crew_version(opened: _Opened) -> str | None:
@@ -439,6 +437,13 @@ def _profile_links(p: crewdb.CrewRow, version: str | None) -> list[crewdb.Profil
     region the row holds. A row with no second name (a key whose second part
     is a realm) or no region gets no armory link, and says why."""
     return list(links.profiles(p.first_name or None, p.second_name, p.region, version=version))
+
+
+def _linked(rows: Sequence[crewdb.CrewRow], opened: _Opened) -> list[crewdb.CrewRow]:
+    """The rows a report shows, each with its profile links (M21-05). Built
+    for those rows only: a few tenths of a millisecond a player."""
+    version = _crew_version(opened)
+    return [r.model_copy(update={"links": _profile_links(r, version)}) for r in rows]
 
 
 def _rereader(opened: _Opened) -> Callable[[], bytes] | None:
@@ -757,7 +762,7 @@ def crew_list(
         rated=rated,
         noted=noted,
         search=search,
-        players=shown,
+        players=_linked(shown, opened),
         unread=_unread(book),
         places=opened.places,
         words=words,
@@ -944,7 +949,7 @@ def crew_show(
                 "shows it",
                 EXIT_USAGE,
             )
-        player = found[0]
+        (player,) = _linked(found, opened)
     if player is None:
         lines = [_never_on(opened.places if place is None else [place])]
     else:
@@ -1198,9 +1203,8 @@ def crew_matches(
     )
     rows = {p.key: p for p in kept}
     profiles = [
-        CrewProfile(key=k, game_name=rows[k].game_name, region=rows[k].region, links=rows[k].links)
-        for k in dict.fromkeys(named)
-        if k in rows
+        CrewProfile(key=r.key, game_name=r.game_name, region=r.region, links=r.links)
+        for r in _linked([rows[k] for k in dict.fromkeys(named) if k in rows], opened)
     ]
     report = CrewMatchesReport(
         flavor_folder=place.flavor_folder if place else None,
