@@ -144,6 +144,7 @@ def test_constructed_a_numeric_id_found_outside_its_key_refuses(
     assert _nothing_written(out)
 
 
+@pytest.mark.skipif(os.name == "nt", reason="a POSIX home; a drive-letter home is graded below")
 def test_constructed_this_machines_home_is_replaced_in_every_spelling(
     home: Path, tmp_path: Path
 ) -> None:

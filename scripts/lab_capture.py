@@ -3991,7 +3991,7 @@ def _shown_source(path: Path) -> str:
     for real, _ in _home_pairs(str(Path.home())):
         spelled = real.decode("utf-8", "surrogatepass")
         if text.casefold().startswith(spelled.casefold() + os.sep.casefold()):
-            text = "~" + text[len(spelled) :]
+            text = "~" + text[len(spelled) :].replace(os.sep, "/")  # one spelling in a row
             break
     return "<path withheld>" if HOME_RE.search(text.encode("utf-8", "surrogatepass")) else text
 
