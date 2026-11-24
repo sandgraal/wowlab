@@ -1,5 +1,5 @@
-"""`wowlab char show`, `list`, `gear`, `binds` and `macros` (M16-111), and
-`history` (M17-02)."""
+"""`wowlab char show`, `list`, `gear`, `binds` and `macros` (M16-111),
+`history` (M17-02) and `twink` (M22-06)."""
 
 import os
 from collections.abc import Callable, Iterable, Sequence
@@ -30,6 +30,7 @@ from wowlab_core import (
     region,
     simexport,
     snapshot,
+    twink,
     wtfconfig,
 )
 from wowlab_core.cli._cmd_binds import (
@@ -44,6 +45,7 @@ from wowlab_core.cli._cmd_doctor import (
     _REINSTALL,
     _names_line,
     _names_missing,
+    _open_gamedata,
     _wowlab_command,
 )
 from wowlab_core.cli._cmd_macros import (
@@ -1880,6 +1882,226 @@ def char_sim_export(
     else:
         them = "it" if len(notes) == 1 else "them"
         _say_err(f"{_plural(len(notes), 'note')}: --notes shows {them}")
+
+
+class CharTwinkReport(_Out):
+    """`wowlab char twink --json` (M22-06): for one character and one
+    battleground level bracket, each equipment slot's worn item, the best
+    items the character could wear there at the bracket's top level, scored
+    with a weight set of `twink.toml`, and the gap between the two; the
+    game tables are those of the installed client's version (`tables_build`
+    in `twink`)."""
+
+    character: str  # "<realm folder>/<character folder>"
+    file: str  # relative to the flavor folder
+    mtime_ns: int
+    flavor_folder: str
+    twink: twink.TwinkPanel
+    config_source: Literal["default", "user"]  # "user": your twink.toml over the shipped one
+    downloaded: list[str]  # the game tables this run downloaded (once per game version)
+
+
+_TWINK_FROM = {
+    "asked": "",
+    "level": " (the first bracket at or above the character's level)",
+    "first": " (the record has no level)",
+    "last": " (the character is above every bracket)",
+}
+
+
+def _twink_config() -> twink.TwinkConfigSource:
+    try:
+        return twink.load_config()
+    except twink.TwinkConfigError as exc:
+        raise CliError(f"the twink settings cannot be used: {exc}") from exc
+
+
+def _twink_tables(version: str | None) -> tuple[twink.TwinkTables, list[str]]:
+    """The game tables of the installed client's version, downloaded once
+    for that version when they are not cached yet."""
+    if version is None:
+        raise CliError(
+            "the twink panel needs the game tables of your game version, and wowlab cannot "
+            "tell the version of this game folder"
+        )
+    with _open_gamedata() as data:
+        try:
+            missing = gamedata.missing_tables(twink.TABLES, version, cache_dir=data.cache_dir)
+        except ValueError as exc:
+            raise CliError(str(exc), EXIT_USAGE) from exc
+        if missing:
+            _note(
+                "wowlab: downloading {} game tables for {} from wago.tools (once for this game "
+                "version; later runs use the copies kept in wowlab's data folder)",
+                len(missing),
+                version,
+            )
+        try:
+            tables = twink.load_tables(version, lambda name: data.rows(name, version))
+        except twink.TwinkError as exc:
+            raise CliError(str(exc)) from exc
+        except gamedata.GameDataError as exc:
+            raise CliError(f"the game tables could not be read: {exc}") from exc
+    return tables, missing
+
+
+def _twink_stats(stats: Sequence[twink.TwinkStat]) -> str:
+    return ", ".join(f"{s.amount} {s.name.replace('_', ' ')}" for s in stats) or "no stats"
+
+
+def _twink_item(c: twink.TwinkCandidate) -> str:
+    name = c.name + (f" {c.suffix.name}" if c.suffix and c.suffix.name else "")
+    # A required level of 1 asks nothing more than 0 does.
+    level = f"requires level {c.required_level}" if c.required_level > 1 else "no level required"
+    if c.binds_on_pickup:
+        level += ", binds when picked up"
+    return f"{name} ({level}): score {c.score:g}, {_twink_stats(c.stats)}"
+
+
+def _twink_worn(w: twink.TwinkWorn | None) -> str:
+    if w is None:
+        return "empty"
+    if w.score is None:
+        return f"{w.name}: not scored ({w.unscored})"
+    above = ", above this bracket's level" if w.above_cap else ""
+    return f"{w.name}: score {w.score:g}{above}"
+
+
+@char_app.command(
+    "twink", short_help="The gap between your gear and the best for a battleground bracket."
+)
+@_handled
+def char_twink(
+    character: CharacterOpt = None,
+    account: AccountOpt = None,
+    root: RootOpt = None,
+    flavor: FlavorOpt = None,
+    bracket: Annotated[
+        int | None,
+        typer.Option(
+            "--bracket",
+            help="The bracket's top level (19, 29, 39, 49 or 59 unless your twink.toml says "
+            "otherwise); default: the first at or above the character's level.",
+        ),
+    ] = None,
+    weights: Annotated[
+        str | None,
+        typer.Option(
+            "--weights",
+            help="The weight set to score with, such as affliction; default: the class's first.",
+        ),
+    ] = None,
+    top: Annotated[
+        int,
+        typer.Option(
+            "--top",
+            min=1,
+            max=twink.TOP_MAX,
+            help="How many candidates to list per slot.",
+        ),
+    ] = twink.TOP_DEFAULT,
+    json_out: JsonOpt = False,
+    notes_out: NotesOpt = False,
+) -> None:
+    """For one character, each equipment slot's worn item beside the best
+    items it could wear in a battleground level bracket, scored with stat
+    weights you can edit, and the gap between them. Without --character, the
+    character whose WowLab.lua was written last. The game tables of your game
+    version are downloaded once from wago.tools; nothing else is fetched.
+    Each item links to Wowhead, and the bracket to ForeverTwinking's planner.
+    Reads only.
+
+    \f
+    JSON: CharTwinkReport."""
+    _, chosen, lay = _open_char(root, flavor, account)
+    acct = _select_account(lay, account)
+    files = [f for f in lay.saved_variables() if f.account == acct.folder and _is_lab_file(f)]
+    target, how, tie = _lab_char_file(acct, files, character)
+    record = _listed(labaddon.read_char, lay, target.path)
+    missing = _no_gear(record, target.path)
+    if missing is not None:
+        raise CliError(missing)
+    section = record.gear
+    assert isinstance(section, labaddon.Gear)  # _no_gear said so
+    slot_table = _slot_table()
+    try:
+        filled, _ = gear.rows(section, slot_table.table)
+    except itemlink.ItemLinkError as exc:
+        raise CliError(f"{target.path}: an item link wowlab cannot read: {exc}") from exc
+    identity = labaddon.identity_of(record)
+    if identity.class_file is None:
+        raise CliError(
+            f"{target.path} has no class for this character ({identity.class_file_absent}); "
+            "the twink panel needs it"
+        )
+    source = _twink_config()
+    tables, downloaded = _twink_tables(chosen.version)
+    try:
+        panel = twink.build_panel(
+            tables,
+            source.config,
+            filled=filled,
+            slot_names=slot_table.table.slots,
+            class_file=identity.class_file,
+            class_id=identity.class_id,
+            race_id=identity.race_id,
+            level=dressing.level_of(record),
+            bracket=bracket,
+            weights_name=weights,
+            weights_source=source.source,
+            version=chosen.version,
+            top=top,
+            # Home written as "~", as the text output and the page show it.
+            config_file=_home_words(source.user_file),
+        )
+    except twink.TwinkError as exc:
+        raise CliError(str(exc), EXIT_USAGE) from exc
+    report = CharTwinkReport(
+        character=f"{target.realm_folder}/{target.character_folder}",
+        file=target.path,
+        mtime_ns=target.mtime_ns,
+        flavor_folder=chosen.folder,
+        twink=panel,
+        config_source=source.source,
+        downloaded=downloaded,
+    )
+    if json_out:
+        _emit(report)
+        return
+    held = [*_account_words(acct), target.path]
+    _say_prose(
+        f"Character: {report.character} in account {acct.folder}{_picked_words(how, tie)}",
+        keep=held,
+    )
+    _say(f"Written: {_local_time(target.mtime_ns)} ({_SAVED_AT})")
+    weights_from = "yours" if source.source == "user" else "shipped"
+    _say(
+        f"Twink gaps for the level {panel.bracket} bracket{_TWINK_FROM[panel.bracket_from]}, "
+        f"scored with the {panel.weights_name} weights ({weights_from})"
+    )
+    for s in panel.slots:
+        _say(f"  {_slot_label(s.slot, s.slot_name)}: {_twink_worn(s.worn)}")
+        if not s.candidates:
+            _say(f"    {s.gap_words}")
+            continue
+        _say(f"    best: {_twink_item(s.candidates[0])}")
+        for c in s.candidates[1:]:
+            _say(f"    also: {_twink_item(c)}")
+        _say(f"    gap: {s.gap_words}")
+    if panel.planner is not None:
+        _say(f"Plan on ForeverTwinking: {panel.planner}")
+    else:
+        _say(f"No ForeverTwinking link: {panel.planner_absent}")
+    if panel.level is not None and panel.level > panel.bracket:
+        caveat: str | None = panel.notes[-1]
+    else:
+        caveat = None
+    standing = [
+        *panel.notes,
+        "Each item links to its Wowhead page in --json and in wowlab ui; the planner link opens "
+        "ForeverTwinking. wowlab sends nothing to either.",
+    ]
+    _say_notes(standing, notes_out, caveat=caveat, keep=[_home_words(source.user_file)])
 
 
 class CharBindsFile(_Out):

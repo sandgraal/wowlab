@@ -1023,13 +1023,18 @@ def test_the_tab_offers_no_edit_control_and_says_so() -> None:
         assert ident is not None, attrs
         named.append((tag, ident.group(1), kind.group(1) if kind else ""))
     named.sort()
+    # Since M22-06, the Twink panel's two pickers and Show the gaps, which
+    # run the read `char twink` (test_ui_twink.py).
     assert named == [
         ("button", "char-back", "button"),
         ("button", "char-sim-button", "button"),
+        ("button", "char-twink-show", "button"),
         ("input", "char-keys-disagree", "checkbox"),
         ("input", "char-keys-filter", "search"),
         ("input", "char-macros-findings", "checkbox"),
         ("select", "char-picker", ""),
+        ("select", "char-twink-bracket", ""),
+        ("select", "char-twink-weights", ""),
     ]
     assert "<form" not in section and "contenteditable" not in section
     # A read-only note under each of the two panels (§16.5).

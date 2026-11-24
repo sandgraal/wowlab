@@ -133,6 +133,22 @@
 <p class="char-bar-more">Every key is under Keybinds.</p>
 </section>
 </div>
+<section id="char-twink-panel" class="panel char-panel" aria-labelledby="char-twink-title">
+<h3 id="char-twink-title">Twink</h3>
+<p class="twink-intro">For a battleground level bracket: what each slot holds, the best items this character could wear there, and the gap. Click an item for its stats and its Wowhead page.</p>
+<div class="toolbar char-filters">
+<label>Bracket <select id="char-twink-bracket"></select></label>
+<label>Weights <select id="char-twink-weights"></select></label>
+<button id="char-twink-show" class="twink-show" type="button" disabled>Show the gaps</button>
+</div>
+<p id="char-twink-status" class="twink-status"></p>
+<p class="twink-links">
+<a id="char-twink-planner" class="dressing-link" target="_blank" rel="noopener noreferrer" hidden>Plan on ForeverTwinking</a>
+<a id="char-twink-wowhead" class="dressing-link" target="_blank" rel="noopener noreferrer" hidden>Open on Wowhead</a>
+</p>
+<div id="char-twink"></div>
+<ul id="char-twink-notes" class="char-notes twink-notes"></ul>
+</section>
 </div>
 <section id="char-keys-panel" class="panel char-panel" aria-labelledby="char-keys-title" hidden>
 <h3 id="char-keys-title">Keys</h3>
@@ -153,7 +169,7 @@
 </section>
 </div>
 <details class="about"><summary>About this data</summary>
-<p class="intro">One character as the lab-addon last saved it: the file it wrote at logout or <code>/reload</code>, never the session in progress, beside the key bindings and macros the client last wrote, and its earlier saves that your backups hold. Read only: this page runs <code>wowlab char list</code>, <code>wowlab char gear</code>, <code>wowlab char binds</code>, <code>wowlab char macros</code> and <code>wowlab char history</code>, or, for a character kept only in a backup, <code>wowlab char kept</code>, and, when you click <strong>Copy for WoWSims</strong>, <code>wowlab char sim-export</code>, and nothing else; the professions are the ones <code>wowlab char list --summary</code> read for All characters. An item's name is its link's own text, and nothing is fetched. <strong>See it dressed</strong> opens an outside dressing room in your own browser, and only when you click it; this page makes no request to it. <strong>Copy for WoWSims</strong> shows the character as the text WoWSims' Addon Import reads, to copy and paste there yourself; wowlab sends nothing to WoWSims.</p>
+<p class="intro">One character as the lab-addon last saved it: the file it wrote at logout or <code>/reload</code>, never the session in progress, beside the key bindings and macros the client last wrote, and its earlier saves that your backups hold. Read only: this page runs <code>wowlab char list</code>, <code>wowlab char gear</code>, <code>wowlab char binds</code>, <code>wowlab char macros</code> and <code>wowlab char history</code>, or, for a character kept only in a backup, <code>wowlab char kept</code>, and, when you click <strong>Copy for WoWSims</strong>, <code>wowlab char sim-export</code>, and, when you ask the Twink panel, <code>wowlab char twink</code>, and nothing else; the professions are the ones <code>wowlab char list --summary</code> read for All characters. An item's name is its link's own text, and nothing is fetched, except that the Twink panel's first run for a game version downloads that version's item tables from wago.tools once. <strong>See it dressed</strong> opens an outside dressing room in your own browser, and only when you click it; this page makes no request to it. <strong>Copy for WoWSims</strong> shows the character as the text WoWSims' Addon Import reads, to copy and paste there yourself; wowlab sends nothing to WoWSims. The Twink panel's links open Wowhead and ForeverTwinking the same way as See it dressed.</p>
 <div id="char-about" class="char-about">
 <div id="char-sources"></div>
 <div id="char-dressing" class="char-dressing" hidden>
@@ -186,6 +202,7 @@
 <button id="crew-world-show" type="button">Show the open-world fights</button>
 <button id="crew-scan-log" type="button">Read the combat logs not read before</button>
 </div>
+<p id="crew-rule" class="crew-words" hidden></p>
 <p id="crew-status" role="status"></p>
 <div id="crew-table" class="panel hub-table" role="region" aria-label="Crew" tabindex="0"></div>
 <ul id="crew-unread" class="crew-unread" hidden></ul>
