@@ -1364,7 +1364,7 @@ def _saved_links(key: linkstore.CharacterKey) -> tuple[list[CharLinkRow], str | 
     (None when the file was read or there is none). Never raises."""
     try:
         stored = linkstore.read()
-        return [_link_row(key, s) for s in linkstore.links_for(stored.file, key)], None
+        return [_link_row(key, s) for s in linkstore.links_for(stored.shown, key)], None
     except (linkstore.LinkStoreError, links.LinkSitesError) as exc:
         return [], f"Your saved addresses could not be read: {exc}"
 

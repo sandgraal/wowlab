@@ -226,3 +226,25 @@ def test_a_damaged_file_does_not_stop_char_gear_constructed(root: Path, tmp_path
     assert report["saved_links"] == []
     assert any("could not be read" in n for n in report["notes"])
     assert run("char", "link", "list").exit_code == 1
+
+
+def test_an_address_kept_for_a_folder_that_is_gone_is_listed_so(root: Path, tmp_path: Path) -> None:
+    """Domain review, M21-03: a renamed character folder leaves its address
+    under the old folder; `list` says so instead of hiding it (constructed:
+    the folder renamed in the copy)."""
+    _set(FT)
+    folder = root / FLAVOR / "WTF" / "Account" / ACCOUNT / "1"
+    (folder / "Sandgraal-Rizzen").rename(folder / "Sandgraal-Renamed")
+    listed = json.loads(ok("char", "link", "list", "--json").stdout)
+    assert [r["url"] for r in listed["links"]] == [FT]
+    assert [r["url"] for r in listed["gone"]] == [FT]
+    text = ok("char", "link", "list").stdout
+    assert "Kept for a character folder that is gone" in text and FT in text
+    # The file is untouched by listing.
+    stored = json.loads(_store(tmp_path).read_text(encoding="utf-8"))
+    assert stored["characters"][0]["key"]["character"] == CHARACTER
+
+
+def test_set_help_says_the_address_belongs_to_the_folder(root: Path) -> None:
+    text = " ".join(ok("char", "link", "set", "--help").stdout.split())
+    assert "belongs to this character's folder" in text
