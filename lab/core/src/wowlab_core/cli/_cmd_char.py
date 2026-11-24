@@ -1407,6 +1407,10 @@ class CharGearReport(_Out):
     # link set`), each checked again as it is read; empty for a character
     # kept only in a backup.
     saved_links: list[CharLinkRow] = Field(default_factory=list)
+    # The character's look on Purist (M21-06, `links.purist_look`): race,
+    # body type, class, the barber-shop choices and the equipped item ids in
+    # the address's `#` part, with what it leaves out; or why there is none.
+    purist: links.LookLink | links.NoLink
     # The flavor folder read, as the other `char` reports name it; just
     # before `dressing`, which stays last (M16-114).
     flavor_folder: str
@@ -1641,7 +1645,53 @@ def _gear_report(
         game_name=charname.game_name(first, second),
         region=reading.region,
         region_absent=reading.absent,
+        purist=_purist_look(
+            record, identity, filled, charname.game_name(first, second), version=version
+        ),
         dressing=dressing.build(identity, filled, version=version, level=level),
+    )
+
+
+def _purist_look(
+    record: labaddon.CharDB,
+    identity: labaddon.CharIdentity,
+    filled: Sequence[gear.GearSlot],
+    name: str,
+    *,
+    version: str | None,
+) -> links.LookLink | links.NoLink:
+    """The character's look on Purist: race, body type and class from the
+    identity, the barber-shop choices when the record's barber-shop record
+    is of the same race and body type, and the equipped items."""
+    left_out: list[str] = []
+    choices: list[tuple[int, int]] = []
+    try:
+        made = labaddon.customization_import(record)
+    except labaddon.NoCustomizationError:
+        if isinstance(record.customization, labaddon.Customization):
+            left_out.append("the face and hair: the barber-shop record cannot be read as a look")
+        else:
+            left_out.append("the face and hair: the record holds no barber-shop visit")
+    else:
+        if (made.race_id, made.body_type) != (identity.race_id, identity.sex):
+            left_out.append(
+                "the face and hair: the last barber-shop visit was of another race or body type"
+            )
+        else:
+            choices = list(made.choices.items())
+            if made.without_choice:
+                left_out.append(
+                    "some face and hair options: the barber-shop record holds no choice for them"
+                )
+    return links.purist_look(
+        name,
+        identity.race_id,
+        identity.sex,
+        identity.class_id,
+        choices,
+        [(s.slot, s.item_id) for s in filled],
+        version=version,
+        left_out=left_out,
     )
 
 
