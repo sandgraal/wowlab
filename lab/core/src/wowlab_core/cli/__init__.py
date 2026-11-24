@@ -1501,6 +1501,12 @@ if TYPE_CHECKING:
         _hash_now as _hash_now,
     )
     from wowlab_core.cli._cmd_doctor import (
+        _hotfix_cache as _hotfix_cache,
+    )
+    from wowlab_core.cli._cmd_doctor import (
+        _hotfix_line as _hotfix_line,
+    )
+    from wowlab_core.cli._cmd_doctor import (
         _install_step as _install_step,
     )
     from wowlab_core.cli._cmd_doctor import (
