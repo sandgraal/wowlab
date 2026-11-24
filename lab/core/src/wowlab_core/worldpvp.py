@@ -46,17 +46,23 @@ the open world counts. The open world is a stay (from one `ZONE_CHANGE` to
 the next) whose instance id, the zone line's first field, is a map whose
 `InstanceType` in the game's build-keyed `Map` table (`maps`, read from the
 `gamedata` cache by the caller, `map_types`) is `WORLD_INSTANCE_TYPE` (0);
-a dungeon (1), raid (2), battleground (3), arena (4) or any other type is
-not (M22-22, owner decision of 2026-11-23). The difficulty cannot decide
-it: the launch client writes `ZONE_CHANGE,33,"Shadowfang Keep",0`, a
-dungeon with difficulty 0, as it writes `ZONE_CHANGE,0,"Tirisfal Glades",0`
-for the open world. With no table (`maps` None), or an instance id the
-table does not hold, the rule falls back to the difficulty: 0 is taken for
-the open world, and the caller says so. Either way a fight is never the
-open world inside an `ARENA_MATCH_START` .. `ARENA_MATCH_END` span or on a
-map that the crew database keeps a battleground or arena match on
-(`pvp_maps`: the match's `map_id` is the instance id the client gives). The
-arena lines themselves are not yet confirmed. A fight before the log's
+a dungeon (1), raid (2), battleground (3) or any other type is not; that
+4 is an arena is community documentation, and no map of the recorded
+build has it (not yet confirmed) (M22-22, owner decision of 2026-11-23).
+The difficulty cannot decide it: the launch client writes
+`ZONE_CHANGE,33,"Shadowfang Keep",0`, a dungeon with difficulty 0, as it
+writes `ZONE_CHANGE,0,"Tirisfal Glades",0` for the open world. With the
+table read, a map it does not hold is not the open world either: its
+fights are counted apart (`unknown_map`, the ids in `unknown_maps`), not
+taken for the open world. With no table (`maps` None), the rule falls
+back to the difficulty: 0 is taken for the open world, which counts a
+dungeon, raid or battleground whose zone line says 0 too, and the caller
+says so. Either way a fight is never the open world inside an
+`ARENA_MATCH_START` .. `ARENA_MATCH_END` span or on a map that the crew
+database keeps a battleground or arena match on (`pvp_maps`: the match's
+`map_id` is the instance id the client gives). The arena lines themselves
+are not yet confirmed. A caller's `place` decides instead of all of this
+where a fight counts (M22-05's match recap). A fight before the log's
 first zone line is not counted (`no_zone`). A duel cannot be told from the
 log, so a duel in the open world is counted.
 
@@ -156,6 +162,7 @@ __all__ = [
     "scan_entries",
     "seconds_of",
     "unit_parts",
+    "unknown_map",
 ]
 
 ENCOUNTER_GAP_SECONDS = 300
@@ -188,9 +195,13 @@ game data and nothing about a flavor (L6)."""
 WORLD_INSTANCE_TYPE = 0
 """`Map.InstanceType` of the open world (the recorded table of build
 1.60.1.71037: 0 on Eastern Kingdoms and Kalimdor, 1 on dungeons such as
-Shadowfang Keep, 2 on raids, 3 on battlegrounds; 4, arenas, by community
-documentation)."""
+Shadowfang Keep, 2 on raids, 3 on battlegrounds; that 4 is an arena is
+community documentation, and no map of that build has it: not yet
+confirmed)."""
 MAX_MAPS = 100_000
+MAX_UNKNOWN_MAPS = 20
+"""At most this many instance ids the map table does not hold are named
+in one read (`WorldScan.unknown_maps`)."""
 """At most this many maps are read from the table (the recorded one has 78)."""
 
 DAMAGE_EVENTS = frozenset({"SWING_DAMAGE", "RANGE_DAMAGE", "SPELL_DAMAGE", "SPELL_PERIODIC_DAMAGE"})
@@ -307,7 +318,9 @@ class WorldScan(_Model):
     the log was at that point (`state`), whether it stopped at a bound with
     more to read (`more`), and counts: lines read, lines the tokenizer could
     not read, lines whose fields could not be read (`bad_lines`), fights
-    counted, fights outside the open world (`outside_world`), fights before
+    counted, fights outside the open world (`outside_world`), fights on a
+    map the game's map table does not hold (`unknown_map`, not counted;
+    `unknown_maps` the first `MAX_UNKNOWN_MAPS` of those instance ids), fights before
     the log's first zone line (`no_zone`), fights whose time could not be
     read (`no_time`), hits on you from a hostile pet whose owner the log
     does not name (`pet_hits_no_owner`), and encounters not kept
@@ -323,6 +336,8 @@ class WorldScan(_Model):
     bad_lines: int = 0
     fights: int = 0
     outside_world: int = 0
+    unknown_map: int = 0
+    unknown_maps: list[int] = Field(default_factory=list)
     no_zone: int = 0
     no_time: int = 0
     pet_hits_no_owner: int = 0
@@ -494,19 +509,20 @@ def in_open_world(
 ) -> bool:
     """Whether the log is in the open world at `state` (the one place this
     rule lives): outside an arena match, on no instance id of `pvp_maps`
-    (the battlegrounds and arenas a match is kept on), and on a map whose
-    `InstanceType` in `maps` (`map_types`) is `WORLD_INSTANCE_TYPE`. With no
-    `maps`, or an instance id `maps` does not hold, a zone line whose
-    difficulty is 0 is taken for the open world (the rule before the map
-    table; a dungeon's zone line can say 0 too)."""
+    (the battlegrounds and arenas a match is kept on), and, with the game's
+    map table (`maps`, `map_types`), on a map whose `InstanceType` there is
+    `WORLD_INSTANCE_TYPE`. A map the table does not hold is not the open
+    world (`unknown_map`: the zone line's difficulty cannot tell, so it is
+    not taken for one). With no table, a zone line whose difficulty is 0 is
+    taken for the open world: the rule before the map table, which counts
+    a dungeon, raid or battleground whose zone line says 0 too."""
     if state.arena:
         return False
     if state.instance_id is not None and state.instance_id in pvp_maps:
         return False
-    if maps is not None and state.instance_id is not None:
-        kind = maps.get(state.instance_id)
-        if kind is not None:
-            return kind == WORLD_INSTANCE_TYPE
+    if maps is not None:
+        kind = maps.get(state.instance_id) if state.instance_id is not None else None
+        return kind == WORLD_INSTANCE_TYPE
     return state.difficulty == 0
 
 
@@ -514,6 +530,13 @@ def decided_by_map(state: ZoneState, maps: Mapping[int, int] | None) -> bool:
     """Whether `in_open_world` decides `state` by the map table: `maps`
     holds its instance id."""
     return maps is not None and state.instance_id is not None and state.instance_id in maps
+
+
+def unknown_map(state: ZoneState, maps: Mapping[int, int] | None) -> bool:
+    """Whether the map table was read (`maps`) and does not hold the
+    instance id `state` is on (or the zone line gave none): such a stay is
+    not the open world, and says so as unknown rather than as an instance."""
+    return maps is not None and not decided_by_map(state, maps)
 
 
 # ─── encounters being built ──────────────────────────────────────────────────
@@ -605,9 +628,11 @@ class _Reader:
         pvp_maps: frozenset[int],
         second_names: bool = False,
         maps: Mapping[int, int] | None = None,
+        place: Callable[[ZoneState], bool | None] | None = None,
     ) -> None:
         self.second_names = second_names
         self.maps = maps
+        self.place = place
         self.owners = {
             g.upper(): (normalize_realm(r) or None if r else None) for g, r in owners.items()
         }
@@ -629,6 +654,8 @@ class _Reader:
         self.held = 0  # players in the encounters kept and open
         self.left_out = 0
         self.fights = self.outside = self.no_zone = self.no_time = self.pet_no_owner = 0
+        self.unknown = 0
+        self.unknown_ids: list[int] = []
         # Your killing hit, by your GUID: (time, the opponent's GUID or None).
         self.killing: dict[str, tuple[int, str | None]] = {}
 
@@ -668,9 +695,14 @@ class _Reader:
         )
 
     def in_world(self) -> bool | None:
+        """Whether a fight here counts: the open world, or what `place`
+        says when the caller gave one (`live`'s match recap counts the
+        battleground's own fights); None before any zone line."""
         s = self.state
         if s.difficulty is None and s.instance_id is None and s.zone is None:
             return None
+        if self.place is not None:
+            return self.place(s)
         return in_open_world(s, self.pvp_maps, maps=self.maps)
 
     # who ---------------------------------------------------------------------
@@ -874,7 +906,23 @@ class _Reader:
             self.no_zone += 1
             return
         if not world:
-            self.outside += 1
+            s = self.state
+            if (
+                self.place is None
+                and not s.arena
+                and (s.instance_id is None or s.instance_id not in self.pvp_maps)
+                and unknown_map(s, self.maps)
+            ):
+                self.unknown += 1
+                held = s.instance_id
+                if (
+                    held is not None
+                    and held not in self.unknown_ids
+                    and len(self.unknown_ids) < MAX_UNKNOWN_MAPS
+                ):
+                    self.unknown_ids.append(held)
+            else:
+                self.outside += 1
             return
         self.close_before(now)
         e = self.encounter(owner, foe, now)  # may stop the part: count after it
@@ -1021,6 +1069,7 @@ def scan_entries(
     pvp_maps: Iterable[int] = (),
     second_names: bool = False,
     maps: Mapping[int, int] | None = None,
+    place: Callable[[ZoneState], bool | None] | None = None,
 ) -> WorldScan:
     """The open-world encounters in a log's lines (as `combatlog.read_log`
     yields them, from `start`), for your characters' GUIDs `owners` (each
@@ -1034,8 +1083,11 @@ def scan_entries(
     `end` is its offset, so the next read takes it whole. A read that
     holds `MAX_ENCOUNTERS` or `MAX_READ_PLAYERS` stops at the first line
     with no encounter open, and at twice either bound before the line that
-    would start one (`more`, `end` that line's offset)."""
-    reader = _Reader(owners, state, frozenset(pvp_maps), second_names, maps)
+    would start one (`more`, `end` that line's offset). `place`, when
+    given, decides instead of the open-world rule where a fight counts,
+    from where the log is (`ZoneState`); a fight it answers False for is
+    counted in `outside_world` (M22-05: a battleground's own fights)."""
+    reader = _Reader(owners, state, frozenset(pvp_maps), second_names, maps, place)
     lines = unparsed = bad = 0
     end = start
     more = False
@@ -1070,6 +1122,8 @@ def scan_entries(
         bad_lines=bad,
         fights=reader.fights,
         outside_world=reader.outside,
+        unknown_map=reader.unknown,
+        unknown_maps=reader.unknown_ids,
         no_zone=reader.no_zone,
         no_time=reader.no_time,
         pet_hits_no_owner=reader.pet_no_owner,
@@ -1153,6 +1207,7 @@ def read_world(
     pvp_maps: Iterable[int] = (),
     second_names: bool = False,
     maps: Mapping[int, int] | None = None,
+    place: Callable[[ZoneState], bool | None] | None = None,
 ) -> WorldScan:
     """`scan_entries` on the log at `path`, read-only from `start`, with
     only `WORLD_EVENTS` tokenized, and of their damage lines only those
@@ -1166,4 +1221,5 @@ def read_world(
         pvp_maps=pvp_maps,
         second_names=second_names,
         maps=maps,
+        place=place,
     )

@@ -14,10 +14,11 @@
 <div class="bar">
 <h1 class="brand"><svg class="mark" viewBox="0 0 24 24" width="26" height="26" aria-hidden="true" focusable="false"><path d="M12 2l3 7 7 3-7 3-3 7-3-7-7-3 7-3z"/></svg>wowlab</h1>
 <div class="sections" role="tablist" aria-label="Sections">
-<button id="sec-characters" class="sec" type="button" role="tab" aria-selected="true" aria-controls="account-view character-view crew-view">Characters</button>
+<button id="sec-characters" class="sec" type="button" role="tab" aria-selected="true" aria-controls="account-view character-view crew-view lookup-view">Characters</button>
 <button id="sec-backups" class="sec" type="button" role="tab" aria-selected="false" aria-controls="backups-view">Backups</button>
 <button id="sec-addons" class="sec" type="button" role="tab" aria-selected="false" aria-controls="addons-view">Addons</button>
 <button id="sec-keybinds" class="sec" type="button" role="tab" aria-selected="false" aria-controls="character-view">Keybinds</button>
+<button id="sec-live" class="sec" type="button" role="tab" aria-selected="false" aria-controls="live-view">Live</button>
 <button id="sec-advanced" class="sec" type="button" role="tab" aria-selected="false" aria-controls="explorer-view gaps-view commands-view looks-view">Advanced</button>
 </div>
 <div class="game"><span class="game-dot" aria-hidden="true"></span><span id="game-name" class="game-name" hidden></span><label id="run-flavor-box" class="run-flavor" hidden><span class="unseen">Game version</span><select id="run-flavor"></select></label></div>
@@ -28,6 +29,7 @@
 <button id="tab-account" class="tab" type="button" role="tab" aria-selected="true" aria-controls="account-view">All characters</button>
 <button id="tab-character" class="tab" type="button" role="tab" aria-selected="false" aria-controls="character-view">Character</button>
 <button id="tab-crew" class="tab" type="button" role="tab" aria-selected="false" aria-controls="crew-view">Crew</button>
+<button id="tab-lookup" class="tab" type="button" role="tab" aria-selected="false" aria-controls="lookup-view">Look up</button>
 </nav>
 <nav id="advanced-tabs" class="tabs" role="tablist" aria-label="Advanced" hidden>
 <button id="tab-explorer" class="tab" type="button" role="tab" aria-selected="false" aria-controls="explorer-view">Explorer</button>
@@ -262,6 +264,31 @@
 </div>
 </details>
 </section>
+<section id="lookup-view" role="tabpanel" aria-labelledby="tab-lookup" hidden>
+<div class="chars-head">
+<h2 class="page-title">Look up</h2>
+<span class="chars-when">where an item drops or which quest gives it, who sells it, where an NPC or quest is</span>
+</div>
+<div id="lookup-tools" class="toolbar panel" role="search">
+<label>Find <input id="lookup-query" type="search" placeholder="an item, NPC, quest or object, or an id" autocomplete="off" spellcheck="false"></label>
+<label>Kind <select id="lookup-kind"></select></label>
+<button id="lookup-go" type="button">Look up</button>
+</div>
+<div id="lookup-offer" class="names-offer" hidden>
+<p class="names-say"><strong>Zone and item names need a one-time download.</strong> Until then, zones show as numbers.</p>
+<button id="lookup-fetch" type="button">Download zone and item names</button>
+<p class="names-note">Downloads the game's public item and zone tables from wago.tools, sending your game version.</p>
+</div>
+<p id="lookup-status" role="status"></p>
+<p id="lookup-caveat" class="crew-words" hidden></p>
+<div id="lookup-hits" class="lookup-hits"></div>
+<details class="about"><summary>About this data</summary>
+<p class="intro">Where things are, who sells them and what drops them come from QuestieDB, the addon installed for this game version, read with <code>wowlab lookup</code> as data, never run; it says what Questie's authors recorded, which the game itself may not match. Drop chances are shown only where QuestieDB's drop tables have one; those cover the items quests ask for. Spots are map coordinates, across then down. Item levels come from QuestieDB first, then from the game's item table; zone names from the game's zone table, once it is downloaded. The notes below are the ones <code>wowlab lookup --notes</code> prints.</p>
+<div id="lookup-about" class="lookup-about">
+<ul id="lookup-left-out" class="crew-lines" aria-label="Notes" hidden></ul>
+</div>
+</details>
+</section>
 <section id="backups-view" role="tabpanel" aria-labelledby="sec-backups" hidden>
 <h2 class="page-title">Backups</h2>
 <div id="backup" class="panel backup" role="region" aria-labelledby="backup-heading">
@@ -283,6 +310,25 @@
 </div>
 <details class="about"><summary>About this data</summary>
 <p class="patch-day-intro">Addons the game may skip, and saved data no installed addon declares, as wowlab reads them from your files. Reads only. Pick a line to see its file in the Explorer.</p>
+</details>
+</section>
+<section id="live-view" role="tabpanel" aria-labelledby="sec-live" hidden>
+<div class="chars-head">
+<h2 class="page-title">Live</h2>
+<span class="chars-when">refreshes by itself while this view is open</span>
+</div>
+<p id="live-watch" class="crew-words" role="status"></p>
+<div id="live-match" class="panel crew-player" role="region" aria-labelledby="live-match-title">
+<h3 id="live-match-title">Latest match</h3>
+<ul id="live-match-lines" class="crew-lines"></ul>
+</div>
+<div id="live-session" class="panel crew-player" role="region" aria-labelledby="live-session-title">
+<h3 id="live-session-title">Your last save, against an earlier one your backups hold</h3>
+<ul id="live-session-lines" class="crew-lines"></ul>
+</div>
+<p id="live-status" role="status"></p>
+<details class="about"><summary>About this data</summary>
+<p class="intro">This view is meant for a second screen while you play. Every few seconds it asks wowlab whether your game folder changed: the times of your saved addon data, which the game writes only at <code>/reload</code> and logout, and the newest combat log, which the game writes as you play, a little at a time. When either changed, it reads again with <code>wowlab live recap</code>. The latest match is read from the combat log: who you fought, your killing blows and deaths, and the result when the log or the crew book has it. The crew book, like all addon data, is saved only at <code>/reload</code> or logout, so a battleground's result and scoreboard appear after that. A match shows its fights only when the combat log was on during it. The lab-addon turns the log off in instances: to log a battleground, wait for WowLab's chat line that says the combat log is off, then type <code>/combatlog</code>, and the game answers that combat is being logged (<code>/combatlog</code> switches the log, so typing it while the log is on turns it off). Your last save, against an earlier one your backups hold, compares the newest save of the character you played last with the save before it that your backups hold: level, gear and currencies from the lab-addon, new items from Syndicator when you use it (everything it lists counts: bags, bank, mail, auctions and what you wear), and the players you met. Take a backup after you play to compare the next session with it. Reads only; nothing leaves this computer.</p>
 </details>
 </section>
 <section id="explorer-view" role="tabpanel" aria-labelledby="tab-explorer" hidden>

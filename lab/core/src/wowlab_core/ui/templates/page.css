@@ -547,6 +547,8 @@ pre:empty { display: none; }
 .key-slot { text-align: right; }
 .key-row.key-disagrees { background: var(--selected); }
 .key-disagree-mark { display: block; color: var(--ruin); }
+.key-command small { font-family: var(--font-text); white-space: normal; }
+.key-row.key-not-client .key-command, .key-row.key-not-client .key-does { color: var(--ruin); }
 .char-slots { margin: var(--space-1) 0 var(--space-3); padding-left: var(--space-5); overflow-wrap: anywhere; unicode-bidi: isolate; }
 .macro {
   margin: 0 0 var(--space-4); padding: var(--space-3) var(--space-4);
@@ -563,6 +565,7 @@ pre:empty { display: none; }
   display: block; font-family: var(--font-mono); font-size: 13px; line-height: 20px;
   white-space: pre-wrap; overflow-wrap: anywhere; unicode-bidi: isolate;
 }
+.macro-line-finding { color: var(--ruin); text-decoration: underline dotted; text-underline-offset: 3px; }
 .macro-placement p, .macro-findings, .macro-slots { margin: var(--space-1) 0; overflow-wrap: anywhere; }
 .macro-findings, .macro-slots { padding-left: var(--space-5); }
 .macro-finding { color: var(--ruin); }
@@ -620,6 +623,8 @@ pre:empty { display: none; }
 .crew-player { margin-top: var(--space-3); padding: var(--space-3) var(--space-4); }
 .crew-player h3 { margin: 0 0 var(--space-2); font-family: var(--font-display); font-size: 18px; overflow-wrap: anywhere; unicode-bidi: isolate; }
 .crew-player h4 { margin: 0 0 var(--space-2); font-family: var(--font-display); font-size: 16px; font-weight: 600; color: var(--text); }
+.lookup-hit { margin-top: var(--space-3); padding: var(--space-3) var(--space-4); }
+.lookup-hit h3 { margin: 0 0 var(--space-2); font-family: var(--font-display); font-size: 18px; overflow-wrap: anywhere; unicode-bidi: isolate; }
 .crew-actions { display: flex; flex-wrap: wrap; gap: var(--space-3); margin: var(--space-3) 0; }
 .crew-action { display: inline-flex; align-items: center; gap: var(--space-2); }
 .crew-action label { display: inline-flex; align-items: center; gap: var(--space-2); font-size: 14px; font-weight: 500; color: var(--muted); }

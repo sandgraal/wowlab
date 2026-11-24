@@ -1646,11 +1646,16 @@ class BindingsV5(Bindings, _Quiet):
     out). `commands_not_plain` (M20-16; absent from a file the M20-13 addon
     wrote) counts the listed commands, keyed or not, that are not a plain
     upper-case name; the keyed ones are in `list`, so it is at least their
-    number and at most `commands`."""
+    number and at most `commands`. `binding_sets` (M21-11; absent from an
+    earlier file) is the client's `Enum.BindingSet`, member name to number,
+    which names `binding_set`; the M21-11 addon no longer asks for
+    `account_bindings` and `character_bindings`, which the client never
+    gave as numbers."""
 
     commands_left_out: Count = 0
     keys_left_out: Count = 0
     commands_not_plain: Count | None = None
+    binding_sets: EnumMap | None = None
     list_: Lst[BindingV5] = Field(alias="list")  # type: ignore[assignment]
     probes: Lst[ApiProbe] = Field(default_factory=list)
 
@@ -1686,17 +1691,19 @@ class Macros(_Section, _Quiet):
     """`macros` (schema 5, M20-13): `account` and `character` are
     `GetNumMacros`'s counts; the account macros are indices 1 to `account`,
     this character's start at `first_character_index`
-    (`MAX_ACCOUNT_MACROS + 1`). `account_slots_from` (M20-16; absent from a
-    file the M20-13 addon wrote) says where the account's slot count came
-    from: `MAX_ACCOUNT_MACROS`, or `fallback`, the addon's own 120 (not yet
-    confirmed on this client) when the constant was not loaded. A macro
+    (the account's macro slots + 1). `account_slots_from` (M20-16; absent
+    from a file the M20-13 addon wrote) says where the account's slot count
+    came from: `MacroConsts` (M21-11: the client's
+    `Constants.MacroConsts.MAX_ACCOUNT_MACROS`), `MAX_ACCOUNT_MACROS` (the
+    global), or `fallback`, the addon's own 120, Blizzard's value in the
+    API list, when the client gave neither. A macro
     listed twice, or at an index the counts do not reach, is refused: the
     addon cannot have written it."""
 
     account: Count
     character: Count
     first_character_index: Int
-    account_slots_from: Literal["MAX_ACCOUNT_MACROS", "fallback"] | None = None
+    account_slots_from: Literal["MacroConsts", "MAX_ACCOUNT_MACROS", "fallback"] | None = None
     list_: Lst[Macro] = Field(alias="list")
     probes: Lst[ApiProbe] = Field(default_factory=list)
 
@@ -1727,11 +1734,17 @@ OWN_FIELDS: tuple[str, ...] = ("guid", "name", "realm", "guild")
 class IdentityV5(Identity):
     """`identity` in schema 5: schema 4's values plus the character's own
     `guid` (`UnitGUID("player")`), `name` (`UnitName("player")`), `realm`
-    (`GetRealmName()`; since M20-16 `GetNormalizedRealmName()` or the second
-    return of `UnitFullName("player")` when it gives none, named by
-    `realm_from`, with `realm_normalized`) and `guild`
+    (`GetRealmName()`; since M20-16 `GetNormalizedRealmName()` when it gives
+    none, named by `realm_from`, with `realm_normalized`) and `guild`
     (`GetGuildInfo("player")`), each one of the value and `<field>_absent`. A value that does not fit is set aside
-    with a reason, as schema 4's are."""
+    with a reason, as schema 4's are.
+
+    `realm_from = "full_name"` (the second return of `UnitFullName("player")`)
+    was written by the M20-16 to M20-19 addons only; on Forever that value is
+    very likely the character's second name, not a realm (not yet
+    confirmed). Since M21-11 the addon keeps it as `second_name`, with
+    `second_name_from = "full_name"`, when neither realm call gives a
+    realm, and never as the realm."""
 
     value_fields: ClassVar[tuple[str, ...]] = IDENTITY_FIELDS + OWN_FIELDS
     reason_fields: ClassVar[tuple[str, ...]] = (
@@ -1763,6 +1776,10 @@ class IdentityV5(Identity):
     # string, another type, or a secret value), as the addon words it.
     realm_tried: Reason | None = None
     realm_tried_clipped: ClippedReason | None = None
+    # M21-11: the second return of UnitFullName("player") when no realm call
+    # gave a realm: Forever's second name (not yet confirmed).
+    second_name: OwnText | None = None
+    second_name_from: Literal["full_name"] | None = None
     guild: OwnText | None = None
     guild_absent: Reason | None = None
     guild_absent_clipped: ClippedReason | None = None
@@ -1779,7 +1796,11 @@ class CombatLog(_Section):
     it, so it was left off for that session; `advanced`: the Advanced Combat
     Logging setting at the last switch on; `dormant`: why the switch did
     nothing that session; `refused_in_combat`: switches the game refused in
-    combat (tried again when the fight ended)."""
+    combat (tried again when the fight ended). M21-11 (absent from an
+    earlier file): `state_from`, the call that last said the log's state
+    (`IsLoggingCombat`, the documented `C_ChatInfo.IsLoggingCombat`, or
+    `LoggingCombat`); `advanced_from`, where `advanced` came from
+    (`IsLoggingCombat` or `setting`)."""
 
     idle_minutes: Annotated[int, Field(ge=1, le=120)] | None = None
     switches: Count | None = None
@@ -1791,6 +1812,8 @@ class CombatLog(_Section):
     log_on: bool | None = None
     hands_off: bool | None = None
     advanced: bool | None = None
+    state_from: Literal["IsLoggingCombat", "LoggingCombat"] | None = None
+    advanced_from: Literal["IsLoggingCombat", "setting"] | None = None
     dormant: Reason | None = None
     refused_in_combat: Count | None = None
 
@@ -3823,12 +3846,31 @@ def _action_bars(
     return lines + _record_probes(bars) + _events(bars)
 
 
+# The client's binding-set members (Enum.BindingSet) in player words.
+BINDING_SET_WORDS = {
+    "Character": "the character's own bindings",
+    "Account": "the account's bindings",
+    "Default": "the game's default bindings",
+    "Current": "the set in use",
+}
+
+
 def _binding_set_words(record: Bindings) -> str:
     """`binding_set`, named by the client's own account and character
-    binding-set numbers as the record holds them, in player words."""
+    binding-set numbers as the record holds them, in player words: since
+    M21-11 the client's `Enum.BindingSet`, before it the two globals."""
     which = record.binding_set
     if which is None:
         return "not returned"
+    sets = record.binding_sets if isinstance(record, BindingsV5) else None
+    if sets is not None and not sets:
+        # The client's table had no member the addon could keep.
+        return f"{which} (no binding set recorded)"
+    if sets is not None:
+        for member, words in BINDING_SET_WORDS.items():
+            if sets.get(member) == which:
+                return f"{which} ({words})"
+        return f"{which} (the client's raw value; not one of the game's named sets)"
     if which == record.character_bindings:
         return f"{which} (the character's own bindings)"
     if which == record.account_bindings:
@@ -3995,7 +4037,7 @@ def _macros(record: Macros, render: Callable[[str], str] = str) -> list[str]:
         "--json); read out of combat",
     ]
     first = record.first_character_index
-    if record.account_slots_from == "MAX_ACCOUNT_MACROS":
+    if record.account_slots_from in ("MacroConsts", "MAX_ACCOUNT_MACROS"):
         lines.append(
             f"  this character's macros asked from index {first}, after the game's own "
             "count of account macro slots"
@@ -4003,9 +4045,9 @@ def _macros(record: Macros, render: Callable[[str], str] = str) -> list[str]:
     elif record.account_slots_from == "fallback":
         lines.append(
             render(
-                f"  this character's macros asked from index {first}: the game's count of "
-                "account macro slots is loaded only once the macro window has been opened, so "
-                f"the addon assumed {first - 1} [verify]"
+                f"  this character's macros asked from index {first}: the game gave no count "
+                f"of account macro slots, so the addon assumed {first - 1}, the game's own "
+                "number [verify]"
             )
         )
     return [*lines, *_record_probes(record), *_events(record)]
@@ -4022,8 +4064,14 @@ NO_GUILD_REASONS = (
 # Where a normalized realm came from (Identity.lua, `realm_from`; M20-16).
 REALM_SOURCE_WORDS = {
     "normalized_realm_name": "the game gave no realm name with spaces",
-    "full_name": "taken from the character's full name; the game gave no realm name",
 }
+# M21-11: `realm_from = "full_name"` was written only by the M20-16 to M20-19
+# addons; on Forever that value is very likely the second name, so it is
+# shown as either, never as a realm written without spaces.
+FULL_NAME_REALM_WORDS = (
+    "realm or second name {value} (from the character's full name; probably the second "
+    "name [verify]{tried})"
+)
 
 
 def _own_lines(char: CharDBV5, render: Callable[[str], str] = str) -> list[str]:
@@ -4035,7 +4083,18 @@ def _own_lines(char: CharDBV5, render: Callable[[str], str] = str) -> list[str]:
         parts = []
         for name, label in (("name", "name"), ("realm", "realm"), ("guild", "guild")):
             value = getattr(section, name)
-            if name == "realm" and value is not None and section.realm_normalized:
+            if name == "realm" and value is None and section.second_name is not None:
+                # M21-11: the realm slot of the full name held the second name.
+                parts.append(
+                    render(
+                        f"second name {section.second_name} (from the game's full name; no "
+                        "realm given) [verify]"
+                    )
+                )
+            elif name == "realm" and value is not None and section.realm_from == "full_name":
+                tried = f"; {section.realm_tried}" if section.realm_tried is not None else ""
+                parts.append(render(FULL_NAME_REALM_WORDS.format(value=value, tried=tried)))
+            elif name == "realm" and value is not None and section.realm_normalized:
                 where = REALM_SOURCE_WORDS.get(section.realm_from or "", "source not recorded")
                 if section.realm_tried is not None:
                     where = f"{where}: {section.realm_tried}"

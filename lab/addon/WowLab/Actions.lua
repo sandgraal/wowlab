@@ -385,6 +385,27 @@ ns.Section({
 
 -- bindings --------------------------------------------------------------------
 
+-- Enum.BindingSet as the client has it (M21-11): member name to number, or
+-- nil when the client has no such table, so a reader can name `binding_set`
+-- (Default 0, Account 1, Character 2, Current 3 in the 70938 API list;
+-- read, never assumed).
+local function bindingSets()
+    local sets = type(Enum) == "table" and Enum.BindingSet or nil
+    if type(sets) ~= "table" then
+        return nil
+    end
+    local out, members = {}, 0
+    for name, value in pairs(sets) do
+        -- tostring: a key that is not a string never passes enumName.
+        local key = type(name) == "string" and enumName(tostring(name)) or nil
+        if key and type(value) == "number" and members < MAX_ENUM_MEMBERS then
+            out[key] = ns.Number(value)
+            members = members + 1
+        end
+    end
+    return out
+end
+
 ns.Section({
     key = "bindings",
     path = { "bindings" },
@@ -415,10 +436,11 @@ ns.Section({
             return { absent = ns.String(missing .. " missing"), probes = list }
         end
         local record = { list = {}, commands = 0, probes = list }
-        -- The client's names for its two binding sets [verify], so a reader
-        -- can name `binding_set` without assuming the numbers.
-        record.account_bindings = ns.Number(ACCOUNT_BINDINGS)
-        record.character_bindings = ns.Number(CHARACTER_BINDINGS)
+        -- The client's numbers for its binding sets, so a reader can name
+        -- `binding_set` without assuming them (M21-11). ACCOUNT_BINDINGS and
+        -- CHARACTER_BINDINGS, asked until then, are defined by no file of
+        -- the 71037 UI source and were never numbers (70425 capture).
+        record.binding_sets = bindingSets()
         if getSet then
             -- Which binding set is active: the client's raw value [verify].
             local okSet, which = pcall(getSet)
@@ -495,16 +517,47 @@ ns.Section({
 -- Schema 5 (M20-13; ADR-0026, note of 2026-11-20): every macro, account-wide
 -- and this character's, as GetMacroInfo returns it. GetNumMacros gives the
 -- two counts; account macros are indices 1 to the account count, and this
--- character's start after MAX_ACCOUNT_MACROS, the client's constant, or
--- after ACCOUNT_MACRO_SLOTS when that constant is not loaded (M20-16; both
--- [verify] on Forever). Only those indices are asked: an out-of-range index
--- into a C API is the crash class in docs/DATA_SOURCES.md (2026-09-28). A
--- count is walked to at most MAX_MACROS_PER_SCOPE, the addon's own bound.
+-- character's start after the client's count of account macro slots
+-- (accountMacroSlots below; that they are numbered from there on Forever is
+-- [verify]). Only those indices are asked: an out-of-range index into a C
+-- API is the crash class in docs/DATA_SOURCES.md (2026-09-28). A count is
+-- walked to at most MAX_MACROS_PER_SCOPE, the addon's own bound.
 local MAX_MACROS_PER_SCOPE = 256
--- The account's macro slots when MAX_ACCOUNT_MACROS is nil (M20-16): 120, the
--- community value, not yet confirmed on this client [verify]
--- (docs/LAB_FORMATS.md, macros-cache.txt).
+-- The account's macro slots when the client gives no count (M20-16): 120,
+-- the value of Constants.MacroConsts.MAX_ACCOUNT_MACROS in the 70938 API
+-- list (docs/LAB_FORMATS.md, macros-cache.txt).
 local ACCOUNT_MACRO_SLOTS = 120
+
+-- A count of slots as the client gives it: a whole number of at least 1, or
+-- nil (`% 1`, not math.floor: a gather calls no function but its own, the
+-- pinned builtins and ns's).
+local function slotCount(value)
+    local count = ns.Number(value)
+    if count and count >= 1 and count % 1 == 0 then
+        return count
+    end
+    return nil
+end
+
+-- The account's macro slots and where the number came from (M21-11):
+-- Constants.MacroConsts.MAX_ACCOUNT_MACROS, which Blizzard_MacroUI reads
+-- [verify] ("MacroConsts"); else the global MAX_ACCOUNT_MACROS, which no
+-- file of the 71037 UI source assigns and which was nil on the owner's run
+-- (2026-11-20; "MAX_ACCOUNT_MACROS"); else ACCOUNT_MACRO_SLOTS ("fallback").
+-- No window is loaded for either: the table is the client's own, loaded
+-- with its UI.
+local function accountMacroSlots()
+    local consts = type(Constants) == "table" and Constants.MacroConsts or nil
+    local fromTable = type(consts) == "table" and slotCount(consts.MAX_ACCOUNT_MACROS) or nil
+    if fromTable then
+        return fromTable, "MacroConsts"
+    end
+    local fromGlobal = slotCount(MAX_ACCOUNT_MACROS)
+    if fromGlobal then
+        return fromGlobal, "MAX_ACCOUNT_MACROS"
+    end
+    return ACCOUNT_MACRO_SLOTS, "fallback"
+end
 
 ns.Section({
     key = "macros",
@@ -529,17 +582,8 @@ ns.Section({
         if missing then
             return { absent = ns.String(missing .. " missing"), probes = list }
         end
-        -- M20-16: MAX_ACCOUNT_MACROS is defined by the macro window's own
-        -- Lua, which loads on demand, so it is nil until the player opens
-        -- that window (the owner's run on 71037, 2026-11-20). The window is
-        -- never loaded for it: without the constant the addon takes
-        -- ACCOUNT_MACRO_SLOTS and says so in `account_slots_from`.
-        local perAccount = ns.Number(MAX_ACCOUNT_MACROS)
-        local slotsFrom = "MAX_ACCOUNT_MACROS"
-        if not perAccount then
-            perAccount = ACCOUNT_MACRO_SLOTS
-            slotsFrom = "fallback"
-        end
+        -- Where the count came from is in `account_slots_from`.
+        local perAccount, slotsFrom = accountMacroSlots()
         local okCount, accountCount, characterCount = pcall(getCount)
         if okCount then
             accountCount = clean(isSecret, secret, count, accountCount)

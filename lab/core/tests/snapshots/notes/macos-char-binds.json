@@ -30,7 +30,7 @@
       "key": "Q",
       "command": "MULTIACTIONBAR1BUTTON1",
       "slot": 61,
-      "page_note": "bottom left bar button 1, page 6",
+      "page_note": "Action Bar 2 (bottom left) button 1, page 6",
       "holds": null,
       "does": "cannot place: no action-bar record",
       "sources": [
@@ -38,13 +38,15 @@
       ],
       "agreement": null,
       "disagrees": false,
-      "note": null
+      "note": null,
+      "command_label": "Action Bar 2 Button 1",
+      "client_command": true
     },
     {
       "key": "BUTTON3",
       "command": "MULTIACTIONBAR1BUTTON2",
       "slot": 62,
-      "page_note": "bottom left bar button 2, page 6",
+      "page_note": "Action Bar 2 (bottom left) button 2, page 6",
       "holds": null,
       "does": "cannot place: no action-bar record",
       "sources": [
@@ -52,13 +54,15 @@
       ],
       "agreement": null,
       "disagrees": false,
-      "note": null
+      "note": null,
+      "command_label": "Action Bar 2 Button 2",
+      "client_command": true
     },
     {
       "key": "E",
       "command": "MULTIACTIONBAR1BUTTON3",
       "slot": 63,
-      "page_note": "bottom left bar button 3, page 6",
+      "page_note": "Action Bar 2 (bottom left) button 3, page 6",
       "holds": null,
       "does": "cannot place: no action-bar record",
       "sources": [
@@ -66,7 +70,9 @@
       ],
       "agreement": null,
       "disagrees": false,
-      "note": null
+      "note": null,
+      "command_label": "Action Bar 2 Button 3",
+      "client_command": true
     }
   ],
   "unreached_slots": [],

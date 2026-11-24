@@ -86,6 +86,7 @@ _UNREADABLE = "Nothing was read."
 _FIELD_WORDS = {
     "started": "start date",
     "skipped": "count of skipped reads",
+    "no_second": "count of reads skipped for no second name or realm",
     "loads": "load count",
     "players": "player list",
     "current": "list of the players counted in the group you were in at the last save",
@@ -199,6 +200,9 @@ class CrewMatch(_Model):
     won: bool | None = None
     team: list[str] = Field(default_factory=list)
     foes: list[str] = Field(default_factory=list)
+    # M21-11: scoreboard rows whose name had no second part while no home
+    # realm was found, so they got no key; absent when none.
+    rows_unkeyed: int | None = None
     other_keys: list[str] = Field(default_factory=list)
 
 
@@ -238,6 +242,11 @@ class CrewBook(_Model):
     started: int | None = None  # time() when the book was (last) started
     probe_loads: int | None = None  # the book's own load probe (§20.1)
     skipped: int | None = None  # reads the addon skipped, counted per attempt
+    # M21-11: reads of a group member the addon skipped because the game
+    # named the member with no second part (no second name, no realm) and no
+    # home realm was found; one per read (each roster pass), not distinct
+    # players, since the book was started; absent from an earlier addon's book.
+    no_second: int | None = None
     current_count: int = 0  # keys in the saved `current` set
     players: list[CrewPlayer] = Field(default_factory=list)
     unread: list[UnreadEntry] = Field(default_factory=list)
@@ -550,6 +559,7 @@ def load_book(value: object) -> CrewBook:
         started=_top_number(value, "started", TIME_MAX),
         probe_loads=loads,
         skipped=_top_number(value, "skipped"),
+        no_second=_top_number(value, "no_second"),
         current_count=len(current),
         players=players,
         unread=unread,
@@ -636,6 +646,10 @@ def _match(position: int, key: object, value: object) -> CrewMatch | UnreadMatch
             if keys is None:
                 return bad(f"{name} is not a list of names")
             fields[name] = keys
+        elif name == "rows_unkeyed":
+            fields["rows_unkeyed"] = _whole(item, 0, 2**31 - 1)
+            if fields["rows_unkeyed"] is None:
+                return bad("rows_unkeyed is not a whole number of 0 or more")
         else:
             other.append(_key_text(name))
     if "at" not in fields:
