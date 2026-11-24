@@ -681,6 +681,7 @@ def _found_inside(short: str, long: str) -> bool:
 
 
 _NAME_SEPARATORS = "-_ +"
+_ZERO_GROUPS = re.compile(r"(?:\.0+)*")
 
 
 def file_name_has_version(file_name: str, toc_version: str) -> bool | None:
@@ -701,7 +702,10 @@ def file_name_has_version(file_name: str, toc_version: str) -> bool | None:
         return False
     start = name.find(short)
     while start != -1:
-        end = start + len(short)
+        # `_plain` dropped the TOC's trailing `.0` groups (`2.11.0` is
+        # `2.11`); the name may still carry them (`UpgradeScout-2.11.0-forever`).
+        zeros = _ZERO_GROUPS.match(name, start + len(short))
+        end = zeros.end() if zeros and short[-1:].isdigit() else start + len(short)
         before = start == 0 or name[start - 1] in _NAME_SEPARATORS
         if not before and name[start - 1] == "v":
             before = start == 1 or name[start - 2] in _NAME_SEPARATORS
