@@ -404,7 +404,8 @@ def test_the_notes(served: Tables, root: Path) -> None:
     assert (
         "Where each item comes from (a quest, a drop, a vendor, a craft) is not known yet" in flat
     )
-    assert "are sent by the server as hotfixes, which the copy wowlab downloads lacks" in flat
+    assert "have no stats in the copy wowlab downloads" in flat
+    assert "4,108 of the 4,944 classic-range ones are in the game's own hotfix cache" in flat
     assert "items only the other side's quests or vendors give are not yet left out" in flat
     assert "Crit, hit and haste weights count per point of rating" in flat
     assert "named as a test, placeholder or retired item were left out" in flat

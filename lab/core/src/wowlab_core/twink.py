@@ -27,10 +27,13 @@ The rules, each **[verify]** on Forever:
   the off hand from the class's `dual_wield_from` level, and an off-hand
   weapon fills nothing for a class that does not dual wield.
   About half of the armour and weapons in `Item` have no `ItemSparse`
-  row in wago.tools' export (at 70888 and 71037: 11231 of 19079): the server
-  sends these items as hotfixes, which wago.tools' copy lacks; wowlab will
-  read them from the client's hotfix cache (M22-23; GLOSSARY, "Hotfix
-  cache"). Until then they cannot be candidates; the report counts them.
+  row in wago.tools' export (at 70888 and 71037: 11231 of 19079). Most of
+  those in this game's range are sent by the server as hotfixes, which
+  wago.tools' copy lacks (4,108 of the 4,944 classic-range ones are in the
+  client's hotfix cache, which M22-23 reads; GLOSSARY, "Hotfix cache");
+  the rest are other games' items or removed (DATA_SOURCES, 2026-11-23).
+  Until the panel reads the cache they cannot be candidates; the report
+  counts them.
 - **Stats.** The game tables hold no stat amounts, only each stat's share
   of the item's budget (`StatPercentEditor`, per 10000). The amount is that
   share of `RandPropPoints` at the item's level, in the column of its
@@ -1236,9 +1239,11 @@ def _notes(
     if tables.gear_without_details:
         notes.append(
             f"{tables.gear_without_details} of the {tables.gear_in_item} weapons and armour "
-            "pieces the game tables list are sent by the server as hotfixes, which the copy "
-            "wowlab downloads lacks, so they are never candidates and a worn one is not scored; "
-            "a later version will read them from the game's own hotfix cache."
+            "pieces the game tables list have no stats in the copy wowlab downloads, so they are "
+            "never candidates and a worn one is not scored. Most of those in this game's range "
+            "are sent by the server as hotfixes (4,108 of the 4,944 classic-range ones are in "
+            "the game's own hotfix cache, which a later version reads); the rest are other "
+            "games' items or removed."
         )
     if left.no_level:
         notes.append(
