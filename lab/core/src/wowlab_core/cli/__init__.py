@@ -223,6 +223,7 @@ if TYPE_CHECKING:
     from wowlab_core.cli import _cmd_doctor as _cmd_doctor
     from wowlab_core.cli import _cmd_filemap as _cmd_filemap
     from wowlab_core.cli import _cmd_install as _cmd_install
+    from wowlab_core.cli import _cmd_live as _cmd_live
     from wowlab_core.cli import _cmd_log as _cmd_log
     from wowlab_core.cli import _cmd_looks as _cmd_looks
     from wowlab_core.cli import _cmd_macros as _cmd_macros
@@ -1823,6 +1824,12 @@ if TYPE_CHECKING:
     from wowlab_core.cli._cmd_install import (
         install_show as install_show,
     )
+    from wowlab_core.cli._cmd_live import (
+        LiveRecapReport as LiveRecapReport,
+    )
+    from wowlab_core.cli._cmd_live import (
+        live_recap as live_recap,
+    )
     from wowlab_core.cli._cmd_log import (
         _BATCHES as _BATCHES,
     )
@@ -3226,6 +3233,9 @@ if TYPE_CHECKING:
     )
     from wowlab_core.cli._common import (
         install_app as install_app,
+    )
+    from wowlab_core.cli._common import (
+        live_app as live_app,
     )
     from wowlab_core.cli._common import (
         log_app as log_app,

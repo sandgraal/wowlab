@@ -209,9 +209,10 @@ def test_the_header_has_the_mark_the_name_and_five_sections_in_order() -> None:
         ("backups", "Backups"),
         ("addons", "Addons"),
         ("keybinds", "Keybinds"),
+        ("live", "Live"),  # M22-05
         ("advanced", "Advanced"),
     ]
-    assert [s[1] for s in sections] == ["true", "false", "false", "false", "false"]
+    assert [s[1] for s in sections] == ["true", "false", "false", "false", "false", "false"]
     html = _template("page.html")
     for _name, _on, controls, _label in sections:
         for view in controls.split():
@@ -296,6 +297,7 @@ def test_every_view_ends_with_one_closed_about_this_data() -> None:
         "crew-view",
         "backups-view",
         "addons-view",
+        "live-view",  # M22-05
         "explorer-view",
         "gaps-view",
         "commands-view",

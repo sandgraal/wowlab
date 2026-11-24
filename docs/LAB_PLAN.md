@@ -7492,6 +7492,68 @@ stopped at the page's 120 s limit says that what was read is kept and that
 pressing the button again reads on (each part of a read is kept as it is
 read), and the UI's refusal of a path says that only the Logs folder is read.
 
+*As built (2026-11-23, M22-05): the Live view and `live recap`.* `wowlab
+ui` gains a **Live** section. The page asks the server every
+`live.POLL_SECONDS` (3) while it is shown and the browser tab is not
+hidden; the server answers `GET /api/live` in its own process
+(`live.Watcher`, held in memory, writing nothing): the newest modification
+time of the `.lua` files in every account's and character's
+`SavedVariables/` of the install wowlab finds by itself (at most 4,000
+stat'ed, links not followed, never opened), and the newest combat log's
+name and size with the zone and arena lines added since the last poll (at
+most 4 MiB read; other lines are passed over by their event name). Its
+query holds the token and at most one `flavor`, the exact name of one of
+that install's flavor folders. When the save time, the log, its count of
+zone lines or of arena end lines changes, the page runs `live recap --json`
+through `/api/run`. **The match recap** is the latest stay, in the newest 3
+logs (256 MiB at most), in a place the open-world rule does not take
+(`worldpvp.in_open_world`, now the one place that rule lives), that shows
+an arena line, is on a map a match was kept on (wowlab's crew database or
+the book), or holds a fight with a player. Who you fought is `worldpvp`'s
+fight rule counted inside that place (`scan_entries(place=)`); killing
+blows are `PARTY_KILL` lines by you or a unit flagged yours on a player;
+deaths are `UNIT_DIED` lines of your GUID; both are unknown when the stay
+holds nothing but zone and header lines (the log was off). A zone line
+right after a `COMBAT_LOG_VERSION` header naming the same place is the log
+switched on again inside the stay (a switch-on appends a header and zone
+lines to the same file, confirmed on the owner's install), not a new stay,
+when the header came at most 10 minutes after the line before it (a longer
+silence is another visit). It is over when a later zone line, the arena's
+end line or a newer log follows. It is shown ending at its last line in the
+log; the line that ended it (the next zone line, or the newer log's first
+line, perhaps the next day) is only an upper bound, printed as "over by ...
+at the latest" when the log was off there. The result is the arena's end
+line against the team on its start line, else the crew book's match on
+that map nearest the match's last line (nearest the upper bound when the
+log was off), from 120 s before its start to 900 s after the upper bound;
+the book is saved only at `/reload` or logout, and the view says so. **The
+session recap** compares the newest save of the character's `WowLab.lua`
+with the one before it (`charhistory`: level, gear, currencies), the items
+Syndicator lists for the character (every table under its entry with an
+`itemID`, `itemCount` or 1) against the copy in the snapshot holding that
+earlier save. Syndicator keys a character `Name-Realm`; on the owner's
+launch install `First Second-<realmNormalized>` (`Sandgraal Rizzen-RPPvP`,
+2026-11-23), while the committed beta capture keys `First Second` with an
+empty realm. The entry is the one whose key is the folder name, `First
+Second` or `Name-Realm` (under a realm-name folder); else whose details'
+name and realm join to one of those; else, only when one entry alone has
+it, whose key before its last `-` or details' name is one of them,
+the book's matches since then, and the open-world encounters of the logs
+written since (256 MiB at most). Measured: a poll of the owner's install
+(83 SavedVariables files, a 1.2 MB log) took 25 ms the first time and
+3.4 ms after; a constructed flavor with 402 files and a 4.8 MB log, on the
+external test volume, 84 ms and 19 ms (Apple silicon, 2026-11-23). **The
+lab-addon switches the log off in an instance** (M20-19), so a battleground
+shows its fights only when the player logs it: `/combatlog` is a toggle,
+so the advice is to type it after WowLab's chat line says the log is off,
+and the game then answers that combat is being logged. That advice changes
+when M22-15 lets the addon log battlegrounds itself. Which places are the
+open world stays `worldpvp.in_open_world`'s (difficulty 0 is not enough:
+Shadowfang Keep logs 0; M22-22 decides it by the Map table). Not yet
+confirmed: the lines that end a battleground, the arena lines' fields,
+Syndicator's layout beyond these two installs, whether an expired auction
+returned by mail counts twice, whether Feign Death logs `UNIT_DIED`.
+
 *M21-11 (2026-11-23).* The switch reads the log's state with the documented
 `C_ChatInfo.IsLoggingCombat` (first return) before `LoggingCombat()`, and
 Advanced Combat Logging from its second return before the
