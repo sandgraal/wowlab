@@ -480,11 +480,11 @@ def test_a_command_with_no_name_in_the_game_s_strings_says_what_it_is_constructe
         ("MACRO Lab macro", "a key bound straight to the macro 'Lab macro'"),
         (
             "CLICK LabBarButton1:RightButton",
-            "presses frame 'LabBarButton1''s button 'RightButton' (often an addon's frame)",
+            "presses the RightButton button of frame LabBarButton1 (often an addon's frame)",
         ),
         (
             "CLICK LabBarButton2",
-            "presses frame 'LabBarButton2''s button 'LeftButton' (often an addon's frame)",
+            "presses the LeftButton button of frame LabBarButton2 (often an addon's frame)",
         ),
     ],
     ids=[

@@ -15,8 +15,8 @@ the bar showing page p is slot (p - 1) * 12 + n (docs/GLOSSARY.md "Action
 slot"). That numbering is the default UI's **[verify]**. The real record is
 consistent with it and proves no more: `MULTIACTIONBAR1BUTTON1` to `3` hold
 keys and slots 61 to 63 hold spells, and slots 49 and 50 fit page 5; no
-`MULTIACTIONBAR5` to `7` command has had a key in a capture, so bars 5 to 7
-are unconfirmed. The main bar is read at page 1 only, the page shown with no
+`MULTIACTIONBAR5` to `7` command has had a key in a capture, so Action Bars 6
+to 8 are unconfirmed. The main bar is read at page 1 only, the page shown with no
 form, stance or stealth active. Its other pages (`UNFOLLOWED_SLOTS`: page 2, and the pages forms, stances and
 stealth show, and the possess, override or vehicle bars) are not followed,
 nor are the pet and stance bars, an addon's buttons, or a key bound straight
@@ -210,7 +210,7 @@ def direct_binding(command: str) -> str | None:
         return f"a key bound straight to the {_DIRECT_WORDS[match.group(1)]} {match.group(2)!r}"
     if match := _CLICK.fullmatch(command):
         button = match.group(2) or "LeftButton"
-        return f"presses frame {match.group(1)!r}'s button {button!r} (often an addon's frame)"
+        return f"presses the {button} button of frame {match.group(1)} (often an addon's frame)"
     return None
 
 
