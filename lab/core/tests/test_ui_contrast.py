@@ -840,8 +840,10 @@ async function main() {
 
       await page.click("#sec-characters");
       await page.click("#tab-character");
-      await page.waitForSelector("#char-gear .gear-name", { timeout: 60000 });
-      await page.locator("#char-gear .gear-name").first().click();
+      // The item's Details button (M21-04): its name is an outside link,
+      // which a click would open.
+      await page.waitForSelector("#char-gear .gear-more", { timeout: 60000 });
+      await page.locator("#char-gear .gear-more").first().click();
       // The keys table and the macros are drawn by runs of their own, after
       // the gear (M16-53): measure once both panels have drawn.
       await page.waitForFunction(() => document.querySelector("#char-keys").children.length > 0 && document.querySelector("#char-macros").children.length > 0, null, { timeout: 60000 });
