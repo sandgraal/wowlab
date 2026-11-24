@@ -3809,6 +3809,7 @@
     backups: ["backups"],
     addons: ["addons"],
     keybinds: ["keybinds"],
+    live: ["live"],
     advanced: ["explorer", "gaps", "commands", "looks"],
   };
   // The views with a tab, in their order; the first is shown when the page opens.
@@ -3816,7 +3817,7 @@
   // Every view's element. Keybinds shows the character page's own element
   // with its keys and macros panels alone, so the picker and the keys are
   // one; the character page shows the rest.
-  const VIEWS = ["account", "character", "crew", "backups", "addons", "explorer", "gaps", "commands", "looks"];
+  const VIEWS = ["account", "character", "crew", "backups", "addons", "live", "explorer", "gaps", "commands", "looks"];
   const CHARACTER_PANELS = ["char-page", "char-about"];
   const KEYBIND_PANELS = ["char-keys-panel", "char-macros-panel"];
   // The view each section showed last, so going back to it lands there.
@@ -3861,6 +3862,8 @@
     }
     if (name === "gaps") loadGaps();
     if (name === "crew") loadCrew();
+    if (name === "live") startLive();
+    else stopLive();
     if (name === "character" || keys) {
       const listed = loadCharacters();
       if (keys && character.kept) {
@@ -4056,6 +4059,135 @@
       spyAgain();
     }, 300);
   });
+
+  // ─── the Live view (M22-05) ───
+  // For a second screen while the game runs. While the view is shown (and
+  // the browser tab is not hidden) it asks the server every few seconds
+  // (`GET /api/live`, the interval the server gives): the newest time of
+  // the SavedVariables, which the game writes at /reload and logout, and
+  // the newest combat log with its count of zone lines and arena end lines.
+  // When one of those changed, it runs `live recap --json` and draws its
+  // `lines`: the match's, up to the first empty line, then the session's.
+  // The server reads the files; the page reads only the server. Zone,
+  // file and player names are text from the machine: textContent only.
+  const liveState = {
+    timer: null, // the next poll
+    seq: 0, // bumped when the view closes, so a late reply draws nothing
+    seen: null, // what the last poll saw, as one string
+    running: false, // a recap run in progress
+    again: false, // something changed while it ran: run it once more
+    seconds: 3,
+    started: false, // whether the view is polling
+  };
+
+  function liveKey(watch) {
+    const saved = watch.saved || {};
+    const log = watch.log || {};
+    return [watch.flavor_folder, saved.newest_ns, log.name, log.zone_changes, log.match_ends].join("|");
+  }
+
+  function liveWatchWords(watch) {
+    const parts = [];
+    const log = watch.log;
+    if (log) {
+      let where = "the log has not named a place yet";
+      if (typeof log.zone === "string" && log.zone) {
+        where = "the log last showed " + visible(log.zone);
+        if (typeof log.zone_at === "number") where += " (at " + new Date(log.zone_at * 1000).toLocaleTimeString() + ")";
+      }
+      parts.push("Combat log: " + visible(String(log.name)) + "; " + where);
+    } else {
+      parts.push("No combat log yet: type /combatlog in game to start one");
+    }
+    const saved = watch.saved || {};
+    if (typeof saved.newest_ns === "number") {
+      parts.push("last save " + new Date(saved.newest_ns / 1e6).toLocaleString());
+    }
+    parts.push("checked " + new Date().toLocaleTimeString() + " in " + Math.max(1, Math.round(watch.cost_us / 1000)) + " ms");
+    return parts.join(" · ") + ".";
+  }
+
+  async function liveRecap() {
+    if (liveState.running) {
+      liveState.again = true;
+      return;
+    }
+    liveState.running = true;
+    const seq = liveState.seq;
+    announce(byId("live-status"), "Reading the latest match and your last save…", false);
+    try {
+      const got = await runJson(["live", "recap"], {});
+      if (seq !== liveState.seq) return;
+      if (got.error && !got.data) {
+        announce(byId("live-status"), got.error, true);
+        return;
+      }
+      const lines = Array.isArray(got.data.lines) ? got.data.lines.map((l) => String(l)) : [];
+      const cut = lines.indexOf("");
+      const match = cut < 0 ? lines : lines.slice(0, cut);
+      const session = cut < 0 ? [] : lines.slice(cut + 1);
+      byId("live-match-lines").replaceChildren(...match.map((l) => make("li", visible(l))));
+      byId("live-session-lines").replaceChildren(...session.map((l) => make("li", visible(l))));
+      announce(byId("live-status"), "Read at " + new Date().toLocaleTimeString() + ".", false);
+    } finally {
+      liveState.running = false;
+      // Asked again while it ran, or the view was left and opened again
+      // meanwhile (this run's reply was dropped): read once more while the
+      // view is open, so what it shows is never left behind.
+      if (liveState.started && (liveState.again || seq !== liveState.seq)) {
+        liveState.again = false;
+        liveRecap();
+      }
+    }
+  }
+
+  async function livePoll() {
+    const seq = liveState.seq;
+    liveState.timer = null;
+    if (!document.hidden) {
+      let reply;
+      let body;
+      try {
+        await runFlavor.ready;
+        const query = runFlavor.picked ? "?flavor=" + encodeURIComponent(runFlavor.picked) : "";
+        reply = await fetch(api("/api/live") + query, { cache: "no-store", credentials: "omit", headers: keyed() });
+        body = await reply.json();
+      } catch (error) {
+        body = null;
+      }
+      if (seq !== liveState.seq) return;
+      if (!reply || !reply.ok || !body) {
+        announce(byId("live-watch"), "wowlab could not check your game folder: " + ((body && body.error) || "no answer") + ".", true);
+      } else if (!body.found) {
+        announce(byId("live-watch"), String(body.words || "wowlab found no game folder to watch."), true);
+      } else {
+        if (typeof body.poll_seconds === "number" && body.poll_seconds >= 1) liveState.seconds = body.poll_seconds;
+        announce(byId("live-watch"), liveWatchWords(body.watch), false);
+        const key = liveKey(body.watch);
+        if (key !== liveState.seen) {
+          liveState.seen = key;
+          liveRecap();
+        }
+      }
+    }
+    if (seq === liveState.seq) liveState.timer = setTimeout(livePoll, liveState.seconds * 1000);
+  }
+
+  function startLive() {
+    if (liveState.timer !== null || liveState.started) return;
+    liveState.started = true;
+    livePoll();
+  }
+
+  function stopLive() {
+    if (!liveState.started) return;
+    liveState.started = false;
+    liveState.seq += 1;
+    liveState.seen = null;
+    liveState.again = false;
+    if (liveState.timer !== null) clearTimeout(liveState.timer);
+    liveState.timer = null;
+  }
 
   // ─── the crew book (M19-06, docs/LAB_PLAN.md §20.4) ───
   // The players the lab-addon's crew book keeps, from `crew list --json`:
