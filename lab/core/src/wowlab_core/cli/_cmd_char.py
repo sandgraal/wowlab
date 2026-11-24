@@ -18,6 +18,7 @@ from wowlab_core import (
     dressing,
     gamedata,
     gear,
+    hotfix,
     install,
     itemlink,
     keymap,
@@ -1915,9 +1916,13 @@ def _twink_config() -> twink.TwinkConfigSource:
         raise CliError(f"the twink settings cannot be used: {exc}") from exc
 
 
-def _twink_tables(version: str | None) -> tuple[twink.TwinkTables, list[str]]:
+def _twink_tables(
+    version: str | None, lay: layout.Layout
+) -> tuple[twink.TwinkTables, list[str], hotfix.OverlayReport]:
     """The game tables of the installed client's version, downloaded once
-    for that version when they are not cached yet."""
+    for that version when they are not cached yet, with the game's hotfix
+    cache laid over `Item` and `ItemSparse` when it is of that version's
+    build (M22-23), and what the cache did or why it was not read."""
     if version is None:
         raise CliError(
             "the twink panel needs the game tables of your game version, and wowlab cannot "
@@ -1936,12 +1941,17 @@ def _twink_tables(version: str | None) -> tuple[twink.TwinkTables, list[str]]:
                 version,
             )
         try:
-            tables = twink.load_tables(version, lambda name: data.rows(name, version))
+            overlay = gamedata.flavor_hotfixes(
+                lay.flavor_path, lay.install_root, version, lambda name: data.table(name, version)
+            )
+            tables = twink.load_tables(
+                version, lambda name: overlay.rows(name, data.rows(name, version))
+            )
         except twink.TwinkError as exc:
             raise CliError(str(exc)) from exc
-        except gamedata.GameDataError as exc:
+        except (gamedata.GameDataError, OSError) as exc:
             raise CliError(f"the game tables could not be read: {exc}") from exc
-    return tables, missing
+    return tables, missing, overlay.report()
 
 
 def _twink_stats(stats: Sequence[twink.TwinkStat]) -> str:
@@ -1954,6 +1964,8 @@ def _twink_item(c: twink.TwinkCandidate) -> str:
     level = f"requires level {c.required_level}" if c.required_level > 1 else "no level required"
     if c.binds_on_pickup:
         level += ", binds when picked up"
+    if c.stats_from == "hotfix cache":
+        level += ", stats from the hotfix cache"
     return f"{name} ({level}): score {c.score:g}, {_twink_stats(c.stats)}"
 
 
@@ -1963,7 +1975,8 @@ def _twink_worn(w: twink.TwinkWorn | None) -> str:
     if w.score is None:
         return f"{w.name}: not scored ({w.unscored})"
     above = ", above this bracket's level" if w.above_cap else ""
-    return f"{w.name}: score {w.score:g}{above}"
+    cache = ", stats from the hotfix cache" if w.stats_from == "hotfix cache" else ""
+    return f"{w.name}: score {w.score:g}{above}{cache}"
 
 
 @char_app.command(
@@ -2034,7 +2047,7 @@ def char_twink(
             "the twink panel needs it"
         )
     source = _twink_config()
-    tables, downloaded = _twink_tables(chosen.version)
+    tables, downloaded, hotfixes = _twink_tables(chosen.version, lay)
     try:
         panel = twink.build_panel(
             tables,
@@ -2052,6 +2065,7 @@ def char_twink(
             top=top,
             # Home written as "~", as the text output and the page show it.
             config_file=_home_words(source.user_file),
+            hotfix_cache=hotfixes,
         )
     except twink.TwinkError as exc:
         raise CliError(str(exc), EXIT_USAGE) from exc

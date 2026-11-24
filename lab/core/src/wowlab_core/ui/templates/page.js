@@ -2291,6 +2291,8 @@
       wornText = "Worn: " + visible(String(worn.name)) + (worn.suffix && typeof worn.suffix.name === "string" && !String(worn.name).endsWith(worn.suffix.name) ? " " + visible(worn.suffix.name) : "");
       wornText += typeof worn.score === "number" ? " · score " + twinkScore(worn.score) : " · not scored: " + visible(String(worn.unscored || ""));
       if (worn.above_cap === true) wornText += " · above this bracket's level";
+      // Where the worn item's stats came from (M22-23).
+      if (worn.stats_from === "hotfix cache") wornText += " · stats from the hotfix cache";
     }
     const wornLine = make("span", wornText);
     wornLine.className = "twink-worn";
@@ -2322,7 +2324,8 @@
     // A required level of 1 asks nothing more than 0 does (the CLI's words).
     const level = typeof c.required_level === "number" && c.required_level > 1 ? "requires level " + c.required_level : "no level required";
     const binds = c.binds_on_pickup === true ? " · binds when picked up" : "";
-    const facts = make("span", "score " + twinkScore(c.score) + " · " + level + binds + (c.worn === true ? " · worn" : ""));
+    const cached = c.stats_from === "hotfix cache" ? " · stats from the hotfix cache" : "";
+    const facts = make("span", "score " + twinkScore(c.score) + " · " + level + binds + cached + (c.worn === true ? " · worn" : ""));
     facts.className = "twink-facts";
     main.append(button, facts);
     li.appendChild(main);
@@ -2333,6 +2336,8 @@
     const fact = (term, value) => list.append(make("dt", term), make("dd", value));
     fact("Stats", twinkStats(c.stats));
     fact("Item level", typeof c.item_level === "number" ? String(c.item_level) : "not known");
+    // Where its name, level and stats were read (M22-23).
+    fact("Stats from", c.stats_from === "hotfix cache" ? "your game's hotfix cache (items the server sends at login)" : "the game tables wowlab downloads");
     if (c.two_hand === true) fact("Wielded", "with both hands, so it also takes the off hand");
     for (const other of objects(c.other_suffixes)) {
       fact("Also rolls", visible(String(other.name || "suffix " + other.id)) + ": score " + twinkScore(other.score) + " (" + twinkStats(other.stats) + ")");

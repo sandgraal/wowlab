@@ -25,6 +25,7 @@ from wowlab_core import (
     firstrun,
     gamedata,
     guard,
+    hotfix,
     install,
     labaddon,
     lastbackup,
@@ -199,6 +200,11 @@ class DoctorFlavor(_Out):
     # wowlab's crew databases for this flavor folder (M20-02): path, size and
     # counts, never a row.
     crew_databases: list[CrewDatabaseSummary] = Field(default_factory=list)
+    # The game's hotfix cache over the game tables wowlab has cached for
+    # `version` (M22-23): its build and the rows it adds and replaces, or why
+    # it is not laid over them. None when the version is unknown or the
+    # folder has no hotfix cache. Read from the cache only: nothing fetched.
+    hotfix_cache: hotfix.OverlayReport | None = None
 
 
 # What a file the rollback left holds as `doctor` reads it now (M16-84):
@@ -427,6 +433,40 @@ def _names_missing(version: str | None) -> list[str] | None:
         return gamedata.missing_tables(gamedata.NAME_TABLES, version)
     except (ValueError, OSError):
         return None
+
+
+def _hotfix_cache(f: install.Flavor, root: Path) -> hotfix.OverlayReport | None:
+    """What the flavor's hotfix cache does to the game tables cached for its
+    version (M22-23), from wowlab's cache alone: no request. None when the
+    version is unknown, the folder has no hotfix cache, or the cached
+    tables cannot be read."""
+    if f.version is None:
+        return None
+    version = f.version
+    try:
+        cache_dir = gamedata.default_cache_dir()
+        report = gamedata.flavor_hotfixes(
+            f.path,
+            root,
+            version,
+            lambda name: gamedata.cached_table_path(name, version, cache_dir=cache_dir),
+        ).report()
+    except (ValueError, OSError, gamedata.GameDataError):
+        return None
+    return report if report.file is not None else None
+
+
+def _hotfix_line(r: hotfix.OverlayReport) -> str:
+    """The doctor line of a flavor's hotfix cache."""
+    names = " and ".join(t.table for t in r.tables)
+    if r.applied:
+        replaced = sum(t.replaced for t in r.tables)
+        return (
+            f"  Hotfix cache: build {r.cache_build}; adds {r.rows_added:,} rows the downloaded "
+            f"game tables lack and replaces {replaced:,} ({names}), read from {r.file}"
+        )
+    build = f"build {r.cache_build}" if r.cache_build is not None else "build unknown"
+    return f"  Hotfix cache: {build}; not used: {r.refused}"
 
 
 def _names_line(missing: Sequence[str], command: str) -> str:
@@ -1024,6 +1064,7 @@ def _doctor(
                     ),
                     crew_books=_crew_books(lay),
                     crew_databases=_crew_databases(f.folder),
+                    hotfix_cache=_hotfix_cache(f, inst.root),
                 )
             )
             steps += _flavor_steps(
@@ -1941,6 +1982,12 @@ def _print_doctor(report: DoctorReport, show_notes: bool = False) -> None:
                 f"  Names: {_names_line(f.names_missing, f.names_command)}",
                 hang="    ",
                 keep=[f.names_command],
+            )
+        if f.hotfix_cache is not None:
+            _say_prose(
+                _hotfix_line(f.hotfix_cache),
+                hang="    ",
+                keep=[f.hotfix_cache.file or "", f.hotfix_cache.tables_build],
             )
         reinstall = next(
             (

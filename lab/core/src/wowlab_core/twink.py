@@ -32,8 +32,11 @@ The rules, each **[verify]** on Forever:
   wago.tools' copy lacks (4,108 of the 4,944 classic-range ones are in the
   client's hotfix cache, which M22-23 reads; GLOSSARY, "Hotfix cache");
   the rest are other games' items or removed (DATA_SOURCES, 2026-11-23).
-  Until the panel reads the cache they cannot be candidates; the report
-  counts them.
+  The caller lays the cache over `Item` and `ItemSparse` first, when it is
+  of the tables' build (`gamedata.HotfixOverlay`, M22-23); a row read from
+  it carries `hotfix.SOURCE_KEY`, and every item scored says whether its
+  `ItemSparse` row came from the tables or the cache (`stats_from`). Those
+  still without a row cannot be candidates; the report counts them.
 - **Stats.** The game tables hold no stat amounts, only each stat's share
   of the item's budget (`StatPercentEditor`, per 10000). The amount is that
   share of `RandPropPoints` at the item's level, in the column of its
@@ -80,7 +83,7 @@ from urllib.parse import urlencode, urlsplit
 import platformdirs
 from pydantic import BaseModel, ConfigDict
 
-from wowlab_core import dressing, gear, snapshot
+from wowlab_core import dressing, gear, hotfix, snapshot
 
 __all__ = [
     "CONFIG_FILE",
@@ -490,6 +493,7 @@ class _Item:
     flags_4: int
     bonding: int  # ItemSparse.Bonding: 1 binds when picked up [verify]
     min_faction: int  # ItemSparse.MinFactionID: the faction whose standing it needs, or 0
+    from_hotfix: bool = False  # its ItemSparse row was read from the client's hotfix cache
 
 
 @dataclass(frozen=True, slots=True)
@@ -565,6 +569,7 @@ def load_tables(build: str, rows: Callable[[str], Iterable[Mapping[str, str]]]) 
             flags_4=_int("ItemSparse", row, "Flags_4"),
             bonding=_int("ItemSparse", row, "Bonding"),
             min_faction=_int("ItemSparse", row, "MinFactionID"),
+            from_hotfix=row.get(hotfix.SOURCE_KEY) == hotfix.SOURCE_HOTFIX,
         )
     gear_ids = [i for i, k in kinds.items() if k[0] in (_ITEM_CLASS_WEAPON, _ITEM_CLASS_ARMOR)]
     budgets: dict[int, dict[str, tuple[int, ...]]] = {}
@@ -634,6 +639,15 @@ def load_tables(build: str, rows: Callable[[str], Iterable[Mapping[str, str]]]) 
 # ─── scoring ─────────────────────────────────────────────────────────────────
 
 
+StatsFrom = Literal["game tables", "hotfix cache"]
+"""Where an item's name, level and stats were read: the game tables wowlab
+downloads, or the game's own hotfix cache laid over them."""
+
+
+def _stats_from(item: _Item) -> StatsFrom:
+    return "hotfix cache" if item.from_hotfix else "game tables"
+
+
 class TwinkStat(_Model):
     stat: int  # the client's stat number
     name: str  # its name in twink.toml, else "stat <n>"
@@ -663,6 +677,7 @@ class TwinkCandidate(_Model):
     source: str | None  # where it comes from (M22-08); None: not known yet
     worn: bool  # the character wears this item, with this suffix, in this slot
     binds_on_pickup: bool  # ItemSparse.Bonding 1: it binds to whoever picks it up [verify]
+    stats_from: StatsFrom = "game tables"
 
 
 class TwinkWorn(_Model):
@@ -675,6 +690,7 @@ class TwinkWorn(_Model):
     required_level: int | None
     above_cap: bool  # its required level is above the bracket's cap
     wowhead: str | None
+    stats_from: StatsFrom | None = None  # None: not found in the tables
 
 
 class TwinkSlot(_Model):
@@ -709,6 +725,9 @@ class TwinkPanel(_Model):
     by_name_left_out: int  # test, placeholder or retired items, by name
     config_file: str | None  # where your own twink.toml goes, as the caller words it
     other_side_left_out: int  # items needing standing the character's race cannot earn
+    # What the game's hotfix cache added to the tables (M22-23), or why it
+    # was not read; None when the caller did not look for one.
+    hotfix_cache: hotfix.OverlayReport | None = None
     words: str  # the one line that opens the text output and the panel
     notes: list[str]
 
@@ -932,16 +951,19 @@ def _worn(
     weights: Mapping[int, float],
     bracket: int,
     version: str | None,
+    cache_read: bool,
 ) -> TwinkWorn:
     item = tables.items.get(slot.item_id) if slot.item_id is not None else None
     suffix_id = next((b for b in slot.bonus_ids if b in tables.suffixes), None)
     link = wowhead_link(slot.item_id, suffix_id, version) if slot.item_id is not None else None
     if item is None:
-        why = (
-            "the link has no item id"
-            if slot.item_id is None
-            else "a hotfix the copy of the game tables wowlab downloads lacks"
-        )
+        if slot.item_id is None:
+            why = "the link has no item id"
+        elif cache_read:
+            why = "the game tables have no stats for it, even with your game's hotfix cache read"
+        else:
+            why = "a hotfix the copy of the game tables wowlab downloads lacks"
+
         return TwinkWorn(
             item_id=slot.item_id,
             name=slot.name,
@@ -979,6 +1001,7 @@ def _worn(
         required_level=item.required_level,
         above_cap=item.required_level > bracket,
         wowhead=link,
+        stats_from=_stats_from(item),
     )
 
 
@@ -1010,9 +1033,11 @@ def build_panel(
     version: str | None,
     top: int = TOP_DEFAULT,
     config_file: str | None = None,
+    hotfix_cache: hotfix.OverlayReport | None = None,
 ) -> TwinkPanel:
     """The panel. `filled` is `gear.rows`' first list; `version` the client's
-    (it picks the Wowhead room). Raises `TwinkError` for a class or weight
+    (it picks the Wowhead room); `hotfix_cache` what the game's hotfix cache
+    did to `tables` (the notes and a worn item's words say it). Raises `TwinkError` for a class or weight
     set the configuration does not know, or a bracket it does not list."""
     gear_types = config.classes.get(class_file)
     sets = config.weights.get(class_file, {})
@@ -1036,6 +1061,7 @@ def build_panel(
             f"{bracket} is not a bracket; the brackets end at levels "
             f"{', '.join(str(b) for b in config.brackets)}"
         )
+    cache_read = hotfix_cache is not None and hotfix_cache.applied
     by_name = {name: stat for stat, name in config.stats.items()}
     weights = {by_name[name]: w for name, w in sets[weights_name].items()}
     by_slot: dict[int, list[_Option]] = {}
@@ -1088,7 +1114,7 @@ def build_panel(
         )[:top]
         worn_slot = worn_by_slot.get(n)
         worn = (
-            _worn(tables, worn_slot, config, weights, bracket, version)
+            _worn(tables, worn_slot, config, weights, bracket, version, cache_read)
             if worn_slot is not None
             else None
         )
@@ -1108,6 +1134,7 @@ def build_panel(
                 wowhead=wowhead_link(o.item.id, o.suffix.id if o.suffix else None, version),
                 source=sources.get(o.item.id),
                 binds_on_pickup=o.item.bonding == _BINDS_ON_PICKUP,
+                stats_from=_stats_from(o.item),
                 worn=worn is not None
                 and worn.item_id == o.item.id
                 and (worn.suffix.id if worn.suffix else None)
@@ -1140,6 +1167,7 @@ def build_panel(
         _LeftOut(no_level_left_out, other_side_left_out, by_name_left_out),
         config.filters.no_level_margin,
         config_file,
+        hotfix_cache,
     )
     words = f"Level {bracket} bracket, weights {weights_name}"
     if level is not None and level > bracket:
@@ -1165,6 +1193,7 @@ def build_panel(
         by_name_left_out=by_name_left_out,
         config_file=config_file,
         other_side_left_out=other_side_left_out,
+        hotfix_cache=hotfix_cache,
         words=words,
         notes=notes,
     )
@@ -1217,6 +1246,7 @@ def _notes(
     left: _LeftOut,
     margin: int,
     config_file: str | None,
+    cache: hotfix.OverlayReport | None = None,
 ) -> list[str]:
     notes = [SCORE_NOTE, RATING_NOTE, SUFFIX_NOTE, TWO_HAND_NOTE, LEVEL_NOTE, SOURCE_NOTE]
     if config_file is not None:
@@ -1236,14 +1266,36 @@ def _notes(
             f"{_plural(left.by_name, 'item', 'items')} named as a test, placeholder or retired "
             f"item {'was' if left.by_name == 1 else 'were'} left out."
         )
-    if tables.gear_without_details:
+    cache_read = cache is not None and cache.applied
+    if cache_read:
+        hotfix_items = sum(1 for item in tables.items.values() if item.from_hotfix)
+        pieces = _plural(hotfix_items, "weapon or armour piece", "weapons and armour pieces")
+        notes.append(
+            f"Stats for {pieces} were read from your game's hotfix cache (build "
+            f"{cache.cache_build if cache else '?'}), which holds the items the server sends at "
+            "login and the copy of the game tables wowlab downloads lacks; each item says where "
+            "its stats came from."
+        )
+    if tables.gear_without_details and cache_read:
+        notes.append(
+            f"{tables.gear_without_details} of the {tables.gear_in_item} weapons and armour "
+            "pieces the game tables list have no stats even with the hotfix cache read, so they "
+            "are never candidates and a worn one is not scored: mostly other games' items or "
+            "removed ones."
+        )
+    elif tables.gear_without_details:
+        unread = (
+            " wowlab did not read your game's hotfix cache, which holds most of those in this "
+            f"game's range: {cache.refused}."
+            if cache is not None and cache.refused
+            else ""
+        )
         notes.append(
             f"{tables.gear_without_details} of the {tables.gear_in_item} weapons and armour "
             "pieces the game tables list have no stats in the copy wowlab downloads, so they are "
             "never candidates and a worn one is not scored. Most of those in this game's range "
-            "are sent by the server as hotfixes (4,108 of the 4,944 classic-range ones are in "
-            "the game's own hotfix cache, which a later version reads); the rest are other "
-            "games' items or removed."
+            "are sent by the server as hotfixes; the rest are other games' items or removed."
+            f"{unread}"
         )
     if left.no_level:
         notes.append(
