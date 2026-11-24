@@ -70,8 +70,12 @@ name = "ForeverTwinking"
 origin = "https://forevertwinking.com"
 
 # Blizzard's armory pages, by region: the locale part of the address. A
-# region not listed (cn) has no armory link. Only `us` was opened
-# (2026-11-23); the other three are Blizzard's usual locales [verify].
+# region not listed (cn) has no armory link. The locale is only the page's
+# language, not part of the character's identity: `en-gb/forever/us/…`
+# serves a US character too; the region part is what must match (a
+# character asked for in the wrong region answers HTTP 500, as an unknown
+# name does). All four served real pages on 2026-11-24 (domain review and
+# the M21-03 agent: EU and TW characters, a KR guild; examples below).
 [locales]
 us = "en-us"
 eu = "en-gb"
@@ -79,9 +83,12 @@ kr = "ko-kr"
 tw = "zh-tw"
 
 # A character's ruleset as Raider.IO's address names it, from either
-# Raider.IO's own word or Blizzard's ruleset slug. Blizzard's armory gave
-# `roleplay-pvp` for a character Raider.IO files under `pvp-rp` (both read
-# 2026-11-23); Blizzard's other three slugs are [verify].
+# Raider.IO's own word or Blizzard's ruleset slug. The game's words are
+# Normal, PvP, Roleplay and Roleplay PvP. The four pairs were confirmed on
+# 2026-11-24 (domain review) by the armory's `"ruleset":{"slug":…}` against
+# Raider.IO's realm slug for the same characters in US, EU and TW:
+# normal/normal, pvp/pvp, roleplay/rp, roleplay-pvp/pvp-rp. Raider.IO
+# serves exactly those four in every region.
 [rulesets]
 normal = "normal"
 pvp = "pvp"
@@ -92,7 +99,9 @@ roleplay-pvp = "pvp-rp"
 
 # ─── how a name becomes part of an address ──────────────────────────────────
 #
-# A name is read as Unicode letters (NFC), with what each rule allows:
+# A name is read as Unicode letters (NFC), with what each rule allows
+# (`names` first: a name the site spells its own way, with its slug or
+# slugs; one with several gets no single link):
 # `case` "lower" or "keep"; `spaces`, `apostrophes` and `hyphens` each
 # "refuse" (the name gets no link), or the text that replaces it ("" drops it);
 # `accents` (a letter past ASCII) "percent" (its UTF-8 bytes, %XX) or
@@ -100,9 +109,15 @@ roleplay-pvp = "pvp-rp"
 # digit, a control or format character) gives no link. `max_length` counts
 # characters. A space at either end, or two in a row, gives no link.
 
-# Blizzard's character addresses are lowercase (`sandgraal-rizzen` for
-# Sandgraal Rizzen; the capitalised form opens the same page). Accents
-# [verify]: no accented Forever character was opened.
+# Blizzard's character addresses are lowercase: the character page's own
+# `"slug"` field is `sandgraal-rizzen` for Sandgraal Rizzen (2026-11-23) and
+# `zoé-abaddon` for Zoé Abaddon (2026-11-24); the capitalised address opens
+# the same page, and its og:url only repeats the address asked for. A letter
+# past ASCII is percent-encoded: `zo%C3%A9-abaddon` and a TW character's
+# Chinese names serve (2026-11-24, examples below). A space, apostrophe or
+# hyphen gives no link: none of about 250 Forever characters Raider.IO
+# returned on 2026-11-24 had one (each two parts of letters only); that the
+# client forbids them is not confirmed by a fixture [verify].
 [slugs.armory_name]
 case = "lower"
 spaces = "refuse"
@@ -112,7 +127,11 @@ accents = "percent"
 max_length = 24
 
 # A guild: lowercase, spaces become hyphens (`booty-bay-cartel` for Booty Bay
-# Cartel, read 2026-11-23). Apostrophes dropped and accents [verify].
+# Cartel, read 2026-11-23); accents percent-encoded (`thrall-p%C3%A5-tr%C3%A5den`
+# serves, 2026-11-24, and an unknown guild answers HTTP 500, so the 200
+# counts). Dropping an apostrophe is [verify]: none of about 250 Forever
+# guild names Raider.IO returned on 2026-11-24 had one, even names that want
+# one ("Zuljin and Tonic", "Kel Thuzad").
 [slugs.armory_guild]
 case = "lower"
 spaces = "-"
@@ -132,7 +151,9 @@ accents = "percent"
 max_length = 24
 
 # Raider.IO names the character as the game spells it ("Sandgraal Rizzen";
-# its own profile address for that character, read 2026-11-23).
+# its own profile address for that character, read 2026-11-23), accents
+# percent-encoded (its `profile_url` for Zoé Abaddon, 2026-11-24). Whether
+# its pages take any letter case is [verify]: they refuse automated requests.
 [slugs.raiderio_name]
 case = "keep"
 spaces = "refuse"
@@ -143,7 +164,11 @@ max_length = 24
 
 # Keystone.guru's dungeons: lowercase, spaces become hyphens, apostrophes
 # dropped (`the-deadmines`, `zulfarrak`; `zul-farrak` is not a page, read
-# 2026-11-23).
+# 2026-11-23). Four dungeons have other slugs, or one map per part; the
+# game's name for the whole gives no single link (all read 2026-11-24:
+# `scarlet-monastery`, `sunken-temple`, `blackrock-spire` and `dire-maul`
+# are not pages). A part's own name ("Scarlet Monastery Graveyard", "Lower
+# Blackrock Spire", "Dire Maul East") follows the rule above.
 [slugs.dungeon]
 case = "lower"
 spaces = "-"
@@ -151,6 +176,17 @@ apostrophes = ""
 hyphens = "-"
 accents = "refuse"
 max_length = 64
+
+[slugs.dungeon.names]
+"Scarlet Monastery" = [
+  "scarlet-monastery-graveyard",
+  "scarlet-monastery-library",
+  "scarlet-monastery-armory",
+  "scarlet-monastery-cathedral",
+]
+"Sunken Temple" = ["the-temple-of-atalhakkar"]
+"Blackrock Spire" = ["lower-blackrock-spire", "upper-blackrock-spire"]
+"Dire Maul" = ["dire-maul-east", "dire-maul-west", "dire-maul-north"]
 
 # ─── the links wowlab builds ────────────────────────────────────────────────
 #
@@ -304,15 +340,51 @@ build = "/reports/{code}"
 
 [[example]]
 link = "armory_character"
-recorded = "2026-11-23: the page's own og:url, opened by the M21-03 agent; it shows Sandgraal Rizzen, a Forever US character of the owner's"
+recorded = "2026-11-23: opened by the M21-03 agent; the page's own \"slug\" field is sandgraal-rizzen; it shows Sandgraal Rizzen, a Forever US character of the owner's"
 given = { first = "Sandgraal", second = "Rizzen", region = "us", version = "1.60.1.70888" }
 address = "https://worldofwarcraft.blizzard.com/en-us/forever/us/armory/character/sandgraal-rizzen"
 
 [[example]]
 link = "armory_guild"
-recorded = "2026-11-23: the guild page's own og:url (the guild named on the character page above), opened by the M21-03 agent"
+recorded = "2026-11-23: opened by the M21-03 agent; the character page above names the guild with \"slug\": \"booty-bay-cartel\""
 given = { guild = "Booty Bay Cartel", region = "us", version = "1.60.1.70888" }
 address = "https://worldofwarcraft.blizzard.com/en-us/forever/us/armory/guild/booty-bay-cartel"
+
+[[example]]
+link = "armory_character"
+recorded = "2026-11-24: opened by the M21-03 agent (HTTP 200); an EU character Raider.IO's search returned"
+given = { first = "Kael", second = "Aldric", region = "eu", version = "1.60.1.70888" }
+address = "https://worldofwarcraft.blizzard.com/en-gb/forever/eu/armory/character/kael-aldric"
+
+[[example]]
+link = "armory_character"
+recorded = "2026-11-24: opened by the M21-03 agent (HTTP 200); a TW character Raider.IO's search returned"
+given = { first = "小貓橘子", second = "小貓", region = "tw", version = "1.60.1.70888" }
+address = "https://worldofwarcraft.blizzard.com/zh-tw/forever/tw/armory/character/%E5%B0%8F%E8%B2%93%E6%A9%98%E5%AD%90-%E5%B0%8F%E8%B2%93"
+
+[[example]]
+link = "armory_character"
+recorded = "2026-11-24: opened by the domain reviewer and the M21-03 agent (HTTP 200); the page's \"slug\" is zoé-abaddon"
+given = { first = "Zoé", second = "Abaddon", region = "us", version = "1.60.1.70888" }
+address = "https://worldofwarcraft.blizzard.com/en-us/forever/us/armory/character/zo%C3%A9-abaddon"
+
+[[example]]
+link = "armory_guild"
+recorded = "2026-11-24: opened by the M21-03 agent (HTTP 200); a KR guild Raider.IO's search returned"
+given = { guild = "데스윙", region = "kr", version = "1.60.1.70888" }
+address = "https://worldofwarcraft.blizzard.com/ko-kr/forever/kr/armory/guild/%EB%8D%B0%EC%8A%A4%EC%9C%99"
+
+[[example]]
+link = "armory_guild"
+recorded = "2026-11-24: opened by the domain reviewer and the M21-03 agent (HTTP 200); an EU guild"
+given = { guild = "Thrall På Tråden", region = "eu", version = "1.60.1.70888" }
+address = "https://worldofwarcraft.blizzard.com/en-gb/forever/eu/armory/guild/thrall-p%C3%A5-tr%C3%A5den"
+
+[[example]]
+link = "raiderio"
+recorded = "2026-11-24: the profile_url Raider.IO's own API gave for this character (realm Normal), read by the M21-03 agent"
+given = { first = "Zoé", second = "Abaddon", region = "us", ruleset = "normal", version = "1.60.1.70888" }
+address = "https://forever.raider.io/characters/us/normal/Zo%C3%A9%20Abaddon"
 
 [[example]]
 link = "journey"
@@ -355,6 +427,18 @@ link = "keystone_dungeon"
 recorded = "2026-11-23: opened by the M21-03 agent (`zul-farrak` is not a page)"
 given = { dungeon = "Zul'Farrak", version = "1.60.1.70888" }
 address = "https://keystone.guru/explore/forever/zulfarrak"
+
+[[example]]
+link = "keystone_dungeon"
+recorded = "2026-11-24: opened by the M21-03 agent (sunken-temple is not a page)"
+given = { dungeon = "Sunken Temple", version = "1.60.1.70888" }
+address = "https://keystone.guru/explore/forever/the-temple-of-atalhakkar"
+
+[[example]]
+link = "keystone_dungeon"
+recorded = "2026-11-24: opened by the M21-03 agent (dire-maul is not a page)"
+given = { dungeon = "Dire Maul East", version = "1.60.1.70888" }
+address = "https://keystone.guru/explore/forever/dire-maul-east"
 
 [[example]]
 link = "talents"

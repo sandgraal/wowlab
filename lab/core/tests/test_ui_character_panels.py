@@ -1065,7 +1065,16 @@ def test_the_tab_offers_no_edit_control_and_says_so() -> None:
     # The intro names the four commands.
     intro = re.search(r'<p class="intro">(.*?)</p>', section, re.S)
     assert intro is not None
-    for command in ("char list", "char gear", "char binds", "char macros"):
+    # M21-03: and the two that change wowlab's own links.json, said as such.
+    assert "never the game folder" in intro.group(1)
+    for command in (
+        "char list",
+        "char gear",
+        "char binds",
+        "char macros",
+        "char link set",
+        "char link forget",
+    ):
         assert f"<code>wowlab {command}</code>" in intro.group(1), command
 
 

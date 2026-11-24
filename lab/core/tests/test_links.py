@@ -102,7 +102,7 @@ def test_cn_gets_no_profile_link(build: str) -> None:
 
 def test_a_version_with_no_room_gets_no_link() -> None:
     assert "game version" in _why(links.wowhead_item(6520, version="11.0.2.56000"))
-    assert "game version" in _why(links.wowhead_item(6520, version=None))
+    assert _why(links.wowhead_item(6520, version=None)) == "the game version is not known"
 
 
 def test_raiderio_needs_the_ruleset() -> None:
@@ -291,3 +291,41 @@ def test_build_never_raises_with_an_unusable_file(monkeypatch: pytest.MonkeyPatc
     monkeypatch.setattr(links, "load_link_sites", broken)
     made = links.armory_character("Tay", "Soulrend", "us", version=FOREVER)
     assert isinstance(made, links.NoLink) and "cannot be used" in made.why
+
+
+@pytest.mark.parametrize(
+    ("name", "parts"),
+    [("Scarlet Monastery", 4), ("scarlet monastery", 4), ("Blackrock Spire", 2), ("Dire Maul", 3)],
+)
+def test_a_dungeon_in_parts_gets_no_single_link(name: str, parts: int) -> None:
+    why = _why(links.keystone_dungeon(name, version=FOREVER))
+    assert f"has {parts} maps there" in why and "no single link" in why
+
+
+def test_a_dungeons_part_follows_the_rule() -> None:
+    made = links.keystone_dungeon("Lower Blackrock Spire", version=FOREVER)
+    assert isinstance(made, links.Link)
+    assert made.url == "https://keystone.guru/explore/forever/lower-blackrock-spire"
+
+
+def test_the_ruleset_reason_uses_the_games_words() -> None:
+    why = _why(links.raiderio("Tay", "Soulrend", "us", None, version=FOREVER))
+    assert "Normal, PvP, Roleplay or Roleplay PvP" in why
+
+
+@pytest.mark.parametrize(
+    "names",
+    [
+        '"Dire Maul" = ["Dire-Maul"]',
+        '"Dire Maul" = []',
+        '"Dire Maul" = ["a--b"]',
+        '"Dire Maul" = ["dire-maul-east"]\n"dire maul" = ["dire-maul-west"]',
+    ],
+    ids=lambda v: f"constructed: {v[:30]!r}",
+)
+def test_a_damaged_name_table_is_refused_constructed(names: str) -> None:
+    text = _shipped()
+    old = '"Dire Maul" = ["dire-maul-east", "dire-maul-west", "dire-maul-north"]'
+    assert old in text
+    with pytest.raises(links.LinkSitesError):
+        links.parse_link_sites(text.replace(old, names, 1))
