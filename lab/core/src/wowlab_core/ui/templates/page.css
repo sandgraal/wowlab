@@ -688,6 +688,20 @@ pre:empty { display: none; }
 #patch-day-status { margin: var(--space-2) 0 0; color: var(--muted); overflow-wrap: anywhere; }
 #patch-day-status:empty { display: none; }
 #patch-day-status.error { color: var(--ruin); }
+.sources { padding: 20px var(--space-5); }
+.sources h3 { margin: 0 0 var(--space-2); font-family: var(--font-display); font-size: 18px; line-height: 24px; font-weight: 600; }
+.sources h4 { margin: var(--space-2) 0 var(--space-1); font-weight: 600; }
+.sources-lines, .sources-list { margin: 0; padding: 0; list-style: none; }
+.sources-list { margin-left: var(--space-3); }
+.sources-item { margin: var(--space-1) 0; overflow-wrap: anywhere; }
+.sources-folders { color: var(--muted); }
+.sources-what { margin: var(--space-2) 0 0; }
+.sources-clear, .sources-loose { margin: var(--space-1) 0; overflow-wrap: anywhere; }
+.sources-note { margin: var(--space-1) 0; color: var(--muted); overflow-wrap: anywhere; }
+.sources-error { margin: var(--space-1) 0; color: var(--ruin); overflow-wrap: anywhere; }
+#sources-status { margin: var(--space-2) 0 0; color: var(--muted); overflow-wrap: anywhere; }
+#sources-status:empty { display: none; }
+#sources-status.error { color: var(--ruin); }
 
 /* ─── the Looks tab: the page `looks page` wrote, in a sandboxed frame,
    drawn in its own style ─── */
