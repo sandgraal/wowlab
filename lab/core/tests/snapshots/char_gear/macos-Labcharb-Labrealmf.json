@@ -275,6 +275,12 @@
     "Item levels and the averages are the client's figures as recorded, never derived from bonus ids. The averages are GetAverageItemLevel's returns, not the mean of the item levels listed, and how the client computes them is not known.",
     "overall: on Retail, the best items owned, bags included (community documentation, [verify] on Forever)."
   ],
+  "first_name": "Labcharb",
+  "second_name": "Labrealmf",
+  "folder_name": "Labcharb-Labrealmf",
+  "game_name": "Labcharb Labrealmf",
+  "region": null,
+  "region_absent": "the portal setting in WTF/Config.wtf is \"test\", not one of us, eu, kr, tw, cn",
   "flavor_folder": "_classic_beta_",
   "dressing": {
     "items": [

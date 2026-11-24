@@ -14,6 +14,7 @@ from wowlab_core import (
     addoninstall,
     charhistory,
     charkept,
+    charname,
     dressing,
     gamedata,
     gear,
@@ -26,6 +27,7 @@ from wowlab_core import (
     luadata,
     macrocheck,
     macroplace,
+    region,
     simexport,
     snapshot,
     wtfconfig,
@@ -81,6 +83,8 @@ from wowlab_core.cli._common import (
     _Out,
     _player_copy,
     _plural,
+    _region_fields,
+    _region_text,
     _safe,
     _say,
     _say_err,
@@ -93,6 +97,7 @@ from wowlab_core.cli._common import (
     _wtf_file,
     char_app,
 )
+from wowlab_core.region import Region
 
 # ─── char ────────────────────────────────────────────────────────────────────
 
@@ -429,6 +434,22 @@ class CharSummaryRow(_Out):
     realm_folder: layout.FsText
     label: layout.FsText  # the character folder's name
     shape: Literal["realm_name", "numeric_folder"]
+    # Links out (M21-02): the character's names and region. `folder_name`
+    # is the folder form, `<First>-<Second>` (the folder as on disk, as
+    # `label`); `game_name` the in-game form, `<First> <Second>`, as addon
+    # data spells it. `first_name` and `second_name` are the two names, the
+    # folder split at its first hyphen; a folder of the retail shape
+    # (`<Realm>/<Name>/`) is the first name alone, `second_name` None.
+    # `region` is the flavor's `portal` setting in its Config.wtf as the
+    # client last wrote it (`us`, `eu`, `kr`, `tw` or `cn`); when it is
+    # None, `region_absent` says why. For a kept row, the flavor folder's
+    # setting now, not the backup's.
+    first_name: layout.FsText
+    second_name: layout.FsText | None
+    folder_name: layout.FsText
+    game_name: layout.FsText
+    region: Region | None
+    region_absent: str | None
     file: layout.FsText
     # The file's modification time: the client's last logout or /reload,
     # unless something wrote the file since. None when no file was read.
@@ -589,7 +610,52 @@ def _skill_names(version: str | None, lines: set[int]) -> dict[int, str]:
     return found
 
 
-def _summary_row(e: labaddon.CharacterFile, version: str | None) -> CharSummaryRow:
+def _char_name_fields(realm_folder: str, folder: str) -> dict[str, object]:
+    """A report's name fields for a character folder (M21-02): the first
+    and second name, the folder form and the in-game form."""
+    first, second = charname.split_folder(folder, numeric=charname.is_numeric_folder(realm_folder))
+    return {
+        "first_name": first,
+        "second_name": second,
+        "folder_name": folder,
+        "game_name": charname.game_name(first, second),
+    }
+
+
+def _char_regions(inst: install.Install) -> dict[str, region.RegionReading]:
+    """Each installed flavor folder's region, read from its Config.wtf."""
+    return {f.folder: region.read(f.path, root=inst.root) for f in inst.flavors}
+
+
+def _char_region_reading(
+    regions: dict[str, region.RegionReading], flavor_folder: str | None
+) -> region.RegionReading:
+    """The region of a flavor folder: the installed one of that name
+    (matched as written, then with case folded), or none, and why."""
+    reading = regions.get(flavor_folder or "")
+    if reading is None and flavor_folder is not None:
+        folded = [r for f, r in regions.items() if f.casefold() == flavor_folder.casefold()]
+        reading = folded[0] if len(folded) == 1 else None
+    if reading is None:
+        reading = region.RegionReading(
+            region=None, absent="its flavor folder is not in the game folder"
+        )
+    return reading
+
+
+def _char_region_fields(
+    regions: dict[str, region.RegionReading], flavor_folder: str | None
+) -> dict[str, object]:
+    """A row's `region` and `region_absent` for a flavor folder."""
+    found, absent = _region_fields(_char_region_reading(regions, flavor_folder))
+    return {"region": found, "region_absent": absent}
+
+
+def _summary_row(
+    e: labaddon.CharacterFile,
+    version: str | None,
+    regions: dict[str, region.RegionReading],
+) -> CharSummaryRow:
     """The hub's row for one `survey` row read with its record."""
     base: dict[str, object] = {
         "flavor": e.flavor,
@@ -600,6 +666,8 @@ def _summary_row(e: labaddon.CharacterFile, version: str | None) -> CharSummaryR
         "shape": e.shape,
         "file": e.file,
         "mtime_ns": e.mtime_ns,
+        **_char_name_fields(e.realm_folder, e.label),
+        **_char_region_fields(regions, e.flavor),
     }
     if e.no_lab_record is not None:
         return CharSummaryRow.model_validate(
@@ -787,6 +855,7 @@ def _kept_rows(
     root: Path,
     installed: Sequence[str | None],
     *,
+    regions: dict[str, region.RegionReading],
     flavor: str | None = None,
     account: str | None = None,
     character: str | None = None,
@@ -854,6 +923,8 @@ def _kept_rows(
             "snapshot_version": copy.snapshot_version,
             "snapshots_holding": copy.snapshots_holding,
             "folder_present": folders is not None,
+            **_char_name_fields(copy.realm_folder, copy.character_folder),
+            **_char_region_fields(regions, copy.flavor_folder),
         }
         record = charkept.read_copy(store, copy)
         if isinstance(record, str):
@@ -922,6 +993,9 @@ def _say_summary(
             elif not rows:
                 heading += _player_copy(": no character folder")
             _say(heading)
+        if rows:
+            # The flavor's region (M21-02): one line, known or not.
+            _say(_region_text(rows[0].region, rows[0].region_absent))
         for account in dict.fromkeys(r.account for r in rows):
             mine = [r for r in rows if r.account == account]
             _say(f"Account {account}: " + _plural(len(mine), "character folder"))
@@ -1051,12 +1125,13 @@ def char_list(
     )
     if summary:
         versions = {f.folder: f.version for f, _ in shown}
+        regions = _char_regions(inst)
         hub = CharSummaryReport(
             flavor_folder=report.flavor_folder,
             flavors=report.flavors,
             account=report.account,
             rows=[
-                _summary_row(e, versions.get(e.flavor or ""))
+                _summary_row(e, versions.get(e.flavor or ""), regions)
                 for e in entries
                 if not _first_name_folder(e)
             ],
@@ -1069,6 +1144,7 @@ def char_list(
             listing,
             inst.root,
             [f.version for f in inst.flavors],
+            regions=regions,
             flavor=_given_flavor(flavor),
             account=account if acct_folder is None else acct_folder,
         )
@@ -1076,6 +1152,7 @@ def char_list(
             listing,
             inst.root,
             [f.version for f in inst.flavors],
+            regions=regions,
             folders=bare_rows,
         )
         hub = hub.model_copy(
@@ -1261,6 +1338,18 @@ class CharGearReport(_Out):
     slots: list[gear.GearSlot]
     empty_slots: list[gear.EmptySlot]
     notes: list[str]
+    # Links out (M21-02): the character's names and region, as
+    # `char list --summary --json` gives them (`CharSummaryRow`): the first
+    # and second name, the folder form (`<First>-<Second>`), the in-game
+    # form (`<First> <Second>`), and the flavor's region with why it is
+    # None. For `char kept`, the region of the flavor folder of that name
+    # in the game folder now, if there is one.
+    first_name: layout.FsText
+    second_name: layout.FsText | None
+    folder_name: layout.FsText
+    game_name: layout.FsText
+    region: Region | None
+    region_absent: str | None
     # The flavor folder read, as the other `char` reports name it; just
     # before `dressing`, which stays last (M16-114).
     flavor_folder: str
@@ -1445,6 +1534,8 @@ def _gear_report(
     file: str,
     mtime_ns: int,
     notes: list[str],
+    folders: tuple[str, str],
+    reading: region.RegionReading,
     names_version: str | None = None,
 ) -> CharGearReport | str:
     """`char gear`'s report for `record`, or why there is none: the record
@@ -1463,6 +1554,10 @@ def _gear_report(
     identity = labaddon.identity_of(record)
     spec = gear.spec_of(record)
     level = dressing.level_of(record)
+    realm_folder, character_folder = folders
+    first, second = charname.split_folder(
+        character_folder, numeric=charname.is_numeric_folder(realm_folder)
+    )
     return CharGearReport(
         flavor_folder=flavor_folder,
         character=character,
@@ -1483,6 +1578,12 @@ def _gear_report(
             _GEAR_LEVEL_NOTE,
             _GEAR_OVERALL_NOTE,
         ],
+        first_name=first,
+        second_name=second,
+        folder_name=character_folder,
+        game_name=charname.game_name(first, second),
+        region=reading.region,
+        region_absent=reading.absent,
         dressing=dressing.build(identity, filled, version=version, level=level),
     )
 
@@ -1530,6 +1631,8 @@ def char_gear(
         file=target.path,
         mtime_ns=target.mtime_ns,
         notes=notes,
+        folders=(target.realm_folder or "", target.character_folder or ""),
+        reading=region.read(lay.flavor_path, root=lay.install_root),
     )
     if isinstance(report, str):
         raise CliError(report)
@@ -1547,6 +1650,7 @@ def char_gear(
     )
     _say(f"File: {target.path}")
     _say(f"Written: {_local_time(target.mtime_ns)} ({_SAVED_AT})")
+    _say(_region_text(report.region, report.region_absent))
     for line in _header_lines(report):
         _say(line)
     _say(
@@ -2808,7 +2912,9 @@ def _kept_lines(row: CharKeptRow) -> list[str]:
         if row.folder_present
         else f"kept in the backup of {day}"
     )
-    lines = [*_summary_lines(row), where]
+    # The region is the game folder's setting today, not the backup's (M21-02).
+    region_line = _region_text(row.region, row.region_absent, "from the game's settings now")
+    lines = [*_summary_lines(row), where, region_line]
     if row.version is not None and row.version != row.snapshot_version:
         lines.append(
             f"names read for game version {row.version}, not the backup's own "
@@ -2857,8 +2963,15 @@ def char_kept(
         raise CliError(listing)
     installed = [f.version for f in inst.flavors]
     imported = listing[1]
+    regions = _char_regions(inst)
     found = _kept_rows(
-        listing, inst.root, installed, flavor=flavor, account=account, character=character
+        listing,
+        inst.root,
+        installed,
+        regions=regions,
+        flavor=flavor,
+        account=account,
+        character=character,
     )
     if character is not None and not found:
         # A character folder still in the game folder but with no lab
@@ -2867,6 +2980,7 @@ def char_kept(
             listing,
             inst.root,
             installed,
+            regions=regions,
             flavor=flavor,
             account=account,
             character=character,
@@ -2915,6 +3029,8 @@ def char_kept(
             file=copy.file,
             mtime_ns=copy.saved_at_ns,
             notes=_char_notes(record),
+            folders=(copy.realm_folder, copy.character_folder),
+            reading=_char_region_reading(regions, copy.flavor_folder),
         )
         spec_name, currency_name = _history_names(row.version)
         history_store = snapshot.SnapshotStore()
