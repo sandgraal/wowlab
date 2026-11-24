@@ -226,8 +226,9 @@ it (read from the run logs on 2026-11-24; the pytest steps print skips only,
   (`<user data>\crew\_forever_\<account>.sqlite`), and
   `test_the_cli_says_a_plain_sentence_when_the_database_goes_mid_sync_constructed`
   with the CLI's plain sentence for the same error (`crew list` exited 1
-  where the test expects 0). Both remove or replace the database while a
-  connection still holds it open, which Windows refuses and POSIX allows.
+  where the test expects 0). Not diagnosed: the likely cause is the
+  database being removed or replaced while a connection still holds it
+  open, which Windows refuses and POSIX allows **[verify]**.
   The nightly of 2026-11-23 failed both the same way.
 - **The lab-addon mutation probes, by 2026-11-23.** The nightly of
   2026-11-23 (run 45147243198, 7 failed, 12,985 passed, 1,126 skipped) added
