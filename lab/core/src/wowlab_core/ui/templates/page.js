@@ -1561,6 +1561,7 @@
   function clearCharacter() {
     for (const id of CHAR_BOXES) byId(id).replaceChildren();
     clearDressing();
+    clearPurist();
     clearSim();
     clearSaved();
     character.params = null;
@@ -1604,6 +1605,7 @@
     drawCharSources(report);
     drawGear(report);
     drawDressing(report.dressing);
+    drawPurist(report.purist);
     byId("char-sim-button").hidden = false;
     drawSaved(report.saved_links, params);
   }
@@ -2099,6 +2101,42 @@
     ids.className = "dressing-ids";
     box.append(make("span", "Item ids: "), ids, copyButton(text, "Copy the item ids"));
     box.hidden = false;
+  }
+
+  // ─── See my look: the character on Purist (M21-06) ───
+  // `purist` is `{url, site_name, left_out}` or `{why}`. The address becomes
+  // the static link's href only when `outsideAddress` passes it for the
+  // site "purist" of the allowlist; anything else leaves the link hidden
+  // with no href. What the address leaves out, or why there is none, is a
+  // line under About this data.
+  function clearPurist() {
+    const look = byId("char-purist-link");
+    look.removeAttribute("href");
+    look.hidden = true;
+    look.title = "";
+    look.textContent = "See my look";
+    byId("char-purist-note").textContent = "";
+  }
+
+  function drawPurist(purist) {
+    clearPurist();
+    if (!purist || typeof purist !== "object") return;
+    const note = byId("char-purist-note");
+    if (typeof purist.url !== "string") {
+      if (typeof purist.why === "string") note.textContent = "No See my look link: " + visible(purist.why) + ".";
+      return;
+    }
+    const address = outsideAddress(purist.url, "purist");
+    if (address === null) {
+      note.textContent = "The look's address in the report is not one this page links to, so no link is shown.";
+      return;
+    }
+    const look = byId("char-purist-link");
+    pointLink(look, address);
+    look.title = "Opens Purist in a new tab; wowlab sends nothing";
+    look.hidden = false;
+    const left = (Array.isArray(purist.left_out) ? purist.left_out : []).filter((w) => typeof w === "string");
+    if (left.length) note.textContent = "See my look leaves out " + left.map(visible).join("; ") + ".";
   }
 
   // ─── addresses the player saved (M21-03) ───
@@ -5742,6 +5780,7 @@
       drawCharSources(gear);
       drawGear(gear);
       drawDressing(gear.dressing);
+      drawPurist(gear.purist);
     } else {
       const why = hubStr(report.gear_absent) ? shown(report.gear_absent) : "Your backup holds no gear for this character.";
       byId("char-gear").replaceChildren(charLine(why, "char-none"));
