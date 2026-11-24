@@ -22,6 +22,7 @@ import itertools
 import os
 import re
 import sqlite3
+import time
 from pathlib import Path
 from typing import Any
 
@@ -169,15 +170,105 @@ def test_constructed_home_spellings_of_a_windows_home() -> None:
     assert lab_capture._home_pairs("/") == []
 
 
-def test_constructed_overlapping_edits_keep_the_longer_one() -> None:
-    # The install id inside a link token: one edit, the token's, and nothing left.
+def test_constructed_overlapping_edits_refuse_the_file() -> None:
+    # The install id inside a link token: the edits kept never overlap, and
+    # the one dropped refuses the file rather than leave part of it.
     data = b'{"install_id":"' + INSTALL_ID + b'","u":"https://x.invalid/?link=' + INSTALL_ID + b'"}'
     scan = lab_capture.outside_scan(data, "/Users/someone")
     spans = sorted((s, e) for s, e, _, _ in scan.edits)
     assert all(a[1] <= b[0] for a, b in itertools.pairwise(spans))
+    assert scan.dropped == 1
+    assert "two replacements that overlap x1" in _process(data).problems
+
+
+def test_constructed_an_id_overlapping_the_home_folder_refuses() -> None:
+    # Security review L1: the id's edit took the start of the home path and
+    # the end of the login survived. Now the overlap refuses the file.
+    home = "/Users/someonelong"
+    data = b'{"user_id":"zz' + home[:-3].encode() + b'","p":"zz' + home.encode() + b'/Library"}'
+    outcome = _process(data, home)
+    assert "two replacements that overlap x1" in outcome.problems
+
+
+@pytest.mark.parametrize(
+    "value",
+    [b"7.654321e6", b"7654321.0", b'{"n": 1}', b"[7654321]", b"0x7654"],
+    ids=["exponent", "float", "object", "list", "hex"],
+)
+def test_constructed_an_id_of_another_shape_refuses(value: bytes) -> None:
+    outcome = _process(b'{"userId": ' + value + b', "a": 1}')
+    assert "app or account id in a shape the tool does not replace x1" in outcome.problems
+
+
+def test_constructed_a_null_id_is_left_alone() -> None:
+    outcome = _process(b'{"userId": null, "guid": null}')
+    assert outcome.problems == [] and outcome.result.edits == ()
+
+
+def test_constructed_a_game_instance_guid_is_replaced_everywhere() -> None:
+    guid = b"6fe3124a-0000-4147-a43a-d63929a1555d"
+    data = (
+        b'[{"guid":"' + guid + b'","syncProfile":{"GameInstanceGuid":"' + guid + b'"},'
+        b'"installedAddons":[{"gameInstanceID":"' + guid + b'"}]}]'
+    )
     outcome = _process(data)
     assert outcome.problems == []
-    assert INSTALL_ID not in outcome.result.data
+    assert guid not in outcome.result.data
+    assert outcome.result.data.count(STAND_IN) == 3
+
+
+# Security review M2: each was written unchanged before.
+@pytest.mark.parametrize(
+    "planted",
+    [
+        b"chris\\u0040example.com",
+        b"\\u002FUsers\\u002Fchris\\u002Fx",
+        b"Chris\\u00231234",
+        b"Player\\u002D1234\\u002D0ABCDEF0",
+        b'", "Sync\\u0050rofileID": 7654321, "x": "',
+        b"https://x.invalid/?a=1\\u0026token=SECRETTOKEN123",
+    ],
+    ids=["email", "home", "battletag", "guid", "escaped-key", "escaped-ampersand"],
+)
+def test_constructed_a_json_escape_of_a_printable_character_refuses(
+    home: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str], planted: bytes
+) -> None:
+    out = tmp_path / "out"
+    assert _capture(_app(home, "records.json", b'{"x": "' + planted + b'"}'), out) == 1
+    err = capsys.readouterr().err
+    assert "JSON \\u escape of a printable character" in err
+    assert _nothing_written(out)
+
+
+def test_constructed_a_non_ascii_escape_is_not_refused() -> None:
+    assert _process(b'{"name": "Caf\\u00e9"}').problems == []
+
+
+@pytest.mark.parametrize(
+    "key",
+    [b"accessToken", b"Authorization", b"refresh_token", b"sessionId", b"password", b"apiKey"],
+)
+def test_constructed_a_key_that_names_a_secret_refuses(key: bytes) -> None:
+    outcome = _process(b'{"' + key + b'": "x", "authors": [], "author": "a"}')
+    assert outcome.problems == ["JSON key that names a secret x1"]
+
+
+def test_constructed_a_jwt_refuses() -> None:
+    data = b'{"a": "Bearer eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.c2ln"}'
+    assert _process(data).problems == ["signed token (JWT) x1"]
+
+
+def test_constructed_thousands_of_ids_scrub_quickly() -> None:
+    """Security review L2: the time grew with the square of the distinct ids
+    (8,000 numeric ids took 18 s). One pass each now."""
+    numbers = b",".join(b'{"user_id": %d}' % (10_000_000 + i) for i in range(8_000))
+    texts = b",".join(b'{"user_id": "%036d"}' % i for i in range(8_000))
+    for body in (numbers, texts):
+        data = b"[" + body + b"]"
+        start = time.perf_counter()
+        outcome = _process(data)
+        assert outcome.problems == []
+        assert time.perf_counter() - start < 10, "a generous hang guard, not a budget"
 
 
 # ─── what it refuses ─────────────────────────────────────────────────────────
@@ -391,7 +482,12 @@ def test_the_curseforge_capture_is_a_fixed_point_and_passes_every_detector() -> 
     assert outcome.result.data == data
     assert outcome.result.edits == ()
     assert re.search(rb"/Users/|\\\\Users\\\\", data) is None
-    assert data.count(b'"SyncProfileID":1,') == 1 and data.count(b'"syncProfileID":1}') == 1
+    # The game instance's GUID and the sync id are stand-ins (review L4).
+    stand_in = b"00000000-0000-4000-8000-000000000001"
+    assert data.count(b'"guid":"' + stand_in + b'"') == 1
+    assert data.count(b'"GameInstanceGuid":"' + stand_in + b'"') == 1
+    assert data.count(b'"gameInstanceID":"' + stand_in + b'"') == 23
+    assert data.count(b'"SyncProfileID":2,') == 1 and data.count(b'"syncProfileID":2}') == 1
 
 
 def test_constructed_a_short_text_id_is_replaced_under_its_key_only(
@@ -404,3 +500,66 @@ def test_constructed_a_short_text_id_is_replaced_under_its_key_only(
     elsewhere = b'{"userId": "ab12", "path": "/u/ab12/"}'
     assert _capture(_app(home, "b.json", elsewhere), out) == 1
     assert "app or account id found outside its key x1" in capsys.readouterr().err
+
+
+def test_constructed_out_inside_an_install_is_refused(home: Path, tmp_path: Path) -> None:
+    root = tmp_path / "World of Warcraft"
+    build_install(root)
+    path = _app(home, "records.json", b'{"a": 1}')
+    before = sorted(p.relative_to(root) for p in root.rglob("*"))
+    for out in (root, root / "_retail_", root / "new" / "folder"):
+        assert _capture(path, out) == 2
+    assert sorted(p.relative_to(root) for p in root.rglob("*")) == before
+
+
+@pytest.mark.parametrize(
+    "parts",
+    [
+        ("App", "Local Storage", "leveldb", "000003.log"),
+        ("App", "IndexedDB", "x", "y.json"),
+        ("App", ".updaterId"),
+        ("App", "Local State"),
+        ("App", "agent", "database", "app.db"),
+        ("App", "Cookies-dir", "deep", "data.json"),
+    ],
+    ids=["leveldb", "indexeddb", "updaterid", "local-state", "db", "deep-folder"],
+)
+def test_constructed_browser_storage_and_deep_secret_folders_are_never_opened(
+    home: Path, tmp_path: Path, parts: tuple[str, ...]
+) -> None:
+    path = home.joinpath("Library", "Application Support", *parts)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(b'{"a": 1}')
+    path.chmod(0)  # would fail the open: the refusal comes first
+    try:
+        assert _capture(path, tmp_path / "out") == 2
+    finally:
+        path.chmod(0o600)
+
+
+def test_constructed_a_secret_folder_reached_through_a_link_is_never_opened(
+    home: Path, tmp_path: Path
+) -> None:
+    secret = home / "Library" / "Application Support" / "App" / "Cookies-dir"
+    secret.mkdir(parents=True)
+    (secret / "data.json").write_bytes(b'{"a": 1}')
+    plain = home / "plain"
+    try:
+        plain.symlink_to(secret, target_is_directory=True)
+    except OSError:
+        pytest.skip("symbolic links are not available here")
+    assert _capture(plain / "data.json", tmp_path / "out") == 2
+
+
+def test_constructed_a_file_reached_through_a_link_into_an_install_is_refused(
+    home: Path, tmp_path: Path
+) -> None:
+    root = tmp_path / "World of Warcraft"
+    build_install(root)
+    target = next(p for p in root.rglob("*.lua") if p.is_file())
+    link = home / "linked"
+    try:
+        link.symlink_to(target.parent, target_is_directory=True)
+    except OSError:
+        pytest.skip("symbolic links are not available here")
+    assert _capture(link / target.name, tmp_path / "out") == 2

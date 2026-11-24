@@ -3708,23 +3708,31 @@ def discover_identity(root: Path, flavors: Sequence[Flavor], args: argparse.Name
 # parsing the file (OutsideScan):
 # - the value of a per-user link token in a URL query (`?link=`, WowUp's Wago
 #   download links; LINK_TOKEN_RE) becomes LINK_PLACEHOLDER;
-# - the value of a JSON key naming an app install or an account
-#   (APP_ID_KEY_RE: WowUp's `install_id`, CurseForge's `SyncProfileID`) gets a
-#   stand-in: a text value of APP_ID_ANYWHERE_MIN characters or more
-#   everywhere it appears, a number or a shorter text under its key only
-#   (one found anywhere else refuses the file, since it cannot be told from
-#   a size, a count or part of a word);
+# - the value of a JSON key naming an app install, a game instance or an
+#   account (APP_ID_KEY_RE: WowUp's `install_id`, CurseForge's `guid`,
+#   `gameInstanceID` and `SyncProfileID`) gets a stand-in: a text value of
+#   APP_ID_ANYWHERE_MIN characters or more everywhere it appears, a number
+#   or a shorter text under its key only (one found anywhere else refuses
+#   the file, since it cannot be told from a size, a count or part of a
+#   word); a value of another shape under such a key refuses the file;
 # - this machine's home folder, in each spelling `home_forms` gives, becomes
 #   OUTSIDE_HOME (`/Volumes/Labdisk`, or `D:\Labdisk` for a home with a drive
 #   letter), spelled the same way. Any other home folder still refuses.
 #
+# Two edits that overlap refuse the file rather than leave half of one.
+#
 # Refused before anything is read: a path that is a link or not a regular file
-# (checked again after the read; read_outside), one past `--max-bytes`, a file inside an install
-# (use `--root` for those), and a file whose name, or whose folder's name,
-# suggests a secret (OUTSIDE_SECRET_WORDS: a token, cookie, login, credentials
-# or session file is never opened). Refused after reading: an SQLite file, a
-# compressed, NUL-holding or non-UTF-8 file (the detectors read text), and a
-# file name the scrub would change (an app's file name is public). The
+# (checked again after the read; read_outside), one past `--max-bytes`, a file
+# inside an install, an `--out` inside one (both checked on the path with its
+# links resolved, and on every folder above), and a file any of whose folders
+# below the home folder, or whose own name, suggests a secret
+# (OUTSIDE_SECRET_WORDS: a token, cookie, login, credentials, session or
+# browser-storage file is never opened). Refused after reading: an SQLite
+# file, a compressed, NUL-holding or non-UTF-8 file (the detectors read
+# text), a JSON `\u` escape of a printable character (ESCAPE_RE: the
+# detectors read raw bytes, and `\u0040` would hide the `@` of an address),
+# a JSON key that names a secret (SECRET_KEY_WORDS), a signed token (JWT_RE),
+# and a file name the scrub would change (an app's file name is public). The
 # provenance row says the file came from outside an install, with its size,
 # modification time and SHA-256 before the scrub.
 
@@ -3744,7 +3752,56 @@ OUTSIDE_SECRET_WORDS = (
     "session",
     "keychain",
     "private",
+    # A browser profile's storage (an Electron app's user-data folder holds one).
+    "storage",
+    "indexeddb",
+    "leveldb",
+    "updaterid",
+    "local state",
+    ".db",
 )
+# The words of a JSON key (split at case changes, `_`, `-` and spaces) that
+# name a secret: a key holding one refuses the file.
+SECRET_KEY_WORDS = frozenset(
+    {
+        "sensitive",
+        "token",
+        "tokens",
+        "cookie",
+        "cookies",
+        "credential",
+        "credentials",
+        "login",
+        "logins",
+        "secret",
+        "secrets",
+        "password",
+        "passwords",
+        "passwd",
+        "auth",
+        "authorization",
+        "authentication",
+        "bearer",
+        "session",
+        "sessions",
+        "keychain",
+        "private",
+        "apikey",
+        "jwt",
+    }
+)
+SECRET_KEY_LABEL = "JSON key that names a secret"
+_JSON_KEY_RE = re.compile(rb'"((?:[^"\\\r\n]|\\.){1,256})"[ \t\r\n]*:')
+_KEY_WORD_RE = re.compile(r"[A-Z]+(?![a-z])|[A-Z]?[a-z]+|[0-9]+")
+# A JSON Web Token: a signed token, whatever key it is under.
+JWT_RE = re.compile(rb"eyJ[A-Za-z0-9_\-]{8,}\.[A-Za-z0-9_\-]{8,}\.")
+JWT_LABEL = "signed token (JWT)"
+# A JSON `\u` escape of a printable ASCII character (0x20 to 0x7F). JSON may
+# write any character so, and the detectors match raw bytes. An escaped
+# backslash followed by `u00..` matches too: the file is refused either way.
+ESCAPE_RE = re.compile(rb"\\u00[2-7][0-9A-Fa-f]")
+ESCAPE_LABEL = "JSON \\u escape of a printable character (the detectors read raw bytes)"
+OVERLAP_LABEL = "two replacements that overlap"
 # The query parameters whose value is a per-user, server-issued token. `link`
 # is WowUp's (its Wago download addresses, 424 characters, seen 2026-11-23);
 # the rest are the common names of signed or keyed addresses.
@@ -3754,15 +3811,20 @@ LINK_TOKEN_RE = re.compile(
 )
 LINK_PLACEHOLDER = b"REDACTED"
 LINK_LABEL = "per-user link token not blanked"
-# A JSON key whose value names this app install or an account: WowUp's
-# `install_id` (sent with its telemetry when that is on), CurseForge's
-# `SyncProfileID` and `syncProfileID` (the server's id of the account's
-# SavedVariables sync), and the usual names of a user or account id. The
-# value is a JSON string or an integer.
+# A JSON key whose value names this app install, a game instance or an
+# account: WowUp's `install_id` (sent with its telemetry when that is on),
+# CurseForge's `guid`, `GameInstanceGuid` and `gameInstanceID` (its id for
+# the game folder, which its SavedVariables sync sends) and `SyncProfileID`
+# and `syncProfileID` (the server's id of the account's sync), and the usual
+# names of a user or account id. Group 2 is the value: a JSON string, an
+# integer or `null`, each followed by the next JSON delimiter; None when the
+# value has any other shape (a float, an object), which refuses the file.
 APP_ID_KEY_RE = re.compile(
-    rb'"((?i:install_?id|sync_?profile_?id|user_?id|account_?id|member_?id|twitch_?id))"'
-    rb'[ \t\r\n]*:[ \t\r\n]*("(?:[^"\\\r\n]|\\.)*"|-?[0-9]+)'
+    rb'"((?i:install_?id|sync_?profile_?id|user_?id|account_?id|member_?id|twitch_?id|'
+    rb'game_?instance_?(?:id|guid)|guid))"[ \t\r\n]*:[ \t\r\n]*'
+    rb'("(?:[^"\\\r\n]|\\.)*"|-?[0-9]+(?=[ \t\r\n]*[,}\]])|null(?=[ \t\r\n]*[,}\]]))?'
 )
+APP_ID_SHAPE_LABEL = "app or account id in a shape the tool does not replace"
 # A text id this long is replaced wherever it appears (a UUID is 36); a
 # shorter one, like a number, only under its key, and refuses elsewhere.
 APP_ID_ANYWHERE_MIN = 8
@@ -3808,6 +3870,23 @@ class OutsideScan:
     # Real ids replaced under their key only (numbers, and text shorter than
     # APP_ID_ANYWHERE_MIN): refused anywhere else.
     keyed: frozenset[bytes]
+    dropped: int  # edits dropped for overlapping another: refuses the file
+    odd_shapes: int  # app or account id values of another shape: refuses the file
+
+
+def _no_overlaps(
+    edits: list[tuple[int, int, bytes, str]],
+) -> tuple[list[tuple[int, int, bytes, str]], int]:
+    """The edits in order, the longer one first where two start together,
+    and how many were dropped for overlapping one kept."""
+    kept: list[tuple[int, int, bytes, str]] = []
+    dropped = 0
+    for edit in sorted(set(edits), key=lambda e: (e[0], -(e[1] - e[0]), e[2], e[3])):
+        if kept and edit[0] < kept[-1][1]:
+            dropped += 1
+        else:
+            kept.append(edit)
+    return kept, dropped
 
 
 def outside_scan(data: bytes, home: str | None = None) -> OutsideScan:
@@ -3819,11 +3898,15 @@ def outside_scan(data: bytes, home: str | None = None) -> OutsideScan:
             edits.append((m.start(2), m.end(2), LINK_PLACEHOLDER, "link-token"))
     texts: dict[bytes, bytes] = {}  # replaced wherever they appear
     keyed: dict[bytes, bytes] = {}  # replaced under their key only
+    odd = 0
     for m in APP_ID_KEY_RE.finditer(data):
         value = m.group(2)
+        if value is None:
+            odd += 1
+            continue
         quoted = value.startswith(b'"')
         inner = value[1:-1] if quoted else value
-        if not inner:
+        if not inner or value == b"null":
             continue
         if quoted and len(inner) >= APP_ID_ANYWHERE_MIN:
             if inner not in texts:
@@ -3833,60 +3916,119 @@ def outside_scan(data: bytes, home: str | None = None) -> OutsideScan:
             stand_in = _APP_ID_TEXT if quoted else _APP_ID_NUMBER
             keyed[inner] = stand_in % (len(texts) + len(keyed) + 1)
         edits.append((m.start(2) + quoted, m.end(2) - quoted, keyed[inner], "app-id"))
-    for real, stand_in in sorted(texts.items(), key=lambda kv: -len(kv[0])):
-        start = data.find(real)
-        while start != -1:
-            edits.append((start, start + len(real), stand_in, "app-id"))
-            start = data.find(real, start + len(real))
+    if texts:
+        # One pass for every text id, longest first (a file can hold thousands).
+        anywhere = re.compile(
+            b"|".join(re.escape(t) for t in sorted(texts, key=lambda t: (-len(t), t)))
+        )
+        edits.extend(
+            (m.start(), m.end(), texts[m.group(0)], "app-id") for m in anywhere.finditer(data)
+        )
     end = _redact._HOME_END.encode("ascii")
     for real, stand_in in _home_pairs(str(Path.home()) if home is None else home):
         for m in re.finditer(re.escape(real) + end, data, re.IGNORECASE):
             edits.append((m.start(), m.end(), stand_in, "home-path"))
-    # One pass of the scrub: no two edits may overlap. The longer one at a
-    # place wins; whatever a dropped edit would have replaced is still found
-    # by outside_leftovers and refuses the file.
-    kept: list[tuple[int, int, bytes, str]] = []
-    for edit in sorted(edits, key=lambda e: (e[0], -(e[1] - e[0]))):
-        if not kept or edit[0] >= kept[-1][1]:
-            kept.append(edit)
+    # One pass of the scrub: no two edits may overlap. Where two do, the
+    # file is refused (OVERLAP_LABEL): keeping either would leave part of the
+    # other (the end of a login, the digits of an id).
+    kept, dropped = _no_overlaps(edits)
     issued = frozenset([*texts.values(), *keyed.values()])
-    return OutsideScan(tuple(kept), issued, frozenset(keyed))
+    return OutsideScan(tuple(kept), issued, frozenset(keyed), dropped, odd)
+
+
+# What a keyed id is looked for as, after the scrub: a run of letters,
+# digits and dots, or a piece of one between `-` and `_`.
+_ID_TOKEN_RE = re.compile(rb"[0-9A-Za-z._\-]+")
+_ID_PIECE_RE = re.compile(rb"[-_]")
 
 
 def outside_leftovers(scrubbed: bytes, scan: OutsideScan) -> list[str]:
-    """Why the scrubbed bytes still hold what OutsideScan replaces (an edit
-    dropped for overlapping another one, or a number outside its key).
-    Counts only: an offset would point at the token."""
+    """Why the scrubbed bytes still hold what OutsideScan replaces, or why
+    the scan could not be trusted (overlapping edits, an id of another
+    shape). Counts only: an offset would point at the token."""
     problems: list[str] = []
+    if scan.dropped:
+        problems.append(f"{OVERLAP_LABEL} x{scan.dropped}")
+    if scan.odd_shapes:
+        problems.append(f"{APP_ID_SHAPE_LABEL} x{scan.odd_shapes}")
     links = sum(1 for m in LINK_TOKEN_RE.finditer(scrubbed) if m.group(2) != LINK_PLACEHOLDER)
     if links:
         problems.append(f"{LINK_LABEL} x{links}")
     kept = 0
     for m in APP_ID_KEY_RE.finditer(scrubbed):
         value = m.group(2)
+        if value is None or value == b"null":
+            continue
         inner = value[1:-1] if value.startswith(b'"') else value
         if inner and inner not in scan.stand_ins:
             kept += 1
     if kept:
         problems.append(f"{APP_ID_LABEL} x{kept}")
-    elsewhere = sum(
-        len(re.findall(rb"(?<![0-9A-Za-z.\-])" + re.escape(n) + rb"(?![0-9A-Za-z.])", scrubbed))
-        for n in scan.keyed - scan.stand_ins  # a stand-in is no one's id
-    )
+    wanted = {n.lstrip(b"-") for n in scan.keyed - scan.stand_ins}  # a stand-in is no one's id
+    elsewhere = 0
+    if wanted:
+        plain = {n for n in wanted if _ID_TOKEN_RE.fullmatch(n)}
+        for m in _ID_TOKEN_RE.finditer(scrubbed):
+            token = m.group(0)
+            pieces = {token, token.strip(b"."), *_ID_PIECE_RE.split(token)}
+            if pieces & plain:
+                elsewhere += 1
+        # An id with any other character in it is looked for as it is.
+        elsewhere += sum(scrubbed.count(n) for n in wanted - plain)
     if elsewhere:
         problems.append(f"{APP_ID_ELSEWHERE_LABEL} x{elsewhere}")
     return problems
 
 
-def _secret_named(path: Path) -> bool:
-    """Whether the file's name or its folder's name suggests a secret."""
-    names = (path.name, path.parent.name)
-    return any(word in _fold(name) for name in names for word in OUTSIDE_SECRET_WORDS)
+def outside_text_refusals(data: bytes) -> list[str]:
+    """What refuses a file from outside an install before any scrub: a JSON
+    escape the detectors cannot see through, a key naming a secret, a JWT.
+    Counts only."""
+    problems: list[str] = []
+    escapes = len(ESCAPE_RE.findall(data))
+    if escapes:
+        problems.append(f"{ESCAPE_LABEL} x{escapes}")
+    keys = 0
+    for m in _JSON_KEY_RE.finditer(data):
+        key = m.group(1).decode("utf-8", errors="replace")
+        words = {w.casefold() for w in _KEY_WORD_RE.findall(key)}
+        words.add(re.sub(r"[^a-z0-9]", "", key.casefold()))
+        if words & SECRET_KEY_WORDS:
+            keys += 1
+    if keys:
+        problems.append(f"{SECRET_KEY_LABEL} x{keys}")
+    jwts = len(JWT_RE.findall(data))
+    if jwts:
+        problems.append(f"{JWT_LABEL} x{jwts}")
+    return problems
+
+
+def _checked_parts(path: Path) -> tuple[str, ...]:
+    """The names of `path` the secret check reads: those below this
+    machine's home folder when it is inside it; otherwise every one but the
+    root (and macOS's `/private`, which `/tmp` and `/var` resolve into)."""
+    home = Path.home().resolve()
+    if path.is_relative_to(home):
+        return path.relative_to(home).parts
+    parts = path.parts[1:]
+    return parts[1:] if parts[:1] == ("private",) else parts
+
+
+def _secret_named(*paths: Path) -> bool:
+    """Whether any folder below the home folder, or the file's own name,
+    suggests a secret, in any of `paths` (as typed and with links resolved)."""
+    return any(
+        word in _fold(name)
+        for path in paths
+        for name in _checked_parts(path)
+        for word in OUTSIDE_SECRET_WORDS
+    )
 
 
 def _in_an_install(path: Path) -> bool:
-    """Whether a folder above `path` is an install root (holds `.build.info`)."""
-    return any(child(folder, ".build.info") is not None for folder in path.parents)
+    """Whether `path` or a folder above it is an install root (holds
+    `.build.info`)."""
+    return any(child(folder, ".build.info") is not None for folder in (path, *path.parents))
 
 
 def read_outside(path: Path, limit: int) -> tuple[bytes, float]:
@@ -3974,7 +4116,11 @@ def process_outside(
     dest = PurePosixPath(source, platform, name)
     when = datetime.fromtimestamp(mtime).astimezone().isoformat(timespec="seconds")
     digest = hashlib.sha256(data).hexdigest()
-    refused = [*sqlite_problems(data), *_outside_content_refusals(data)]
+    refused = [
+        *sqlite_problems(data),
+        *_outside_content_refusals(data),
+        *outside_text_refusals(data),
+    ]
     scrubbed_name, name_problems = identity.scrub_path(PurePosixPath(name))
     if scrubbed_name.name != name:
         name_problems.append(f"in path: {OUTSIDE_NAME_LABEL}")
@@ -4071,16 +4217,24 @@ def run_outside(args: argparse.Namespace) -> int:
     if not re.fullmatch(r"[A-Za-z0-9_-]+", platform):
         raise CaptureError("--platform must be a plain folder name")
     src = args.file.absolute()  # not resolved: a link must be seen as one
+    # Its folders with their links resolved: the checks below read both.
+    real = src.parent.resolve() / src.name
     out = args.out.resolve()
-    if _secret_named(src):
+    if _secret_named(src, real):
         raise CaptureError(
-            "--file: its name or its folder's name suggests a token, cookie, login, "
-            "credentials or session file, which is never opened; nothing is captured"
+            "--file: its name or a folder's name suggests a token, cookie, login, "
+            "credentials, session or browser-storage file, which is never opened; "
+            "nothing is captured"
         )
-    if _in_an_install(src):
+    if _in_an_install(src) or _in_an_install(real):
         raise CaptureError(
             "--file is inside an install (a folder above it holds .build.info); capture "
             "install files with --root; nothing is captured"
+        )
+    if _in_an_install(out):
+        raise CaptureError(
+            "--out is inside an install (it or a folder above it holds .build.info); the "
+            "install is never written to (L1)"
         )
     if inside(out, src.parent.resolve()):
         raise CaptureError(
