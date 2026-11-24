@@ -508,7 +508,14 @@ return `Classified` or `Unclassified`. (3) **`Layout.inventory()` returns
 `Inventory`**, which holds everything the listing methods return plus
 symlinks, OS-metadata files, read errors and `truncated`. Bounds are set
 with `Limits` (`max_depth`, `max_entries`, `max_toc_bytes`). (4) A TOC over
-`max_toc_bytes` is reported with an error and not read. (5) OS-metadata files
+`max_toc_bytes` is reported with an error and not read. *(Amended
+2026-11-23, M22-21: it is read in part instead, its header only, the lines
+before its first file line within `max_toc_bytes`, as a read-only summary
+marked `partial` that refuses to serialize (`toc.PartialTocError`), never a
+document of the file; `addons list`, `addons check`, `tree` and the Addons
+page say so, and say each absence as "before its file list",
+and `sv list --orphans` does not judge a folder whose partial header
+declares no saved data. The limit stays 1 MiB.)* (5) OS-metadata files
 (the file map's `os-metadata` row: `.DS_Store`, `._*`, `Thumbs.db`,
 `desktop.ini`) met by the walk (the flavor root, everything under `WTF/`,
 the area folders and their contents, `Interface/` outside `AddOns/`,
@@ -6051,6 +6058,12 @@ filter):
   `unloadable_dependencies`);
 - "Could not be checked": no TOC named after the folder, a TOC that could
   not be read (with its error), or no `## Interface:` line;
+- "TOC files read in part" (added 2026-11-23, M22-21): an addon one of
+  whose counted TOCs `addons check` read in part (`partial`, a TOC larger
+  than wowlab reads whole), judged by the lines before its file list; it
+  still counts as current when that header's interface matches, and a
+  header with no `## Interface:` line is "has no Interface line in the part
+  of its TOC file wowlab read";
 - "Saved data no installed addon declares": each orphan with its size and
   why (no addon of that name is installed, or it is installed and declares
   no saved data at the file's scope; names matched with ASCII letters
@@ -6058,8 +6071,10 @@ filter):
   then the CLI's sentence that deleting such a file loses those settings.
 
 `sv list --orphans --json` does not mark its own caveat, so the page
-shows none from it; the folders it leaves out (no TOC, TOC not read) are on
-the "Could not be checked" list. No command reports SavedVariables files
+shows none from it; the folders it leaves out are on the "Could not be
+checked" list (no TOC, TOC not read) or on the "TOC files read in part"
+list (a TOC read in part whose header declares no saved data; amended
+2026-11-23, M22-21). No command reports SavedVariables files
 that fail to parse, so the card's last list is the orphans, as the
 ticket's acceptance names them. Each line's name opens the Explorer on the
 file (the TOC, the addon folder, or the SavedVariables file), once the
