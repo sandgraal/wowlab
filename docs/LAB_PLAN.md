@@ -4644,6 +4644,8 @@ bodies and item names are player text and are never interpreted as markup.
 
 *Amended 2026-11-23 (M21-08, Copy for WoWSims):* `wowlab char sim-export [--out NAME]` writes one character as the JSON WoWSims' (wowsims/forever, MIT) individual sim reads in its Addon Import: `class`, `flavor`, `race`, `level`, `talents` (the sim's positional talent string) and `gear.items` (one `{id, enchant, random_suffix}` per sim slot, in the sim's slot order, `null` for an empty one). It prints the text alone on stdout; `--out` writes it to a plain file name in `<user data>/sim-exports/` (the only file the command writes; `wowlab ui` refuses `--out`). The format was read by hand from the pinned commit named in `simexport`'s docstring and is data in the shipped `wowsims_format.toml`; nothing is fetched at run time. The talent string needs the trait entry → TraitDefinition map, which is the game table `TraitNodeEntry` read from the cache only (`wowlab db2 fetch TraitNodeEntry`); without it the talents are left out and the command says how to get it. On Forever a random suffix is a bonus id, not the link's suffix field (GLOSSARY, "Random suffix"); the sim numbers its suffixes by that bonus list, and the ids it knows ship in the TOML (`[suffixes]`, from its `db.json`): the one bonus id in that set is `random_suffix`. When the record's build has no cached table, the install's is used and the note says so (`record_build` beside `talents_table_build` in `--json`). Of each item link, the item, enchant, suffix, gem and bonus fields are read; what of them the export cannot carry is listed (`left_out`), with the shirt and tabard (no sim slot), gems (the sim's `ItemSpec` has none at the pinned commit), a link suffix field, a bonus id that is not one of the sim's suffixes, and a talent not in the sim's trees. The other link fields (link level, specialization, item context, modifiers) are neither exported nor listed. One note, the same in the text output, `--json` and the page, says where to paste, that the import refuses another class, that WoWSims warns of an out-of-date addon (no `version`) and imports anyway, and, below level 60, that the sim warns and simulates a level 60 character (read from the sim's source at the pinned commit). The Character tab's **Copy for WoWSims** button runs it on a click and shows the text with a Copy button and that note; the page links nowhere and the CSP is unchanged. Whether WoWSims imports the recorded export is **[verify]** until the owner's check (M21-O2).
 
+*Amended 2026-11-23 (M22-06, the Twink panel):* `wowlab char twink [--bracket N] [--weights NAME] [--top N]` and the Character tab's **Twink** panel show, for one character and one battleground level bracket, each equipment slot (the shirt and tabard left out) with its worn item, the best items the character could wear there at the bracket's top level, and the gap between the two scores. The brackets (19, 29, 39, 49, 59), each class's armour and weapon types, the stat names, the weight sets (warlock first, affliction its first set; a set is named for a talent build, since Forever's client reports one spec per class), the planner's words and the filters are the shipped `twink.toml`, which a `twink.toml` in the user config folder overrides value by value (a weight set as a whole). The default bracket is the first at or above the record's level. Candidates are items of `Item` with an `ItemSparse` row, of a type the class can use, admitted by the item's class and race masks, with a required level at or below the bracket's top level, uncommon to epic, not a test or retired item by name, not needing standing with a faction the character's race starts at Hated with (`Faction`), and not an item with no required level (0 or 1) more than `no_level_margin` (5) item levels above the bracket (mostly quest rewards, whose quest's level is the real gate; M22-08 gives the quest). An armour type a class learns later (`armor_from`: mail for hunters and shamans and plate for warriors and paladins at 40, **[verify]**) is left out below that level, judged at the bracket's top level; a one-handed weapon also fills the off hand from a class's `dual_wield_from` (rogues 10, warriors and hunters 20, **[verify]**), and an off-hand weapon fills nothing for a class that does not dual wield. A candidate with `Bonding` 1 is marked "binds when picked up". The notes count each kind left out, name where the player's own `twink.toml` goes, and say that items only the other side's quests or vendors give are not yet left out and that a crafted bind-on-pickup item needs its profession (both wait for M22-08's sources). Stat amounts are each stat's budget share (`StatPercentEditor`) of `RandPropPoints` at the item's level, quality and slot type, rounded half away from zero, plus a caster weapon's spell power (`Flags_4`), WoWSims' Forever sim's rules, **[verify]** against tooltips. A random suffix is a bonus list of the item's bonus tree (GLOSSARY, "Random suffix"); an item is scored with each, the best shown and the others listed. A worn item is scored the same way, with the link's bonus id that is a suffix list; one without an `ItemSparse` row (11231 of 19079 at 70888, among them most of the owner's random-suffix items) is listed as not scored: the server sends these items as hotfixes, which wago.tools' copy lacks; wowlab will read them from the client's hotfix cache (M22-23; GLOSSARY, "Hotfix cache"). Each item has a Wowhead address (the room of `dressing_sites.toml`, `/item=<id>`; `?bonus=<suffix>` only once `twink.WOWHEAD_BONUS` is turned on after the owner's check, M21-O2, and M21-03's link builder takes these links over), and the bracket has a planner address, `https://forevertwinking.com/planner?class=<class>&race=<race>&bracket=l<cap>` (the owner's history; the class and race words **[verify]**). Where an item comes from is M22-08's index; until then `twink.item_sources` knows none and the panel says "not known yet". The eight game tables are those of the installed client's version, downloaded once through `gamedata` (ADR-0022); nothing else is fetched. On the page the panel runs `char twink` only on **Show the gaps** or a change of either picker; the planner link and one Wowhead link (for the candidate the reader opens) are static links of `page.html`, given an address only when it parses, is https: and has exactly its origin (`PLANNER_ORIGIN`, `DRESSING_ORIGIN`), through the page's one URL sink; the CSP is unchanged. A kept character has no Twink panel. Set bonuses, weapon damage and armour are not scored.
+
 ### 16.4 What is known, and what is [verify]
 
 - **Item links.** `docs/LAB_FORMATS.md` §4.2 and its amendments: the
@@ -7490,6 +7492,51 @@ Advanced Combat Logging from its second return before the
 `advancedCombatLogging` setting; the record's `state_from` and
 `advanced_from` name the source. `LoggingCombat(on)` still switches. Both
 reads are **[verify]** until a capture shows which answered.
+
+*As built (2026-11-23, M22-03): the record against each opponent; owner
+ruling of the same day: two marks, kept apart.* `wowlab_core.nemesis`,
+pure, adds up **fights**, one per source row that put a player against
+you: a kept match with them on the other side (`foes`; a solo shuffle has
+none), and a kept open-world encounter in which they were a foe (an
+encounter on a map the database keeps a match on is left out, as above).
+A fight carries a personal part, a team part, or both. **Personal:** your
+killing blows on them (`killed_by_you`) and theirs on you (`killed_you`),
+from the open world today; a trade counts one of each. **Team:** a match's
+`won`, a win or a loss against everyone on the other side; with no winner
+it decides nothing; a match keeps no killing blows. **The record:**
+fights, the start of the first and latest fight, the fights each source
+gave, `personal` {kills, deaths, nemesis} and `team` {wins, losses,
+rival}; a player with no fight has none (`record: null`). It is counted
+from the database's rows only, not from the four counters, which also
+count matches the game dropped before a sync saw them. Every read totals
+it per player (*fix round 2:* the matches by two plain scans added up in
+Python, the open world from the scan the open-world columns already make),
+and `crewdb.fights(KEY)` lists one player's rows (`WHERE player_key = ?`);
+a test checks the totals equal those rows added up. **A nemesis** has killed you at least 3 times, and more often than
+you killed them (`nemesis.is_nemesis`, `NEMESIS_RULE`). **A rival team**
+is a player whose side beat yours in at least 3 battleground or arena
+matches, and more often than yours beat theirs (`nemesis.is_rival`,
+`RIVAL_RULE`). Team results never feed the nemesis rule. Both rules and
+their words live in `nemesis.py`; the help of `crew list --nemeses` and
+`--rivals`, `crew show` and the Crew tab print them. `crew list` rows and
+`--json` carry `record`; `--nemeses` and `--rivals`; `--sort deaths`
+(most killed by them first, then the fewest of your killing blows, then
+key), `--sort team_losses` (most team losses first, then fewest team wins,
+then key) and `--sort world` (latest open-world encounter first). With no
+`--sort`, `--nemeses` uses `deaths`, else `--rivals` uses `team_losses`,
+else `--world` uses `world`, else `last`; a `--sort` given always wins, and
+the report's `sort` is the order used. `crew show` prints both parts with their rules, and its
+`--json` adds `fights` (the rows), `nemesis_rule` and `rival_rule`. The
+Crew tab: a "Record against them" column, the badges "Nemesis" and "Rival
+team", "Your nemeses" and "Rival teams" in the Matches filter (each shows
+its rule), and the orders "Most killed by them", "Most team losses to
+them" and "Latest open-world fight first"; choosing a view sends no order
+and the Order box then shows the one the command used. Not yet sources:
+Spy's sightings and any wins and losses it records (M22-02), one more
+source of tallies and fights in `crewdb`; and the kill pairs of a
+battleground's combat log (M22-15: the addon turns the log on in
+battlegrounds and `crew scan-log` reads those segments), which fold into
+that match's fight as its killing blows, never a second fight.
 
 ### 21.4 The terms of ADR-0036, for the new store
 
