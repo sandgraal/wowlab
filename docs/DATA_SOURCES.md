@@ -206,6 +206,53 @@ findings. Library code must not depend on any of it (L6).
 - Some items are reported to be delivered by the server on first encounter
   rather than shipped in the client tables, so table exports are incomplete.
 
+## The paused Windows suite
+
+Paused on 2026-11-24 (ADR-0031 amendment of that date, owner decision;
+M22-24): `windows.yml` lost its nightly trigger, `windows-app.yml` its
+pull-request trigger, and release.yml's `windows_app`, `windows_app_smoke`
+and `windows_app_release` jobs carry `if: false`. The library keeps its
+Windows paths. What the suite had found when it stopped, for whoever resumes
+it (read from the run logs on 2026-11-24; the pytest steps print skips only,
+`-rs`, so the failures are the `FAILURES` section's headers):
+
+- **Last green:** the nightly of 2026-11-19 (run 44496075380) and the
+  by-hand run of `m15/23-windows-root-path` the same night (44443529171).
+- **Crew database, "file in use", since 2026-11-20.** The nightly of
+  2026-11-20 (run 44710322073, 2 failed, 12,728 passed, 1,123 skipped) failed
+  `lab/core/tests/test_crewdb.py::test_forget_all_racing_a_sync_leaves_no_copy_constructed`
+  with `PermissionError: [WinError 32] The process cannot access the file
+  because it is being used by another process` on the crew database
+  (`<user data>\crew\_forever_\<account>.sqlite`), and
+  `test_the_cli_says_a_plain_sentence_when_the_database_goes_mid_sync_constructed`
+  with the CLI's plain sentence for the same error (`crew list` exited 1
+  where the test expects 0). Not diagnosed: the likely cause is the
+  database being removed or replaced while a connection still holds it
+  open, which Windows refuses and POSIX allows **[verify]**.
+  The nightlies of 2026-11-23 and 2026-11-24 failed both the same way.
+- **The lab-addon mutation probes, on 2026-11-23 only.** The nightly of
+  2026-11-23 (run 45147243198, 7 failed, 12,985 passed, 1,126 skipped) added
+  five probe failures under `lab/core/tests/review/`:
+  `test_m20_14_kept_rules_miss_a_method_cut_note_and_a_non_unit_tooltip_hook.py`
+  (`test_positive_control_is_rejected[control-note-cut-by-string-sub]` and
+  `[control-second-hook]`, `test_a_kept_rule_rejects_the_edit[constructed-hook-on-item-tooltips]`
+  and `[constructed-note-cut-by-method-sub]`) failed with
+  `ModuleNotFoundError: No module named 'test_crew_book'` when the probe
+  loads its graders, and the xdist worker running
+  `test_m20_13_kept_rules_miss_a_new_gather_path_and_an_own_value_outside_identity.py::test_positive_control_is_rejected[control-own-guid-stored-untested-in-identity]`
+  crashed. The same probes pass in the Linux CI, and the next nightly did
+  not fail them.
+- **The last nightly before the pause,** 2026-11-24 (run 45364911855): 2
+  failed, 13,571 passed, 1,126 skipped; the two failures were the two
+  crew-database tests above, and nothing else.
+
+To resume: put the two triggers back and delete the three `if: false`
+lines (each workflow's header comment says how, and
+`tests/repo/test_desktop_ci_off_prs.py`, `tests/packaging/test_windows_app.py`
+and `tests/scripts/test_release.py` pin the paused state), delete
+`.github/actionlint.yaml`, run `windows.yml` by hand on a branch, and fix the
+failures above before the first Windows release.
+
 ## Breakage log
 
 | Date | Source | What changed | Fixture / evidence | Decision |
