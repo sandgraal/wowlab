@@ -86,6 +86,9 @@ EXCLUDED: Mapping[tuple[str, ...], str] = {
     # owner's 2026-10-15 ruling on `looks page --out`), and that FILE is
     # required, so the whole leaf is refused.
     ("snap", "export"): "it creates a file anywhere outside an install",
+    # M22-11: the API client's secret is typed in a terminal, hidden; a form
+    # would put it in a child's input from the page.
+    ("blizzard", "login"): "the API client's secret is typed in a terminal, not into a page",
 }
 """Leaves excluded for a reason other than `--yes`. A new entry needs its
 reason written here and in the server, and nothing else."""

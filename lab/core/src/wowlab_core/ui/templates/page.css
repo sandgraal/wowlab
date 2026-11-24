@@ -511,6 +511,15 @@ pre:empty { display: none; }
 .twink-status { margin: var(--space-2) 0; }
 .twink-status:empty { display: none; }
 #char-twink-status.error { color: var(--ruin); }
+/* Blizzard profiles (M22-11) */
+.bnet-intro { margin: 0 0 var(--space-2); }
+.bnet-status { margin: var(--space-2) 0; }
+.bnet-status:empty { display: none; }
+.bnet-status.error { color: var(--ruin); }
+.bnet-crew { margin-top: var(--space-4); }
+.bnet-lines, .bnet-gear { margin: var(--space-2) 0; padding-left: var(--space-5); }
+.bnet-lines:empty, .bnet-gear:empty { display: none; }
+.bnet-url { overflow-wrap: anywhere; font-family: var(--font-mono); }
 .twink-links { margin: var(--space-2) 0; display: flex; flex-wrap: wrap; gap: var(--space-2) var(--space-3); }
 .twink-slots { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: var(--space-2); }
 .twink-slot { min-width: 0; padding: var(--space-2) var(--space-3); background: var(--gear-ground); border: 1px solid var(--line); border-radius: var(--radius-row); }

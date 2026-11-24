@@ -1548,6 +1548,8 @@
     // The Twink panel's run is the reader's choice (M22-06): kept until then.
     twink.params = Object.assign({}, params);
     byId("char-twink-show").disabled = false;
+    // The Blizzard profile panel (M22-11): remembered, run only on a click.
+    bnetFor("char", entry.label, flavor ? { flavor: flavor } : {});
     for (const load of [loadGear, loadKeys, loadMacros, loadHistory]) {
       await load(entry, params, seq);
       if (seq !== character.seq) return;
@@ -1567,6 +1569,7 @@
     clearSim();
     character.params = null;
     clearTwink();
+    clearBnet("char");
     character.kept = null;
     byId("char-kept").textContent = "";
     byId("char-kept").hidden = true;
@@ -3386,6 +3389,154 @@
 
   byId("looks-write").addEventListener("click", () => writeLooks());
 
+  // ─── Blizzard profiles (M22-11) ───
+  // One panel on the Character page and one on a crew player, each its own
+  // ids (`bnet-char-*`, `bnet-crew-*`). Opening a character or a player
+  // only remembers the name: Show the saved profile runs `blizzard show`
+  // (what earlier fetches saved; no request to Blizzard), and Fetch from
+  // Blizzard, offered only when an API client is kept, runs `blizzard
+  // fetch`. Nothing runs on a pick, a timer or at the start. Every word
+  // about the profile is the report's, drawn as text; the portrait's
+  // address is shown as text, never loaded (the slot `bnet-*-portrait`
+  // stays empty: pictures are not drawn yet).
+
+  const bnetState = {
+    char: { name: null, params: null, seq: 0 },
+    crew: { name: null, params: null, seq: 0 },
+  };
+
+  function bnetSay(where, text, isError) {
+    const node = byId("bnet-" + where + "-status");
+    node.textContent = text;
+    node.classList.toggle("error", Boolean(isError));
+  }
+
+  function clearBnet(where) {
+    const state = bnetState[where];
+    state.seq += 1;
+    state.name = null;
+    state.params = null;
+    byId("bnet-" + where + "-show").disabled = true;
+    byId("bnet-" + where + "-fetch").hidden = true;
+    byId("bnet-" + where + "-lines").replaceChildren();
+    byId("bnet-" + where + "-gear").replaceChildren();
+    byId("bnet-" + where + "-portrait").hidden = true;
+    bnetSay(where, "", false);
+  }
+
+  // Remembers who the panel is for; runs nothing. `name` is a character
+  // folder or crew key (`First-Second`), sent as it is, as an argument.
+  function bnetFor(where, name, params) {
+    clearBnet(where);
+    if (typeof name !== "string" || !name) return;
+    const state = bnetState[where];
+    state.name = name;
+    state.params = Object.assign({}, params || {}, { name: name });
+    byId("bnet-" + where + "-show").disabled = false;
+  }
+
+  function bnetTime(value) {
+    if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(value)) return "time not known";
+    return value.slice(0, 10) + " " + value.slice(11, 16) + " UTC";
+  }
+
+  // How one part was got: its fetch time, or why there is none.
+  function bnetPartWords(state) {
+    if (!state || typeof state !== "object") return "not fetched";
+    if (state.status === "ok") {
+      const earlier = state.from_earlier === true ? " (an earlier fetch; the last one did not get it)" : "";
+      return "fetched " + bnetTime(state.fetched_at) + earlier;
+    }
+    const why = typeof state.detail === "string" && state.detail ? visible(state.detail) : "not fetched";
+    return typeof state.fetched_at === "string" ? why + " (" + bnetTime(state.fetched_at) + ")" : why;
+  }
+
+  function bnetText(value) {
+    return typeof value === "string" ? visible(value) : "";
+  }
+
+  function bnetNumber(value) {
+    return typeof value === "number" && Number.isFinite(value) ? String(value) : "";
+  }
+
+  function drawBnet(where, report) {
+    const lines = byId("bnet-" + where + "-lines");
+    const gear = byId("bnet-" + where + "-gear");
+    lines.replaceChildren();
+    gear.replaceChildren();
+    const configured = report.configured === true;
+    byId("bnet-" + where + "-fetch").hidden = !configured;
+    const p = report.profile && typeof report.profile === "object" ? report.profile : null;
+    const who = bnetText(report.name);
+    if (!p) {
+      const none = "Nothing fetched from Blizzard for " + who + " yet.";
+      bnetSay(where, configured ? none : none + " " + bnetText(report.setup), false);
+      return;
+    }
+    bnetSay(where, configured ? "" : bnetText(report.setup), false);
+    const add = (text) => lines.appendChild(make("li", text));
+    const c = p.character && typeof p.character === "object" ? p.character : null;
+    if (c) {
+      const level = bnetNumber(c.level) ? "Level " + bnetNumber(c.level) + " " : "";
+      const kind = [bnetText(c.race), bnetText(c.character_class)].filter((x) => x).join(" ");
+      const spec = bnetText(c.active_spec) ? " (" + bnetText(c.active_spec) + ")" : "";
+      const side = bnetText(c.faction) ? ", " + bnetText(c.faction) : "";
+      const rules = bnetText(c.ruleset) ? "; ruleset: " + bnetText(c.ruleset) : "";
+      add((level + kind + spec + side + rules).trim() + " · " + bnetPartWords(p.character_state));
+      const avg = bnetNumber(c.average_item_level);
+      const eq = bnetNumber(c.equipped_item_level);
+      if (avg || eq) add("Item level: " + (avg || "?") + " average, " + (eq || "?") + " equipped");
+    } else {
+      add("Profile: " + bnetPartWords(p.character_state));
+    }
+    const g = p.guild && typeof p.guild === "object" ? p.guild : null;
+    const guildName = g && bnetText(g.name) ? bnetText(g.name) : c ? bnetText(c.guild) : "";
+    const members = g && bnetNumber(g.member_count) ? " (" + bnetNumber(g.member_count) + " members)" : "";
+    add("Guild: " + (guildName ? guildName + members + " · " : "") + bnetPartWords(p.guild_state));
+    const portrait = Array.isArray(p.portrait) ? p.portrait.filter((a) => a && typeof a.url === "string") : [];
+    const item = make("li", "Portrait: ");
+    if (portrait.length) {
+      const url = make("span", bnetText(portrait[0].url));
+      url.className = "bnet-url";
+      item.appendChild(url);
+      item.appendChild(make("span", " · " + bnetPartWords(p.portrait_state)));
+    } else {
+      item.appendChild(make("span", bnetPartWords(p.portrait_state)));
+    }
+    lines.appendChild(item);
+    const items = Array.isArray(p.equipment) ? p.equipment.filter((i) => i && typeof i === "object") : [];
+    add("Gear: " + (items.length ? items.length + " items · " : "") + bnetPartWords(p.equipment_state));
+    for (const i of items) {
+      const slot = bnetText(i.slot_name) || bnetText(i.slot) || "?";
+      const name = bnetText(i.name) || bnetNumber(i.item_id) || "?";
+      const facts = [bnetNumber(i.item_level) ? "item level " + bnetNumber(i.item_level) : "", bnetText(i.quality)]
+        .filter((x) => x).join(", ");
+      gear.appendChild(make("li", slot + ": " + name + (facts ? " (" + facts + ")" : "")));
+    }
+  }
+
+  async function runBnet(where, verb) {
+    const state = bnetState[where];
+    if (!state.params) return;
+    const seq = ++state.seq;
+    const name = visible(state.name);
+    bnetSay(where, verb === "fetch" ? "Asking Blizzard for " + name + "…" : "Reading what was saved for " + name + "…", false);
+    const reply = await runJson(["blizzard", verb], Object.assign({}, state.params), verb === "fetch");
+    if (seq !== state.seq) return;
+    const report = reply.data;
+    if (!report || typeof report !== "object" || typeof report.configured !== "boolean") {
+      bnetSay(where, reply.error ? shown(reply.error) : "wowlab blizzard " + verb + " printed something this page does not know.", true);
+      return;
+    }
+    drawBnet(where, report);
+    if (reply.error) bnetSay(where, shown(reply.error), true);
+  }
+
+  for (const where of ["char", "crew"]) {
+    byId("bnet-" + where + "-show").addEventListener("click", () => runBnet(where, "show"));
+    byId("bnet-" + where + "-fetch").addEventListener("click", () => runBnet(where, "fetch"));
+  }
+
   // ─── the account hub (M17-01, §19 CW-1) ───
   // The home tab: one row per character folder in every flavor, from one
   // run of `char list --summary --json`, which reads every flavor folder
@@ -4262,6 +4413,7 @@
     byId("crew-player").hidden = true;
     byId("crew-player-lines").replaceChildren();
     clearPlayerMatches();
+    clearBnet("crew");
   }
 
   function clearPlayerMatches() {
@@ -4284,6 +4436,8 @@
     byId("crew-note-codes").hidden = true;
     clearPlayerMatches();
     byId("crew-player-title").textContent = visible(key);
+    // The Blizzard profile panel (M22-11): remembered, run only on a click.
+    bnetFor("crew", key, crew.report && hubStr(crew.report.flavor_folder) ? { flavor: crew.report.flavor_folder } : {});
     const lines = byId("crew-player-lines");
     lines.replaceChildren(make("li", "Reading…"));
     const reply = await runJson(["crew", "show"], crewParams({ name: key }));

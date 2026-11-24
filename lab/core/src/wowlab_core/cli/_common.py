@@ -484,6 +484,17 @@ crew_app = typer.Typer(
     no_args_is_help=True,
 )
 app.add_typer(crew_app, name="crew", short_help="The players you grouped with (the crew book).")
+blizzard_app = typer.Typer(
+    help="Public character profiles from Blizzard's own API: item level, gear, guild and "
+    "portrait, asked only when you run a command or press a button, with the API client "
+    "you create at develop.battle.net. Without one, nothing is asked.",
+    no_args_is_help=True,
+)
+app.add_typer(
+    blizzard_app,
+    name="blizzard",
+    short_help="Public character profiles from Blizzard's API (your own API client).",
+)
 
 # The modules of this package in the order they register their commands when
 # all are imported, which is the order `wowlab --help` lists them in. Each
@@ -511,6 +522,7 @@ _PART_NAMES = (
     "_cmd_casc",
     "_cmd_charmodel",
     "_cmd_crew",
+    "_cmd_blizzard",
     "_cmd_ui",
 )
 # The modules to import before a root command or group is looked up (M15-22):
@@ -539,6 +551,7 @@ _COMMAND_MODULES: dict[str, tuple[str, ...]] = {
     "char": ("_cmd_char", "_cmd_charmodel"),
     "casc": ("_cmd_casc",),
     "crew": ("_cmd_crew",),
+    "blizzard": ("_cmd_blizzard",),
 }
 
 

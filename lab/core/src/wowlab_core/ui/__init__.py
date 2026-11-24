@@ -63,8 +63,10 @@ anywhere outside an install), `casc cat` with `out` in either form, a path
 or `-` for its output (from the UI an extracted file goes only to its
 default place under the user data directory; §17.1, M15-06), `char
 sim-export` with `out` (from the UI the export is shown to copy, M21-08), `snap
-export` (it creates one) and `snap rm` (the owner's ruling of 2026-11-19
-offers it on the command line only, §20.8 decision 9; M19-09). `sv dump` always runs with `--install-only`
+export` (it creates one), `snap rm` (the owner's ruling of 2026-11-19
+offers it on the command line only, §20.8 decision 9; M19-09) and `blizzard
+login` (the API client's secret is typed, hidden, in a terminal, never into
+the page; M22-11). `sv dump` always runs with `--install-only`
 (`_FORCED_FLAGS`), which refuses a file whose real path is not in the
 install wowlab finds by itself, and a `root` naming another install, before
 reading it, so a refusal quotes no byte of it (M16-42).
@@ -242,6 +244,10 @@ _EXCLUDED_LEAVES: dict[tuple[str, ...], str] = {
     # `snap rm` on the command line only. It declares `--yes`, so this entry
     # takes it out of the confirm step too.
     ("snap", "rm"): "removing a snapshot is offered on the command line only",
+    # M22-11: `blizzard login` asks for the API client's secret, hidden, in
+    # a terminal; a run from the page has no terminal, and a form would hand
+    # the secret to the page and a child's input.
+    ("blizzard", "login"): "the API client's secret is typed in a terminal, not into a page",
 }
 
 _JSON = "--json"

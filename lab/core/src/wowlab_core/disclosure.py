@@ -24,7 +24,7 @@ BEGIN = "<!-- network:begin -->"
 END = "<!-- network:end -->"
 
 HEAD = (
-    "What leaves your machine. Nothing is uploaded: these three are wowlab's only "
+    "What leaves your machine. Nothing is uploaded: these four are wowlab's only "
     "network traffic, and no other command makes a request."
 )
 
@@ -39,6 +39,12 @@ ROWS: tuple[str, ...] = (
     "fetch` downloads the tables that name races, classes, specs and professions the same "
     "way, for each version you have installed, and only the ones not already downloaded. "
     "`wowlab char model` downloads the tables it needs for your installed version, once.",
+    "`wowlab blizzard fetch`, and the Blizzard profile panel's Fetch button, ask Blizzard's "
+    "own API for one character's public profile, gear, guild and portrait address, only when "
+    "you run it or press it, and only with the API client you created at develop.battle.net "
+    "and gave to `wowlab blizzard login`: the request names your region and the character's "
+    "names, and its secret goes only to Blizzard's sign-in address; nothing from your install "
+    "is sent. Without an API client nothing is asked.",
     "A link to another site, such as a dressing room or a character's profile, opens in "
     "your own browser, and only when you click it, carrying what that page needs: a "
     "character's name, realm, region and guild, and game ids such as race, body type, "

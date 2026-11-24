@@ -54,13 +54,23 @@ def test_the_first_run_intro_prints_the_block() -> None:
         assert text.count(row) == 1
 
 
-def test_the_block_has_the_three_rows() -> None:
-    doctor, tables, link = disclosure.ROWS
+def test_the_block_has_the_four_rows() -> None:
+    doctor, tables, blizzard, link = disclosure.ROWS
     assert doctor.startswith("`wowlab doctor --check-builds` downloads")
     assert "`wowlab db2` and `wowlab looks` download" in tables and "`--build`" in tables
     assert "dressing room" in link and "opens in your own browser, and only when you click" in link
     assert "wowlab itself makes no request to it" in link
-    assert "Nothing is uploaded" in disclosure.HEAD
+    assert "Nothing is uploaded" in disclosure.HEAD and "these four" in disclosure.HEAD
+    # M22-11 (ADR-0040 (2)): the Blizzard profile fetch, what it sends, and
+    # that nothing is asked without the player's own API client.
+    assert blizzard.startswith("`wowlab blizzard fetch`")
+    for said in (
+        "only when you run it or press it",
+        "develop.battle.net",
+        "nothing from your install is sent",
+        "Without an API client nothing is asked",
+    ):
+        assert said in blizzard, said
 
 
 def test_the_old_network_sentences_are_gone() -> None:
