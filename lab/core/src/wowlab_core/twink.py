@@ -87,6 +87,7 @@ from wowlab_core import dressing, gear, hotfix, snapshot
 
 __all__ = [
     "CONFIG_FILE",
+    "HOTFIX_TABLES",
     "TABLES",
     "WOWHEAD_BONUS",
     "ClassGear",
@@ -128,6 +129,8 @@ TABLES: tuple[str, ...] = (
     "Faction",
 )
 """The game tables the panel is read from, by name (L6: table names only)."""
+HOTFIX_TABLES: tuple[str, ...] = ("Item", "ItemSparse")
+"""Of `TABLES`, those the game's hotfix cache is laid over (M22-23)."""
 
 WOWHEAD_BONUS = False
 """Whether a Wowhead item address carries `?bonus=<suffix>`: off until the

@@ -1061,12 +1061,14 @@ def overlay_hotfixes(
     build: str,
     table_path: Callable[[str], Path | None],
     *,
+    tables: Iterable[str] | None = None,
     file: str | None = None,
     refused: str | None = None,
 ) -> HotfixOverlay:
     """The overlay of `cache` (read from `file`, relative to the flavor
-    folder) on the cached tables of `build`, for every table the shipped
-    layouts describe. `table_path` gives a table's cached CSV for `build`
+    folder) on the cached tables of `build`, for `tables` (default: every
+    table the shipped layouts describe; a name they do not describe raises
+    `ValueError`). `table_path` gives a table's cached CSV for `build`
     (fetching it first is the caller's choice), or None when it is not
     cached. Refused, with the reason in `report().refused`, when `refused`
     is given (the caller could not read the cache), when there is no cache,
@@ -1076,6 +1078,7 @@ def overlay_hotfixes(
     string, and `MalformedTable` or `OSError` when a cached table cannot be
     read."""
     tables_build = _build_number(build)
+    layouts = _layouts_of(tables)
     if refused is not None:
         return _refused(build, file, cache.build if cache else None, refused)
     if cache is None:
@@ -1088,7 +1091,6 @@ def overlay_hotfixes(
             f"the hotfix cache is of build {cache.build} and the game tables of {build}; wowlab "
             "lays a hotfix cache only over the game tables of its own build",
         )
-    layouts = hotfix.layouts()
     by_table: dict[str, list[hotfix.HotfixRecord]] = {}
     for record in cache.records:
         by_table.setdefault(record.table, []).append(record)
@@ -1155,32 +1157,46 @@ def overlay_hotfixes(
     )
 
 
+def _layouts_of(tables: Iterable[str] | None) -> dict[str, hotfix.TableLayout]:
+    known = hotfix.layouts()
+    if tables is None:
+        return dict(known)
+    names = list(tables)
+    unknown = [n for n in names if n not in known]
+    if unknown:
+        raise ValueError(f"no hotfix layout for {', '.join(unknown)}")
+    return {n: known[n] for n in names}
+
+
 def flavor_hotfixes(
     flavor_path: Path,
     install_root: Path,
     build: str,
     table_path: Callable[[str], Path | None],
+    *,
+    tables: Iterable[str] | None = None,
 ) -> HotfixOverlay:
     """`overlay_hotfixes` of the newest `Cache/ADB/<locale>/DBCache.bin` in
-    the flavor folder, read read-only from the install root (L1). A cache
-    that cannot be read refuses the overlay with the reason."""
+    the flavor folder, read read-only from the install root (L1), for
+    `tables` (default: every table with a shipped layout). A cache that
+    cannot be read refuses the overlay with the reason."""
+    names = list(_layouts_of(tables))
     found = hotfix.find_caches(flavor_path)
     if not found:
-        return overlay_hotfixes(None, build, table_path)
+        return overlay_hotfixes(None, build, table_path, tables=names)
     path = found[0]
     rel = path.relative_to(flavor_path).as_posix()
     try:
-        cache = hotfix.read(path, hotfix.layouts(), root=install_root)
+        cache = hotfix.read(path, names, root=install_root)
     except hotfix.HotfixError as exc:
-        return overlay_hotfixes(
-            None, build, table_path, file=rel, refused=f"{rel} cannot be read: {exc}"
-        )
+        why = str(exc)
     except OSError as exc:
         why = exc.strerror or str(exc)
-        return overlay_hotfixes(
-            None, build, table_path, file=rel, refused=f"{rel} cannot be read: {why}"
-        )
-    return overlay_hotfixes(cache, build, table_path, file=rel)
+    else:
+        return overlay_hotfixes(cache, build, table_path, tables=names, file=rel)
+    return overlay_hotfixes(
+        None, build, table_path, tables=names, file=rel, refused=f"{rel} cannot be read: {why}"
+    )
 
 
 def cached_table_path(name: str, build: str, *, cache_dir: Path | None = None) -> Path | None:

@@ -166,7 +166,7 @@ Anything weekly is anchored to the character's region, never to the local machin
 
 **DB2** — the client's static data tables (items, spells, customization options, maps, …), one schema per build. Community definitions (WoWDBDefs) give the columns names.
 
-**Hotfix cache** — `Cache/ADB/<locale>/DBCache.bin`: row-level corrections to DB2 tables pushed by the server at login. Exports of DB2 tables do not include them.
+**Hotfix cache** — `Cache/ADB/<locale>/DBCache.bin`: row-level corrections to DB2 tables pushed by the server at login. Exports of DB2 tables do not include them. Each record names a table (by a hash of its name), a row, a *push* (one batch the server sent; a later push wins) and a status (a row, or the row removed); the file's header names the build it belongs to, and its rows mean something only against that build's tables. On Forever it holds thousands of item rows wago.tools' export lacks, among them most random-suffix greens (M22-23, `docs/LAB_FORMATS.md` §13). It also holds the client's encryption keys, which the Lab never reads.
 
 **Secret value** — since 12.0, some API returns in combat or restricted content (unit health is the usual example) are opaque to addon code: they can be passed to Blizzard widgets and cannot be compared, added or branched on. This is why computation-heavy combat addons stopped working and why Lab tooling works on out-of-combat and on-disk data.
 

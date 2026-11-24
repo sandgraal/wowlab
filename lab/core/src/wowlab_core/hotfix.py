@@ -5,9 +5,9 @@ game tables the server sent at login over the tables the client shipped
 with (GLOSSARY, "Hotfix cache"). wago.tools' exports lack them, so about
 half of the weapons and armour in `Item` have no `ItemSparse` row there
 (`docs/DATA_SOURCES.md`, 2026-11-23). This module reads the file and
-decodes the rows of the tables `hotfix_layouts.toml` describes (`Item` and
-`ItemSparse`); `gamedata.HotfixOverlay` lays them over the cached tables
-of the same build (ADR-0022, ADR-0033 note of 2026-11-23).
+decodes the rows of the tables `hotfix_layouts.toml` describes (`Item`,
+`ItemSparse` and `TraitNodeEntry`) that a caller asks for;
+`gamedata.HotfixOverlay` lays them over the cached tables of the same build (ADR-0022, ADR-0033 note of 2026-11-23).
 
 The format (`docs/LAB_FORMATS.md` §13), as wowsims/forever (MIT) reads it
 in `tools/db2tool/wdc/hotfix.go` (commit
@@ -297,9 +297,14 @@ class TableLayout(_Model):
     fields: list[Field]
 
     @property
+    def inline_id(self) -> bool:
+        """Whether the row's data holds its own ID (the first field)."""
+        return self.fields[0].name == "ID"
+
+    @property
     def columns(self) -> list[str]:
         """The columns the table's export has, `ID` first."""
-        out = ["ID"]
+        out = [] if self.inline_id else ["ID"]
         for f in self.fields:
             out.extend(f"{f.name}_{i}" for i in range(f.count)) if f.count else out.append(f.name)
         return out
@@ -333,6 +338,11 @@ def parse_layouts(text: str) -> dict[str, TableLayout]:
                 raise LayoutError(f"{LAYOUTS_FILE}: [tables.{name}]: {spec!r}: 1 to {_ARRAY_MAX}")
             fields.append(Field(name=m.group(1), kind=m.group(2), count=count))  # type: ignore[arg-type]
         layout = TableLayout(table=name, fields=fields)
+        first = fields[0]
+        if any(f.name == "ID" for f in fields[1:]) or (
+            first.name == "ID" and (first.kind != "i32" or first.count)
+        ):
+            raise LayoutError(f"{LAYOUTS_FILE}: [tables.{name}]: an inline ID is first, ID:i32")
         columns = layout.columns
         if len(set(columns)) != len(columns):
             raise LayoutError(f"{LAYOUTS_FILE}: [tables.{name}] names a column twice")
@@ -394,6 +404,8 @@ def decode_row(layout: TableLayout, record: HotfixRecord) -> dict[str, str]:
                 raise fail(f"ends before its {column} value")
             (value,) = unpack.unpack_from(data, pos)
             pos += unpack.size
+            if column == "ID" and value != record.record_id:
+                raise fail(f"holds the ID {value}")
             row[column] = _float_text(value) if f.kind == "f32" else str(value)
     if pos != end:
         raise fail(f"holds {end - pos} bytes more than one row")

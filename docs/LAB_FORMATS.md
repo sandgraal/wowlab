@@ -586,6 +586,58 @@ the M2's vertices are the seven skins' sets one after another; whether a
 LOD skin's lookup is relative to its set and what other models do stay
 **[verify]**, amendment of 2026-11-17).
 
+## 13. The hotfix cache: `Cache/ADB/<locale>/DBCache.bin` (M22-23)
+
+Reference: wowsims/forever (MIT) `tools/db2tool/wdc/hotfix.go` at commit
+a8bd7fd83a3a7c5102012ed87d86a71d175b3a89, a Go translation of DBCD's
+hotfix reader and of wow.tools.local's table hash, read on GitHub and not
+copied; checked on the owner's file at build 71037 (2026-11-24, derived
+fixture `macos-71037/derived/hotfix-items.json`). Little-endian
+throughout.
+
+- **Header, 44 bytes:** `XFTH`, the format version (int32; 9 on Forever,
+  the only one the Lab reads), the build (int32; 71037), then 32 bytes
+  (a hash, per the reference) the Lab does not read.
+- **Records, to the end of the file,** each a 32-byte header then its
+  data: `XFTH`; region id, push id, unique id (int32 each); the table hash
+  (uint32); the row id (int32); the data size (int32); a status byte; three
+  zero bytes. Every record of the owner's file had region 91 and zero
+  padding. Push id -1 is a row the client cached on demand (98
+  `ItemSparse` records, all status 3); ids from 0x01000000 up are
+  synthetic ones the client gives such rows (the reference; 32,178 records
+  in the owner's file).
+- **Table hash:** SStrHash of the table's name in capitals (`ITEM` →
+  `0x50238EC2`, `ITEMSPARSE` → `0x919BE54E`).
+- **Status:** 1 a row (data present; 0 bytes in no `Item` or `ItemSparse`
+  record of the owner's file), 2 and 3 the row removed, 4 neither (the
+  reference treats every non-row record as a removal except for two tables;
+  the Lab leaves status 4 and a status 1 with no data alone,
+  **[verify]**). The owner's file: 43,714 status 1, 37,494 status 3, 12,709
+  status 2, 12,490 status 4, of 106,407 records. A row id can appear under
+  several pushes; records apply in ascending push id, file order kept
+  within one (the reference's order).
+- **Row data:** not bit-packed. The fields of the table's layout in order,
+  at their declared widths, byte-aligned; strings inline, UTF-8, ending in
+  a zero byte; the ID is not in the data (the header carries it). For the
+  layouts of `Item` (WoWDBDefs layout 9A2A4834, 43 bytes) and `ItemSparse`
+  (6FCC3191: the five strings first, then 302 bytes of fixed fields) every
+  one of the 8,433 status-1 records of each table decoded to its exact
+  length, and the 8,432 `Item` and 1,702 `ItemSparse` rows also in
+  wago.tools' 71037 export matched it column for column except where the
+  hotfix differs from the shipped table (a handful of names, flags and
+  prices) and in float text: wago writes a float32 with eleven decimals,
+  trailing zeros dropped (`0.20000000298`, `1`), which the Lab writes the
+  same way.
+- **Inline IDs:** a table whose ID is inline in WoWDBDefs (`$id$` without
+  `noninline`), such as `TraitNodeEntry`, holds the ID in the row data as
+  its first field; in the owner's file all 33 `TraitNodeEntry` records (17
+  bytes) held their record's row id there. The Lab refuses a row whose
+  inline ID differs from the record's.
+- **Not read:** any record of another table. The cache also holds the
+  client's encryption keys (`TactKey`, 12,293 records in the owner's file);
+  the Lab steps over them by their size and never looks at their bytes
+  (ADR-0033 and its note of 2026-11-23).
+
 ## Amendments
 
 Dated entries, newest last. Each names the fixture that prompted it.

@@ -1717,23 +1717,42 @@ class CharSimExportReport(_Out):
     sim: simexport.SimExport
     path: str | None
     notes: list[str]
+    # The game's hotfix cache over the TraitNodeEntry table the talents were
+    # read with (M22-23): what it changed, or why it was not used; None when
+    # no table was read.
+    hotfix_cache: hotfix.OverlayReport | None = None
 
 
-def _talent_table(builds: Sequence[str | None]) -> tuple[dict[int, int] | None, str | None, str]:
+def _talent_table(
+    builds: Sequence[str | None], lay: layout.Layout | None = None
+) -> tuple[dict[int, int] | None, str | None, str, hotfix.OverlayReport | None]:
     """The trait entry definitions from the first of `builds` (the record's,
     then the install's) whose `TraitNodeEntry` table is cached and reads,
-    that build, and, when none does, why. A build that is not a full game
-    version, or whose cached table cannot be read, is passed over for the
-    next. Never fetches."""
+    that build, and, when none does, why. With `lay`, the flavor folder's
+    hotfix cache is laid over the table when it is of that build (M22-23),
+    and the last item is what it did or why not. A build that is not a full
+    game version, or whose cached table cannot be read, is passed over for
+    the next. Never fetches."""
     tried: list[str] = []
     problems: list[str] = []
     for build in dict.fromkeys(b for b in builds if b):
         try:
+            path = gamedata.cached_table_path(simexport.TALENT_TABLE, build)
             rows = gamedata.cached_rows(simexport.TALENT_TABLE, build)
-            if rows is None:
+            if path is None or rows is None:
                 tried.append(build)
                 continue
-            return simexport.definitions(rows), build, ""
+            if lay is None:
+                return simexport.definitions(rows), build, "", None
+            overlay = gamedata.flavor_hotfixes(
+                lay.flavor_path,
+                lay.install_root,
+                build,
+                {simexport.TALENT_TABLE: path}.get,
+                tables=[simexport.TALENT_TABLE],
+            )
+            table = simexport.definitions(overlay.rows(simexport.TALENT_TABLE, rows))
+            return table, build, "", overlay.report()
         except ValueError as exc:  # not a full game version, or a malformed table
             problems.append(f"{build[:64]!r} cannot be used ({exc})")
         except (OSError, gamedata.GameDataError) as exc:
@@ -1749,8 +1768,8 @@ def _talent_table(builds: Sequence[str | None]) -> tuple[dict[int, int] | None, 
         )
     words.extend(problems)
     if not words:
-        return None, None, "neither the record nor the install names a game version"
-    return None, None, "; ".join(words)
+        return None, None, "neither the record nor the install names a game version", None
+    return None, None, "; ".join(words), None
 
 
 @char_app.command("sim-export", short_help="One character as the JSON WoWSims' Addon Import reads.")
@@ -1813,7 +1832,7 @@ def char_sim_export(
     except simexport.SimExportError as exc:
         raise CliError(f"{target.path}: no export: {exc}") from exc
     record_build = labaddon.client_build(record)
-    table, table_build, table_absent = _talent_table([record_build, chosen.version])
+    table, table_build, table_absent, hotfixes = _talent_table([record_build, chosen.version], lay)
     talents = simexport.talents_of(
         simexport.purchased(record),
         klass,
@@ -1852,6 +1871,7 @@ def char_sim_export(
         sim=sim,
         path=None if path is None else str(path),
         notes=notes,
+        hotfix_cache=hotfixes,
     )
     if json_out:
         _emit(report)
@@ -1865,10 +1885,12 @@ def char_sim_export(
     who = f"{report.character} in account {acct.folder}{_picked_words(how, tie)}"
     _note("Character: {}", who)
     if talents.table_build is not None:
+        cached = hotfixes is not None and hotfixes.applied and hotfixes.rows_from_cache > 0
         _note(
-            "Talents read with the game table {} of {}.",
+            "Talents read with the game table {} of {}{}.",
             simexport.TALENT_TABLE,
             talents.table_build,
+            " and your game's hotfix cache" if cached else "",
         )
     if talents.table_note is not None:
         _note("{}", talents.table_note)
@@ -1942,7 +1964,11 @@ def _twink_tables(
             )
         try:
             overlay = gamedata.flavor_hotfixes(
-                lay.flavor_path, lay.install_root, version, lambda name: data.table(name, version)
+                lay.flavor_path,
+                lay.install_root,
+                version,
+                lambda name: data.table(name, version),
+                tables=twink.HOTFIX_TABLES,
             )
             tables = twink.load_tables(
                 version, lambda name: overlay.rows(name, data.rows(name, version))

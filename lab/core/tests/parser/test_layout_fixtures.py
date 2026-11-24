@@ -28,7 +28,9 @@ from wowlab_core.layout import Classified, Inventory, Layout, classify
 
 FIXTURES = Path(__file__).resolve().parents[1] / "fixtures"
 INDEX = FIXTURES / "README.md"
-NOT_INSTALL = frozenset({"wago", "incoming"})
+# Recordings of outside sources, not install captures: wago.tools' tables
+# and wowsims' database (M22-23).
+NOT_INSTALL = frozenset({"wago", "wowsims", "incoming"})
 
 # Paths (relative to fixtures/) that classify() leaves Unclassified on
 # purpose, each with the reason. Empty: every captured path has a row.

@@ -445,12 +445,14 @@ def _hotfix_cache(f: install.Flavor, root: Path) -> hotfix.OverlayReport | None:
     version = f.version
     try:
         cache_dir = gamedata.default_cache_dir()
-        report = gamedata.flavor_hotfixes(
-            f.path,
-            root,
-            version,
-            lambda name: gamedata.cached_table_path(name, version, cache_dir=cache_dir),
-        ).report()
+
+        def cached(name: str) -> Path | None:
+            return gamedata.cached_table_path(name, version, cache_dir=cache_dir)
+
+        # The tables wowlab has cached for this version; with none, all of
+        # them, so the line says the first is not cached yet.
+        names = [n for n in hotfix.layouts() if cached(n) is not None] or None
+        report = gamedata.flavor_hotfixes(f.path, root, version, cached, tables=names).report()
     except (ValueError, OSError, gamedata.GameDataError):
         return None
     return report if report.file is not None else None
@@ -458,12 +460,13 @@ def _hotfix_cache(f: install.Flavor, root: Path) -> hotfix.OverlayReport | None:
 
 def _hotfix_line(r: hotfix.OverlayReport) -> str:
     """The doctor line of a flavor's hotfix cache."""
-    names = " and ".join(t.table for t in r.tables)
+    listed = [t.table for t in r.tables]
+    names = ", ".join(listed[:-1]) + " and " + listed[-1] if len(listed) > 1 else "".join(listed)
     if r.applied:
         replaced = sum(t.replaced for t in r.tables)
         return (
-            f"  Hotfix cache: build {r.cache_build}; adds {r.rows_added:,} rows the downloaded "
-            f"game tables lack and replaces {replaced:,} ({names}), read from {r.file}"
+            f"  Hotfix cache: build {r.cache_build}; adds {_plural(r.rows_added, 'row')} the "
+            f"downloaded game tables lack and replaces {replaced} ({names}), read from {r.file}"
         )
     build = f"build {r.cache_build}" if r.cache_build is not None else "build unknown"
     return f"  Hotfix cache: {build}; not used: {r.refused}"

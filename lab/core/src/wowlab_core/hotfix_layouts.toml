@@ -17,6 +17,9 @@
 #
 # A field is "<name>:<type>" or "<name>:<type>:<count>" for an array. Types:
 # i8 u8 i16 u16 i32 u32 f32 (little-endian), str (UTF-8, ends in a zero byte).
+# A table whose ID is inline (WoWDBDefs `$id$` without `noninline`) lists
+# "ID:i32" first: the row's data then holds its ID, which must be the
+# record's row id.
 
 [tables.Item]
 fields = [
@@ -108,4 +111,16 @@ fields = [
   "InventoryType:i8",
   "OverallQualityID:i8",
   "AmmunitionType:u8",
+]
+
+# WoWDBDefs `definitions/TraitNodeEntry.dbd`, the layout Forever's builds
+# use (read 2026-11-24); its ID is inline. `char sim-export`
+# reads this table.
+[tables.TraitNodeEntry]
+fields = [
+  "ID:i32",
+  "TraitDefinitionID:i32",
+  "MaxRanks:i32",
+  "NodeEntryType:u8",
+  "TraitSubTreeID:i32",
 ]
