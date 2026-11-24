@@ -371,9 +371,11 @@ local function addSkipped()
     WowLabCrewDB.skipped = (ns.Number(WowLabCrewDB.skipped) or 0) + 1
 end
 
--- M21-11: a member the game named with no second part (no second name on
--- Forever, no realm elsewhere) while no home realm was found is skipped, and
--- counted here, so the owner's check can see whether it happens [verify].
+-- M21-11: a read of a member the game named with no second part (no second
+-- name on Forever, no realm elsewhere) while no home realm was found is
+-- skipped, and counted here, one per read (each roster pass), never reset
+-- while the book lasts, so the owner's check can see whether it happens
+-- [verify].
 local function addNoSecond()
     if not crewOn() then
         return
@@ -463,7 +465,8 @@ local function fieldsMissing()
         missing = missing
             .. " "
             .. noSecond
-            .. " players came back with no second name or realm and were skipped (not yet confirmed)."
+            .. " reads of a group member came back with no second name or realm and were skipped,"
+            .. " since the book was started (not yet confirmed)."
     end
     if type(UnitClass) ~= "function" then
         missing = missing .. " No class: the client has no UnitClass function."
@@ -1210,22 +1213,24 @@ local function recordMatch()
     local keys = {}
     local ownAt = nil
     -- M21-11: rows whose name has no second part while no home realm was
-    -- found get no key; counted in the match record as `rows_unkeyed`.
+    -- found get no key; counted in the match record as `rows_unkeyed`, the
+    -- player's own row (known by its GUID) left out of the count.
     local unkeyed = 0
     for i = 1, #rows do
         local score = rows[i]
         local name = score.name
         local key = nil
+        local ownGuid = mine ~= nil and score.guid == mine
         if type(name) == "string" and name ~= "" and name ~= UNKNOWNOBJECT then
             if string.find(name, "-", 1, true) ~= nil then
                 key = name
             elseif home ~= nil then
                 key = name .. "-" .. home
-            else
+            elseif not ownGuid then
                 unkeyed = unkeyed + 1
             end
         end
-        local isOwn = (ownKey ~= nil and key == ownKey) or (mine ~= nil and score.guid == mine)
+        local isOwn = (ownKey ~= nil and key == ownKey) or ownGuid
         if isOwn then
             key = nil
             ownAt = i

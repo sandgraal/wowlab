@@ -2730,8 +2730,10 @@ sandbox gets a local page as well as the CLI. L1–L8 apply to every ticket.
     a realm. The crew book's home realm is `GetNormalizedRealmName()` only:
     a player the game names without a realm is skipped when it gives none,
     rather than keyed with the owner's second name, and counted (the book's
-    `no_second`; a match record's `rows_unkeyed` for scoreboard rows), and
-    `/wowlab crew` says how many only when there were some (fix round 1).
+    `no_second`, one per read since the book was started, so reads, not
+    players; a match record's `rows_unkeyed` for scoreboard rows, the
+    player's own row left out), and `/wowlab crew` says how many reads only
+    when there were some (fix round 1).
     The desk no longer takes an older record's `realm_from = "full_name"`
     value as the home realm for `crew scan-log`. **[verify]** with the
     owner's `/dump UnitFullName("player")` and `/dump

@@ -141,7 +141,8 @@ class CrewReport(_Out):
     probe_loads: int | None
     skipped: int | None
     current_count: int
-    # M21-11: members skipped for no second name or realm (the book's count).
+    # M21-11: reads of a group member skipped for no second name or realm,
+    # since the book was started (the book's count; reads, not players).
     no_second: int | None = None
     total: int
     sort: CrewSort

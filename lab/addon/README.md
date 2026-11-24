@@ -896,8 +896,9 @@ otherwise; you are skipped with `UnitIsUnit`. A realm that comes back nil
 or empty is your own (`GetNormalizedRealmName`). *2026-11-23 (M21-11):* on
 Forever that second value is the member's second name, and when
 `GetNormalizedRealmName` gives nothing a member whose second value is nil
-or empty is skipped and counted in the book's `no_second`; `/wowlab crew`
-then says how many [verify]. A name that is nil or the
+or empty is skipped and counted in the book's `no_second`, one per read
+(each roster pass, never reset while the book lasts, so reads, not
+players); `/wowlab crew` then says how many reads [verify]. A name that is nil or the
 client's "unknown" text is tried again later. Every value read goes
 through `issecretvalue` where the client has it: a secret name or realm
 skips the member, any other secret value leaves its field as it was, and
@@ -1201,7 +1202,7 @@ on from one, fails the test until someone lists it on purpose.
 | `IsInRaid` | crew book: `raidN` units in a raid, `partyN` otherwise; combatlog: a raid group turns the log off | [verify] | yes |
 | `UnitIsUnit` | crew book: the owner skipped (`raidN` includes the owner), never by comparing names; the target is not the owner | [verify] | yes |
 | `UnitIsPlayer` | crew book: `/wowlab crew good`, `bad`, `clear` and `note` use the target only when it is a player; the tooltip line is shown only for a player (`mouseover`) | [verify] | yes |
-| `UnitName` | crew book: a member's or the target's name and realm (nil or empty realm: the owner's own when `GetNormalizedRealmName` gives one, else the member is skipped and counted in `no_second`, M21-11); identity (schema 5): the character's `name`. *2026-11-23 (M21-11):* on Forever the second value is the second name, not a realm (the owner's `UnitName("target")` gave `"Tay", "Soulrend"`), so a key there is `<First>-<Second>` | [verify] | yes |
+| `UnitName` | crew book: a member's or the target's name and realm (nil or empty realm: the owner's own when `GetNormalizedRealmName` gives one, else the read is skipped and counted in `no_second`, M21-11); identity (schema 5): the character's `name`. *2026-11-23 (M21-11):* on Forever the second value is the second name, not a realm (the owner's `UnitName("target")` gave `"Tay", "Soulrend"`), so a key there is `<First>-<Second>` | [verify] | yes |
 | `GetRealmName` | identity (schema 5): the character's `realm`, as its display name; gave nothing usable at the first pass on the owner's run on 71037 (2026-11-20), so two fallbacks follow it (M20-16) | [verify] | yes |
 | `GetNormalizedRealmName` | crew book: the owner's realm, for a member whose realm comes back nil or empty (since M21-11 the only source: with none, such a member is skipped); identity (M20-16): the character's `realm` when `GetRealmName` gives none (`realm_from = "normalized_realm_name"`) | [verify] | yes |
 | `UnitFullName` | identity (M21-11): its second return, for the player only, when neither realm call gives a realm, kept as `second_name` (`second_name_from = "full_name"`), never as the realm; from M20-16 to M21-11 it was the `realm` (`realm_from = "full_name"`), and from M20-17 to M21-11 the crew book's home realm when `GetNormalizedRealmName` gave none. On Forever the realm slot of a unit name holds the second name (the owner's `UnitName("target")`, 2026-11-23) | [verify]: `/dump UnitFullName("player")` and `/dump GetNormalizedRealmName()` (M22-O1) | yes |

@@ -86,7 +86,7 @@ _UNREADABLE = "Nothing was read."
 _FIELD_WORDS = {
     "started": "start date",
     "skipped": "count of skipped reads",
-    "no_second": "count of players skipped for no second name or realm",
+    "no_second": "count of reads skipped for no second name or realm",
     "loads": "load count",
     "players": "player list",
     "current": "list of the players counted in the group you were in at the last save",
@@ -242,9 +242,10 @@ class CrewBook(_Model):
     started: int | None = None  # time() when the book was (last) started
     probe_loads: int | None = None  # the book's own load probe (§20.1)
     skipped: int | None = None  # reads the addon skipped, counted per attempt
-    # M21-11: group members the addon skipped because the game named them
-    # with no second part (no second name, no realm) and no home realm was
-    # found; absent from an earlier addon's book.
+    # M21-11: reads of a group member the addon skipped because the game
+    # named the member with no second part (no second name, no realm) and no
+    # home realm was found; one per read (each roster pass), not distinct
+    # players, since the book was started; absent from an earlier addon's book.
     no_second: int | None = None
     current_count: int = 0  # keys in the saved `current` set
     players: list[CrewPlayer] = Field(default_factory=list)

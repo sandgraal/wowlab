@@ -126,12 +126,16 @@ MEMBER_NO_SECOND = (
 )
 NO_SECOND_LINE = (
     "local noSecond = ns . Number ( WowLabCrewDB . no_second ) or 0 if noSecond > 0 then "
-    'missing = missing .. " " .. noSecond .. " players came back with no second name or '
-    'realm and were skipped (not yet confirmed)." end'
+    'missing = missing .. " " .. noSecond .. " reads of a group member came back with no '
+    'second name or realm and were skipped," .. " since the book was started (not yet '
+    'confirmed)." end'
 )
 ROWS_UNKEYED = (
     "local unkeyed = 0",
-    'elseif home ~= nil then key = name .. "-" .. home else unkeyed = unkeyed + 1 end',
+    "local ownGuid = mine ~= nil and score . guid == mine",
+    'elseif home ~= nil then key = name .. "-" .. home elseif not ownGuid then '
+    "unkeyed = unkeyed + 1 end",
+    "local isOwn = ( ownKey ~= nil and key == ownKey ) or ownGuid",
     "if unkeyed > 0 then record . rows_unkeyed = unkeyed end",
 )
 IDENTITY_SECOND_NAME = (
@@ -863,25 +867,32 @@ def read_member(book: Book, name: str, second: Any, home: tuple[str | None, bool
 def fields_missing_line(book: Book) -> str:
     if book.no_second > 0:
         return (
-            f" {book.no_second} players came back with no second name or realm and were "
-            "skipped (not yet confirmed)."
+            f" {book.no_second} reads of a group member came back with no second name or "
+            "realm and were skipped, since the book was started (not yet confirmed)."
         )
     return ""
 
 
-def score_keys(names: list[Any], home: str | None) -> tuple[list[str | None], int | None]:
-    """The match pass's row keys and `rows_unkeyed` (None when none)."""
+def score_keys(
+    names: list[Any], home: str | None, own: int | None = None
+) -> tuple[list[str | None], int | None]:
+    """The match pass's row keys and `rows_unkeyed` (None when none); `own`
+    is the index of the row whose GUID is the player's (fix round 2: left
+    out of the count, and of the keys)."""
     keys: list[str | None] = []
     unkeyed = 0
-    for name in names:
+    for i, name in enumerate(names):
         key = None
+        own_guid = i == own
         if isinstance(name, str) and name != "":
             if "-" in name:
                 key = name
             elif home is not None:
                 key = f"{name}-{home}"
-            else:
+            elif not own_guid:
                 unkeyed += 1
+        if own_guid:
+            key = None
         keys.append(key)
     return keys, (unkeyed if unkeyed > 0 else None)
 
@@ -901,7 +912,8 @@ def test_m21_11_a_member_with_no_second_part_is_counted_and_said() -> None:
     read_member(book, "Rizz", "", (None, False))
     assert book.keys == [] and book.no_second == 2 and book.skipped == 0
     assert fields_missing_line(book) == (
-        " 2 players came back with no second name or realm and were skipped (not yet confirmed)."
+        " 2 reads of a group member came back with no second name or realm and were skipped,"
+        " since the book was started (not yet confirmed)."
     )
 
 
@@ -930,3 +942,13 @@ def test_m21_11_scoreboard_rows_with_no_key_are_counted(
     names: list[Any], home: str | None, keys: list[str | None], unkeyed: int | None
 ) -> None:
     assert score_keys(names, home) == (keys, unkeyed)
+
+
+def test_m21_11_the_own_row_is_not_counted_as_unkeyed() -> None:
+    """Fix round 2: on Forever (no home realm) the player's own row, known
+    by its GUID, has no key either; it is left out, not counted."""
+    assert score_keys(["Me", "Tay", "Rizz-Other"], None, own=0) == (
+        [None, None, "Rizz-Other"],
+        1,
+    )
+    assert score_keys(["Me"], None, own=0) == ([None], None)

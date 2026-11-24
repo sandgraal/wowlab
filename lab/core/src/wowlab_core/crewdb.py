@@ -1359,7 +1359,7 @@ def check_book(book: crewbook.CrewBook) -> str | None:
         )
     for name, value in (
         ("count of skipped reads", book.skipped),
-        ("count of players skipped for no second name or realm", book.no_second),
+        ("count of reads skipped for no second name or realm", book.no_second),
         ("load count", book.probe_loads),
     ):
         if value is not None and not 0 <= value <= COUNTER_MAX:
