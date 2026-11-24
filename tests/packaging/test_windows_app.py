@@ -13,6 +13,13 @@ applies `PYTHONIOENCODING` in a frozen build, which ignores it.
 
 Nothing here builds the app, and no test needs Windows: the frozen build is
 graded on windows-latest by the workflows.
+
+Paused since 2026-11-24 (ADR-0031 amendment of that date, owner decision;
+M22-24): release.yml's three Windows jobs carry `if: false` and
+windows-app.yml runs only by hand. The tests here pin that paused state and
+keep grading the jobs' steps as they stand, so resuming is deleting the three
+`if: false` lines and putting windows-app.yml's `pull_request` trigger back,
+with the assertions marked "paused" below turned back.
 """
 
 from __future__ import annotations
@@ -60,25 +67,37 @@ def test_the_release_and_the_pull_request_build_the_windows_app_the_same_way(job
     assert set(release["env"]) == set(by_hand["env"])
     assert release["runs-on"] == "windows-latest"  # x64
     assert release["defaults"] == {"run": {"shell": "bash"}}
+    # Paused (M22-24): the release's copy is off; the by-hand copy is not.
+    assert release["if"] is False
+    assert "if" not in by_hand
 
 
-def test_the_windows_workflow_runs_on_a_pull_request_or_by_hand_and_publishes_nothing() -> None:
+# Every file the app is built or smoke-tested from: while Windows was on, a
+# change to any of them was built on windows-latest before it merged.
+PR_PATHS = (
+    "packaging/**",
+    "scripts/app_smoke.py",
+    "scripts/record_url.py",
+    ".github/workflows/windows-app.yml",
+    ".github/workflows/release.yml",
+    "pyproject.toml",
+    "uv.lock",
+)
+
+
+def test_the_windows_workflow_is_paused_runs_by_hand_only_and_publishes_nothing() -> None:
     data = _workflow(WINDOWS_WORKFLOW)
     triggers = data.get("on", data.get(True))
-    assert set(triggers) == {"pull_request", "workflow_dispatch"}
-    paths = triggers["pull_request"]["paths"]
-    # Every file the app is built or smoke-tested from, so a change to any
-    # of them is built on windows-latest before it merges.
-    for path in (
-        "packaging/**",
-        "scripts/app_smoke.py",
-        "scripts/record_url.py",
-        ".github/workflows/windows-app.yml",
-        ".github/workflows/release.yml",
-        "pyproject.toml",
-        "uv.lock",
-    ):
-        assert path in paths, path
+    # Paused (ADR-0031 amendment of 2026-11-24, M22-24): no pull-request run.
+    # Resuming puts `pull_request` back with PR_PATHS and asserts them here.
+    assert triggers == {"workflow_dispatch": None}
+    text = WINDOWS_WORKFLOW.read_text(encoding="utf-8")
+    assert "PAUSED since 2026-11-24 (ADR-0031 amendment of 2026-11-24" in text
+    # The trigger to put back is in the comment, with every path.
+    comment = [line for line in text.splitlines() if line.startswith("#")]
+    assert "#   pull_request:" in comment
+    for path in PR_PATHS:
+        assert f'#       - "{path}"' in comment, path
     assert data["permissions"] == {"contents": "read"}
     jobs = data["jobs"]
     assert set(jobs) == {"wheel", "windows_app", "windows_app_smoke"}
@@ -105,7 +124,8 @@ def test_the_windows_build_freezes_the_checked_wheel_into_one_folder() -> None:
     for job in (app, smoke):
         assert "permissions" not in job
         assert "environment" not in job
-        assert "if" not in job
+        # Paused (M22-24): `if: false`, and no other condition.
+        assert job["if"] is False
     steps = app["steps"]
     names = [s.get("name") for s in steps]
     runs = [" ".join(s.get("run", "").split()) for s in steps]
@@ -171,7 +191,9 @@ def test_the_two_attach_jobs_are_the_same_steps_but_for_their_zip() -> None:
     jobs = _jobs(RELEASE)
     mac, win = jobs["app_release"], jobs["windows_app_release"]
     assert win["needs"] == ["version", "build", "windows_app", "windows_app_smoke", "release"]
-    assert "if" not in win and "continue-on-error" not in win and "environment" not in win
+    # Paused (M22-24): `if: false`; app_release keeps the implicit success().
+    assert win["if"] is False and "if" not in mac
+    assert "continue-on-error" not in win and "environment" not in win
     assert win["permissions"] == mac["permissions"]
     assert win["runs-on"] == mac["runs-on"] == "ubuntu-latest"
     assert set(win["env"]) == set(mac["env"])
