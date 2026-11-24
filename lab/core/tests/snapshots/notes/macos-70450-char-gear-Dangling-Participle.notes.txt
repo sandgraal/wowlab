@@ -3,7 +3,7 @@ Character: 1/Dangling-Participle in account 90000001#6
 File: WTF/Account/90000001#6/1/Dangling-Participle/SavedVariables/WowLab.lua
 Written: <local time> (the file's modification time: the character as of that save)
 Region: not known: the portal setting in WTF/Config.wtf is "test", not one of us, eu, kr, tw, cn
-Talents on WoW Forever Builds: no link: the game's talent tables for 1.60.1.70450 are not downloaded; the Character tab of wowlab ui downloads them with one click, or wowlab db2 fetch downloads each table --json lists
+Talents on WoW Forever Builds: no link: the game's talent tables for 1.60.1.70450 are not downloaded; the Character tab of wowlab ui downloads them with one click, or run wowlab db2 fetch <table> --build 1.60.1.70450 for each of "TraitNode", "TraitNodeGroup" and "TraitNodeGroupXTraitNode"
 Level: 10
 Class: MAGE (class id 8)
 Race: race id 2
