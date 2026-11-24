@@ -1,10 +1,13 @@
 """`wowlab addons list` and `addons check` (M16-111)."""
 
 import re
+import time
+from collections.abc import Sequence
 from typing import Literal
 
 from wowlab_core import (
     addoncheck,
+    addonsource,
     layout,
 )
 from wowlab_core.cli._common import (
@@ -14,6 +17,7 @@ from wowlab_core.cli._common import (
     RootOpt,
     _emit,
     _handled,
+    _home_words,
     _open,
     _Out,
     _player_copy,
@@ -39,24 +43,148 @@ class AddonsReport(_Out):
 
     flavor_folder: str
     addons: list[layout.Addon]
+    # Where each folder came from, as the addon managers wowlab reads
+    # recorded it (M22-16): WowUp's records of this game folder.
+    sources: addonsource.AddonSources
+
+
+_SOURCES_FOLDERS = (
+    "WowUp keeps one list for every game folder it manages and records which game folder "
+    "each addon went into; only this game folder's records are matched to its addons. A "
+    "folder here that shares a name with an addon WowUp installed into another game folder "
+    "is not counted as WowUp's."
+)
+_SOURCES_STALE = (
+    "A record is out of date when a folder it lists is not here, or when the addon's "
+    "TOC files give a version and none of them agrees with the version WowUp installed: "
+    "the addon was changed after WowUp last wrote its list, by hand or by another app."
+)
+_SOURCES_UPDATE = (
+    "An update is the one WowUp knew of when it last checked; wowlab fetches nothing, "
+    "so a newer one may exist."
+)
+_SOURCES_OTHERS = (
+    "Only WowUp's list is read. An addon installed by hand, or by another app such "
+    "as CurseForge's, shows as not in WowUp's list."
+)
+_SOURCES_NOTES = [_SOURCES_FOLDERS, _SOURCES_STALE, _SOURCES_UPDATE, _SOURCES_OTHERS]
+
+
+def _source_date(mtime_ns: int) -> str:
+    return time.strftime("%Y-%m-%d", time.localtime(mtime_ns // 1_000_000_000))
+
+
+def _toc_words(versions: Sequence[addonsource.TocVersion]) -> str:
+    """The present folders' `## Version:` lines, each with the folders that
+    carry it: "the TOC here says 868", or "the TOCs here say 12.1.25
+    (DBM-Core and 6 more), a8e9f0e (DBM-VPVEM)"."""
+    if len(versions) == 1 and len(versions[0].folders) == 1:
+        return f"the TOC here says {versions[0].version}"
+    parts = []
+    for v in versions:
+        more = len(v.folders) - 1
+        parts.append(f"{v.version} ({v.folders[0]}{f' and {more} more' if more else ''})")
+    return "the TOCs here say " + ", ".join(parts)
+
+
+def _wowup_record_words(match: addonsource.RecordMatch) -> str:
+    """What one record says about its addon, for the line of each folder it
+    claims."""
+    if not match.provider_known:
+        source = "in WowUp's list, which does not know where it came from"
+    elif match.provider:
+        source = f"from {match.provider} through WowUp"
+    else:
+        source = "through WowUp"
+    recorded = match.installed_version
+    if not match.stale:
+        words = f"{source}, {recorded}" if recorded else source
+        if match.ignored:
+            words += ", WowUp is set to leave it alone"
+        elif match.update_available and match.latest_version:
+            words += f", update {match.latest_version} available"
+        return words
+    words = f"{source}, WowUp's record is out of date"
+    if recorded:
+        words += f": it installed {recorded}"
+        if match.version_check == "differs":
+            words += f", {_toc_words(match.toc_versions)}"
+    if match.folders_missing:
+        words += f"; not here: {', '.join(match.folders_missing)}"
+    return words
+
+
+def _scope_lines(sources: addonsource.AddonSources) -> list[str]:
+    """What is said first: which game folders WowUp's list is for."""
+    lines = []
+    for file, scope in zip(sources.files, sources.scopes, strict=True):
+        if file.state != "read":
+            continue
+        others = "; ".join(
+            f"{_home_words(o.folder)} ({_plural(o.records, 'addon')})" for o in scope.others
+        )
+        hinted = sum(1 for f in sources.folders if f.same_name_as)
+        shares = (
+            f", and {_plural(hinted, 'folder')} here "
+            f"{'shares' if hinted == 1 else 'share'} a name with one of them"
+            if hinted
+            else ""
+        )
+        if scope.manages is False and not scope.by_name:
+            line = "WowUp does not manage this game folder"
+            line += f"; its list is for {others}" if others else "; its list holds no addon"
+            lines.append(line + shares + ".")
+            continue
+        if scope.by_name:
+            if file.settings_state == "missing":
+                why = "its settings file is not there"
+            elif file.settings_state == "unreadable":
+                why = f"its settings file could not be read: {file.settings_error}"
+            else:
+                why = (
+                    f"{_plural(scope.by_name, 'record')} "
+                    f"{'names' if scope.by_name == 1 else 'name'} a game folder its settings "
+                    "do not list"
+                )
+            lines.append(
+                f"wowlab cannot tell which game folder WowUp's list is for ({why}), so its "
+                "records are matched to these addons by folder name."
+            )
+        if others:
+            lines.append(f"WowUp's list also holds addons for {others}{shares}.")
+    return lines
 
 
 @addons_app.command("list", short_help="Every folder under Interface/AddOns/ with its TOC files.")
 @_handled
-def addons_list(root: RootOpt = None, flavor: FlavorOpt = None, json_out: JsonOpt = False) -> None:
-    """Every folder under Interface/AddOns/ with its TOC files.
+def addons_list(
+    root: RootOpt = None,
+    flavor: FlavorOpt = None,
+    json_out: JsonOpt = False,
+    notes_out: NotesOpt = False,
+) -> None:
+    """Every folder under Interface/AddOns/ with its TOC files, and where it
+    came from when the WowUp app installed it into this game folder: the
+    site, the version, an update WowUp knew of, and whether WowUp's record is
+    out of date. A folder not in WowUp's list is marked. Reads only; WowUp's
+    own files are read, never changed, and nothing is fetched.
 
     \f
     JSON: AddonsReport."""
     _, chosen, lay = _open(root, flavor)
     addons = list(lay.addons())
-    report = AddonsReport(flavor_folder=chosen.folder, addons=addons)
+    files = (addonsource.read_wowup(),)
+    sources = addonsource.match_sources(addons, files, lay.flavor_path)
+    report = AddonsReport(flavor_folder=chosen.folder, addons=addons, sources=sources)
     if json_out:
         _emit(report)
         return
+    for line in _scope_lines(sources):
+        _say(line)
     if not addons:
         _say("No addon folders.")
-    for a in addons:
+    matches = {(m.manager, m.record_id): m for m in sources.records}
+    for a, where in zip(addons, sources.folders, strict=True):
         toc = next((t for t in a.tocs if t.file == a.selected_toc), None)
         doc = toc.document if toc else None
         title = _ui_text(doc.get("Title") or "") if doc else None
@@ -72,7 +200,32 @@ def addons_list(root: RootOpt = None, flavor: FlavorOpt = None, json_out: JsonOp
             bits.append(f"TOC declares Interface {declared.text}")
         if a.blizzard:
             bits.append("named like a Blizzard addon")
+        for claim in where.claims:
+            bits.append(_wowup_record_words(matches[(claim.manager, claim.record_id)]))
+        if where.unclaimed:
+            bits.append("not in WowUp's list")
         _say("  ".join(bits))
+    elsewhere = [m for m in sources.records if "no_folder_here" in m.stale_why]
+    if elsewhere:
+        names = ", ".join(m.name or m.record_id for m in elsewhere)
+        their = "its" if len(elsewhere) == 1 else "their"
+        _say(f"WowUp also lists {names}, with none of {their} folders here.")
+    caveat = None
+    read = False
+    keep: list[str] = []
+    for file in sources.files:
+        where_file = _home_words(file.path)
+        if file.state == "read" and file.written_ns is not None:
+            read = True
+            _say(
+                f"WowUp's list: {where_file}, last written {_source_date(file.written_ns)}, "
+                f"{_plural(len(file.records), 'addon')}."
+            )
+        elif file.state == "unreadable":
+            caveat = f"wowlab could not read WowUp's list at {where_file}: {file.error}."
+            keep += [where_file, file.error or ""]
+    if read or caveat is not None:
+        _say_notes(_SOURCES_NOTES, notes_out, caveat, keep=keep)
 
 
 class AddonsCheckReport(_Out):

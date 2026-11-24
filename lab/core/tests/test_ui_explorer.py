@@ -314,20 +314,16 @@ LOOKS_FRAME = (
 )
 
 
-# The one outside origin the page may name (M15-02): the constant page.js
-# checks the dressing-room link against before it sets the link's href. It
-# is the only origin in the page (the SVG namespace, SVG_NS_LINE, is a name,
-# not an origin); a link to it opens only on the player's click
-# (ADR-0019's and ADR-0031's amendments of 2026-10-19).
-DRESSING_ORIGIN = 'const DRESSING_ORIGIN = "https://www.wowhead.com";'
-# The second (M22-06): the Twink panel's "Plan on ForeverTwinking" link, checked
-# against it the same way (test_ui_twink.py drives it with hostile addresses);
-# the panel's Wowhead link is checked against DRESSING_ORIGIN.
-PLANNER_ORIGIN = 'const PLANNER_ORIGIN = "https://forevertwinking.com";'
-# The check itself parses the address with the URL constructor, whose name,
-# lower-cased, reads as CSS's `url(`; it constructs a parser and fetches
-# nothing.
+# No outside origin is named in the page (M21-03): the origins it may link
+# to come from the server with the command list (`link_origins`, from
+# `link_sites.toml`; test_ui_links.py), so the page holds none (the SVG
+# namespace, SVG_NS_LINE, is a name, not an origin); a link opens only on
+# the player's click (ADR-0019's amendments of 2026-10-19 and 2026-11-23).
+# The check parses an address, and each served origin, with the URL
+# constructor, whose name, lower-cased, reads as CSS's `url(`; it
+# constructs a parser and fetches nothing.
 DRESSING_PARSE = "parsed = new URL(value);"
+ORIGIN_PARSE = "parsed = new URL(origin);"
 
 
 def test_no_external_url_appears_in_the_page(server: Any) -> None:
@@ -338,9 +334,8 @@ def test_no_external_url_appears_in_the_page(server: Any) -> None:
     # every entry of `_EXTERNAL` is checked on the rest of the page.
     body = without_font_faces(body)
     assert body.count(LOOKS_FRAME) == 1
-    assert body.count(DRESSING_ORIGIN) == 1 and body.count(DRESSING_PARSE) == 1
-    assert body.count(PLANNER_ORIGIN) == 1
-    body = body.replace(LOOKS_FRAME, "").replace(DRESSING_ORIGIN, "").replace(PLANNER_ORIGIN, "")
+    assert body.count(DRESSING_PARSE) == 1 and body.count(ORIGIN_PARSE) == 1
+    body = body.replace(LOOKS_FRAME, "").replace(ORIGIN_PARSE, "")
     # Not an origin (M17-03): the SVG namespace the history charts are made
     # in, which `createElementNS` needs; nothing is fetched from it.
     assert body.count(SVG_NS_LINE) == 1
@@ -425,12 +420,11 @@ _HTML_SINKS = [
 # the text /api/looks-page sent. The frame is sandboxed (scripts only, an
 # origin of its own), so the page's markup never reaches this document.
 LOOKS_SRCDOC = "frame.srcdoc = read.page;"
-# The one URL sink (M15-02): the dressing-room link's href, set only to an
-# address that parsed, is https: and has exactly DRESSING_ORIGIN as its
-# origin (test_ui_dressing.py drives it with hostile addresses). Since M22-06
-# it is `pointLink`'s one line, which the Twink panel's two static links also
-# go through, each with an address checked against its own origin constant
-# (test_ui_twink.py).
+# The one URL sink (M15-02): a static link's href, set only to an address
+# that parsed, is https: and has exactly the origin the served allowlist
+# gives its site. Since M21-03 it is `pointLink`'s one line, which the
+# dressing room's link and the saved links go through (test_ui_dressing.py
+# and test_ui_links.py drive it with hostile addresses).
 DRESSING_HREF = "link.href = checked;"
 # The SVG the history charts draw (M17-03): the namespace, named once, and
 # the closed sets of elements and attributes the harness also enforces. None
@@ -564,6 +558,13 @@ def test_the_explorer_runs_only_listed_read_commands(server: Any) -> None:
         # M20-18: its "Read the combat logs not read before" runs `crew scan-log`, which
         # writes only into wowlab's crew database (graded in test_ui_crew.py).
         ("crew", "scan-log"),
+        # M22-16: the Addons view's "Where they came from" reads `addons list`
+        # (graded in test_ui_addon_sources.py).
+        ("addons", "list"),
+        # M22-08: the Look up tab's search runs the read `lookup`; its
+        # download offer adds `fetch`, which writes only into wowlab's own
+        # game-table cache (graded in test_ui_lookup.py).
+        ("lookup",),
         # M22-05: the Live view reads with `live recap` (graded in
         # test_ui_live.py).
         ("live", "recap"),
