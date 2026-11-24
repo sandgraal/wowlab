@@ -18,6 +18,7 @@
 <button id="sec-backups" class="sec" type="button" role="tab" aria-selected="false" aria-controls="backups-view">Backups</button>
 <button id="sec-addons" class="sec" type="button" role="tab" aria-selected="false" aria-controls="addons-view">Addons</button>
 <button id="sec-keybinds" class="sec" type="button" role="tab" aria-selected="false" aria-controls="character-view">Keybinds</button>
+<button id="sec-live" class="sec" type="button" role="tab" aria-selected="false" aria-controls="live-view">Live</button>
 <button id="sec-advanced" class="sec" type="button" role="tab" aria-selected="false" aria-controls="explorer-view gaps-view commands-view looks-view">Advanced</button>
 </div>
 <div class="game"><span class="game-dot" aria-hidden="true"></span><span id="game-name" class="game-name" hidden></span><label id="run-flavor-box" class="run-flavor" hidden><span class="unseen">Game version</span><select id="run-flavor"></select></label></div>
@@ -282,6 +283,25 @@
 </div>
 <details class="about"><summary>About this data</summary>
 <p class="patch-day-intro">Addons the game may skip, and saved data no installed addon declares, as wowlab reads them from your files. Reads only. Pick a line to see its file in the Explorer.</p>
+</details>
+</section>
+<section id="live-view" role="tabpanel" aria-labelledby="sec-live" hidden>
+<div class="chars-head">
+<h2 class="page-title">Live</h2>
+<span class="chars-when">refreshes by itself while this view is open</span>
+</div>
+<p id="live-watch" class="crew-words" role="status"></p>
+<div id="live-match" class="panel crew-player" role="region" aria-labelledby="live-match-title">
+<h3 id="live-match-title">Latest match</h3>
+<ul id="live-match-lines" class="crew-lines"></ul>
+</div>
+<div id="live-session" class="panel crew-player" role="region" aria-labelledby="live-session-title">
+<h3 id="live-session-title">Your last save, against an earlier one your backups hold</h3>
+<ul id="live-session-lines" class="crew-lines"></ul>
+</div>
+<p id="live-status" role="status"></p>
+<details class="about"><summary>About this data</summary>
+<p class="intro">This view is meant for a second screen while you play. Every few seconds it asks wowlab whether your game folder changed: the times of your saved addon data, which the game writes only at <code>/reload</code> and logout, and the newest combat log, which the game writes as you play, a little at a time. When either changed, it reads again with <code>wowlab live recap</code>. The latest match is read from the combat log: who you fought, your killing blows and deaths, and the result when the log or the crew book has it. The crew book, like all addon data, is saved only at <code>/reload</code> or logout, so a battleground's result and scoreboard appear after that. A match shows its fights only when the combat log was on during it. The lab-addon turns the log off in instances: to log a battleground, wait for WowLab's chat line that says the combat log is off, then type <code>/combatlog</code>, and the game answers that combat is being logged (<code>/combatlog</code> switches the log, so typing it while the log is on turns it off). Your last save, against an earlier one your backups hold, compares the newest save of the character you played last with the save before it that your backups hold: level, gear and currencies from the lab-addon, new items from Syndicator when you use it (everything it lists counts: bags, bank, mail, auctions and what you wear), and the players you met. Take a backup after you play to compare the next session with it. Reads only; nothing leaves this computer.</p>
 </details>
 </section>
 <section id="explorer-view" role="tabpanel" aria-labelledby="tab-explorer" hidden>
