@@ -359,6 +359,25 @@
   "region": null,
   "region_absent": "there is no WTF/Config.wtf",
   "saved_links": [],
+  "talents": {
+    "link": {
+      "link": "talents",
+      "site": "wowforeverbuilds",
+      "site_name": "WoW Forever Builds",
+      "label": "Open my talents",
+      "why": "the game's talent tables for 1.60.1.70450 are not downloaded"
+    },
+    "ranks": null,
+    "tables_build": null,
+    "record_build": "1.60.1.70450",
+    "table_note": null,
+    "download": [
+      "TraitNode",
+      "TraitNodeGroup",
+      "TraitNodeGroupXTraitNode"
+    ],
+    "download_build": "1.60.1.70450"
+  },
   "links": {
     "profiles": [
       {
