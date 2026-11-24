@@ -14,6 +14,8 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import Literal
 
+import pydantic
+
 from wowlab_core import (
     charhistory,
     charname,
@@ -106,6 +108,23 @@ class LiveRecapReport(_Out):
     map_table: Literal["read", "missing", "unreadable", "no_version"] = "no_version"
     map_version: str | None = None
     map_words: str | None = None
+    # The open-world encounters since the earlier save that were set aside
+    # because their map is not in the game's map table, and those map ids
+    # (at most `worldpvp.MAX_UNKNOWN_MAPS`), as `crew scan-log` sets them aside.
+    world_set_aside: int = 0
+    world_set_aside_maps: list[int] = pydantic.Field(default_factory=list)
+
+
+def _set_aside_words(count: int, ids: list[int]) -> str:
+    """The Live recap's line on encounters set aside as on maps the game's
+    map table does not hold (M22-22)."""
+    shown = ", ".join(str(i) for i in ids[: worldpvp.MAX_UNKNOWN_MAPS])
+    named = f" ({'map' if len(ids) == 1 else 'maps'} {shown})" if ids else ""
+    return (
+        f"Set aside: {_plural(count, 'encounter')} on a place the game's map table does not "
+        f"hold{named}, so wowlab cannot tell whether {'it was' if count == 1 else 'they were'} "
+        "in the open world: not counted here, as crew scan-log keeps them apart."
+    )
 
 
 class _LiveBook:
@@ -229,6 +248,9 @@ def _live_match_lines(m: live.MatchRecap, book: _LiveBook) -> list[str]:
         None: "the log shows no end yet",
     }[m.ended_by]
     kind = "Arena" if m.arena else "Match"
+    if m.unknown_map:  # M22-22: not known to be a match
+        map_id = f" (map {m.instance_id})" if m.instance_id is not None else ""
+        kind = f"A place the game's map table does not hold{map_id}"
     if m.logged:
         span = f"from {_live_when(m.start)} to {_live_when(m.end)}"
     elif m.end_at_latest is None:  # the log was off, and shows no end yet
@@ -379,6 +401,7 @@ def live_recap(
     # table for this flavor's version when it is cached.
     table = _map_table(chosen.version)
     map_words = _map_table_line(table, chosen.folder)
+    aside: list[worldpvp.WorldEncounter] = []  # set aside: maps the table does not hold
 
     match: live.MatchRecap | None = None
     match_words: str | None
@@ -431,6 +454,7 @@ def live_recap(
             matches,
             second,
             table.usable(),
+            aside,
         )
         if book_note is not None and session is not None:
             session_words = book_note
@@ -444,6 +468,9 @@ def live_recap(
         lines.append(session_words)
     if map_words is not None and owners and logs:
         lines.append(map_words)
+    aside_ids = list(dict.fromkeys(e.instance_id for e in aside if e.instance_id is not None))
+    if aside:
+        lines.append(_set_aside_words(len(aside), aside_ids))
     report = LiveRecapReport(
         flavor_folder=chosen.folder,
         account=acct.folder,
@@ -460,6 +487,8 @@ def live_recap(
         map_table=table.state,
         map_version=table.version,
         map_words=map_words,
+        world_set_aside=len(aside),
+        world_set_aside_maps=aside_ids[: worldpvp.MAX_UNKNOWN_MAPS],
     )
     if json_out:
         _emit(report)
@@ -483,6 +512,7 @@ def _live_session(
     matches: Sequence[crewbook.CrewMatch],
     second_names: bool = False,
     maps: dict[int, int] | None = None,
+    set_aside: list[worldpvp.WorldEncounter] | None = None,
 ) -> tuple[live.SessionRecap | None, str | None]:
     try:
         table = gear.load_slot_table()
@@ -544,6 +574,7 @@ def _live_session(
             pvp_maps=pvp_maps,
             second_names=second_names,
             maps=maps,
+            set_aside=set_aside,
         )
     elif before is not None:
         world_note = "the open world: wowlab does not know which characters are yours yet"

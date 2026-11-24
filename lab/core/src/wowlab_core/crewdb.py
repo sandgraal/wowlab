@@ -1243,7 +1243,9 @@ def read(
     if conn is None:
         return []
     try:
-        rows = list(_rows(conn).values())
+        # M22-22: a player only set-aside encounters hold is not listed.
+        aside = {str(k) for (k,) in conn.execute(_SQL_ASIDE_ONLY_KEYS)}
+        rows = [r for r in _rows(conn).values() if r.key not in aside]
         aliases = _aliases(rows)
         world = _world_parts(conn)
         names = _log_names(conn)
@@ -2444,6 +2446,31 @@ def _clear_temps(path: Path) -> None:
 
 
 _SQL_COUNT_PLAYERS = "SELECT count(*), coalesce(sum(in_book), 0) FROM players"
+# M22-22: a player only a set-aside encounter holds (`by_map` 2: its map not
+# in the game's map table) is kept, for a later table, but neither counted
+# nor listed: never in the game's list, no group, no match, no rating or
+# note, and no encounter that is not set aside.
+_SQL_ASIDE_ONLY_KEYS = (
+    "SELECT player_key FROM players WHERE in_book = 0 AND met = 0 AND met_seen = 0"
+    " AND allied = 0 AND faced = 0 AND allied_seen = 0 AND faced_seen = 0"
+    " AND pvp_last IS NULL AND rating IS NULL AND note IS NULL"
+    " AND player_key NOT IN (SELECT player_key FROM match_players)"
+    " AND player_key IN (SELECT p.player_key FROM world_encounter_players AS p"
+    " JOIN world_encounters AS e ON e.encounter_id = p.encounter_id WHERE e.by_map = 2)"
+    " AND player_key NOT IN (SELECT p.player_key FROM world_encounter_players AS p"
+    " JOIN world_encounters AS e ON e.encounter_id = p.encounter_id WHERE e.by_map != 2)"
+)
+_SQL_COUNT_PLAYERS_6 = (
+    "SELECT count(*), coalesce(sum(in_book), 0) FROM players WHERE player_key NOT IN"
+    " (SELECT player_key FROM players WHERE in_book = 0 AND met = 0 AND met_seen = 0"
+    " AND allied = 0 AND faced = 0 AND allied_seen = 0 AND faced_seen = 0"
+    " AND pvp_last IS NULL AND rating IS NULL AND note IS NULL"
+    " AND player_key NOT IN (SELECT player_key FROM match_players)"
+    " AND player_key IN (SELECT p.player_key FROM world_encounter_players AS p"
+    " JOIN world_encounters AS e ON e.encounter_id = p.encounter_id WHERE e.by_map = 2)"
+    " AND player_key NOT IN (SELECT p.player_key FROM world_encounter_players AS p"
+    " JOIN world_encounters AS e ON e.encounter_id = p.encounter_id WHERE e.by_map != 2))"
+)
 _SQL_COUNT_MATCHES = "SELECT count(*) FROM matches"
 
 
@@ -2483,7 +2510,10 @@ def _counts(path: Path) -> tuple[int, int, int, tuple[int, int, int] | None] | s
         version = conn.execute(_SQL_READ_VERSION).fetchone()[0]
         if version > SCHEMA:
             return "a newer wowlab wrote it; update wowlab to read it"
-        players, in_book = conn.execute(_SQL_COUNT_PLAYERS).fetchone()
+        if version >= 6:
+            players, in_book = conn.execute(_SQL_COUNT_PLAYERS_6).fetchone()
+        else:
+            players, in_book = conn.execute(_SQL_COUNT_PLAYERS).fetchone()
         (matches,) = conn.execute(_SQL_COUNT_MATCHES).fetchone()
         world: tuple[int, int, int] | None = None
         if _has_world(conn):
@@ -3538,7 +3568,8 @@ def _record_open(
     log, size, head = seen
     ident = _ident(path)
     now_ns = time.time_ns()
-    added = left_out = players_added = players_left_out = set_aside = 0
+    added = left_out = players_left_out = set_aside = 0
+    inserted: set[str] = set()  # the players this read added a row for
     foes: set[str] = set()
     allies: set[str] = set()
     with _transaction(conn):
@@ -3626,7 +3657,7 @@ def _record_open(
                 )  # fmt: skip
                 conn.execute(_SQL_PLAYER_INSERT, (row.key, *row.values()))
                 rows[p.key] = row
-                players_added += 1
+                inserted.add(p.key)
         carried, not_carried = _carry_marks(conn, rows, seen_full)
     outcome = _world_outcome("scanned", "", base).model_copy(
         update={
@@ -3635,7 +3666,7 @@ def _record_open(
             "encounters_left_out": left_out + scan.left_out,
             "opponents": len(foes),
             "allies": len(allies - foes),
-            "players_added": players_added,
+            "players_added": len(inserted & (foes | allies)),
             "players_left_out": players_left_out,
             "read_again": read_again,
             "logs_kept_old_keys": kept_old,
@@ -3671,8 +3702,11 @@ class WorldRecheck(_Model):
 def _rejudged(maps: Mapping[int, int], instance_id: object, by_map: object) -> str | None:
     """What the re-check does with one stored encounter: `world`, `aside`
     or `remove`, or None when nothing would change (one already set aside
-    whose map this table does not hold either)."""
-    state = worldpvp.ZoneState(instance_id=instance_id if isinstance(instance_id, int) else None)
+    whose map this table does not hold either, or one whose zone line gave
+    no instance id: the difficulty decided it, and still does)."""
+    if not isinstance(instance_id, int):
+        return None  # no map to look up: the difficulty decided it, and stays
+    state = worldpvp.ZoneState(instance_id=instance_id)
     if worldpvp.in_open_world(state, maps=maps):
         return "world"
     if worldpvp.unknown_map(state, maps):

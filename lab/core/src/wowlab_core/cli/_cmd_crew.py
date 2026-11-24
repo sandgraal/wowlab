@@ -1322,8 +1322,8 @@ _WORLD_NOTES = [
     "a read while you play lags behind.",
     "Only damage counts: a player who only stunned, feared or missed you is not counted yet.",
     "Dungeons, raids and battlegrounds are left out by the game's map table. A fight on a map "
-    "it does not hold is kept but set aside, counted nowhere until a later table names the "
-    "map. An arena is left out by the log's arena-match lines or a "
+    "it does not hold is kept but set aside, with its players: counted and listed nowhere until "
+    "a later table names the map. An arena is left out by the log's arena-match lines or a "
     "match wowlab keeps on its map; how the table classes this game's arenas is not yet "
     "confirmed. Without the table, the zone line decides, and a dungeon's, raid's or "
     "battleground's can look like the open world's.",
@@ -1437,26 +1437,38 @@ def _recheck_line(recheck: crewdb.WorldRecheck) -> str | None:
         )
     if not recheck.checked:
         return None
-    parts = [
-        f"removed {recheck.removed:,} that {'was' if recheck.removed == 1 else 'were'} in a "
-        "dungeon, raid, battleground or arena"
-    ]
-    if recheck.removed and recheck.players_removed:
-        parts[0] += f", and {_plural(recheck.players_removed, 'player')} only those fights held"
+    parts: list[str] = []
+    if recheck.removed:
+        removed = (
+            f"removed {recheck.removed:,} that {'was' if recheck.removed == 1 else 'were'} in a "
+            "dungeon, raid, battleground or arena"
+        )
+        if recheck.players_removed:
+            removed += f", and {_plural(recheck.players_removed, 'player')} only those fights held"
+        parts.append(removed)
     if recheck.set_aside:
         parts.append(
-            f"set aside {recheck.set_aside:,} on a map the table does not know: kept, but "
-            "counted nowhere until a later table names the map"
+            f"set aside {recheck.set_aside:,} on a map the table does not know: kept, with "
+            "their players, but counted and listed nowhere until a later table names the map"
         )
     if recheck.brought_back:
         parts.append(
             f"brought back {recheck.brought_back:,} set aside before, whose map the table now "
             "names as the open world"
         )
+    if not parts:
+        parts.append("all are the open world")
     tail = ""
-    if recheck.removed:
+    if recheck.removed or recheck.set_aside:
+        which = (
+            "removed and set aside"
+            if recheck.removed and recheck.set_aside
+            else "removed"
+            if recheck.removed
+            else "set aside"
+        )
         tail = (
-            ". The ones removed no longer count in the open-world record or toward Nemesis; the "
+            f". The ones {which} no longer count toward the open-world record or Nemesis; the "
             "copies wowlab keeps beside its crew database still hold them"
         )
     return (
@@ -1483,8 +1495,9 @@ def _map_lines(
         lines.append(
             f"  Set aside: {_plural(count, 'fight')} on a map the game's map table does not hold "
             f"({'id' if len(unknown) == 1 else 'ids'} {ids}), so wowlab cannot tell whether "
-            f"{'it was' if count == 1 else 'they were'} in the open world: kept, but counted "
-            "nowhere until a later table names the map."
+            f"{'it was' if count == 1 else 'they were'} in the open world: kept, with "
+            f"{'its' if count == 1 else 'their'} players, but counted and listed nowhere until "
+            "a later table names the map."
         )
     done = _recheck_line(recheck)
     if done is not None:

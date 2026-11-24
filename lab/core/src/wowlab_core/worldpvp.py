@@ -202,10 +202,10 @@ Shadowfang Keep, 2 on raids, 3 on battlegrounds; that 4 is an arena is
 community documentation, and no map of that build has it: not yet
 confirmed)."""
 MAX_MAPS = 100_000
+"""At most this many maps are read from the table (the recorded one has 78)."""
 MAX_UNKNOWN_MAPS = 20
 """At most this many instance ids the map table does not hold are named
 in one read (`WorldScan.unknown_maps`)."""
-"""At most this many maps are read from the table (the recorded one has 78)."""
 
 DAMAGE_EVENTS = frozenset({"SWING_DAMAGE", "RANGE_DAMAGE", "SPELL_DAMAGE", "SPELL_PERIODIC_DAMAGE"})
 WORLD_EVENTS = frozenset(
@@ -521,16 +521,16 @@ def in_open_world(
     map table (`maps`, `map_types`), on a map whose `InstanceType` there is
     `WORLD_INSTANCE_TYPE`. A map the table does not hold is not the open
     world (`unknown_map`: the zone line's difficulty cannot tell, so it is
-    not taken for one). With no table, a zone line whose difficulty is 0 is
-    taken for the open world: the rule before the map table, which counts
-    a dungeon, raid or battleground whose zone line says 0 too."""
+    not taken for one). With no table, or a zone line that gave no instance
+    id (nothing to look up), a zone line whose difficulty is 0 is taken for
+    the open world: the rule before the map table, which counts a dungeon,
+    raid or battleground whose zone line says 0 too."""
     if state.arena:
         return False
     if state.instance_id is not None and state.instance_id in pvp_maps:
         return False
-    if maps is not None:
-        kind = maps.get(state.instance_id) if state.instance_id is not None else None
-        return kind == WORLD_INSTANCE_TYPE
+    if maps is not None and state.instance_id is not None:
+        return maps.get(state.instance_id) == WORLD_INSTANCE_TYPE
     return state.difficulty == 0
 
 
@@ -542,9 +542,10 @@ def decided_by_map(state: ZoneState, maps: Mapping[int, int] | None) -> bool:
 
 def unknown_map(state: ZoneState, maps: Mapping[int, int] | None) -> bool:
     """Whether the map table was read (`maps`) and does not hold the
-    instance id `state` is on (or the zone line gave none): such a stay is
-    not the open world, and says so as unknown rather than as an instance."""
-    return maps is not None and not decided_by_map(state, maps)
+    instance id `state` is on: such a stay is not the open world, and says
+    so as unknown rather than as an instance. A zone line with no instance
+    id is not unknown: the difficulty decides it, as with no table."""
+    return maps is not None and state.instance_id is not None and state.instance_id not in maps
 
 
 # ─── encounters being built ──────────────────────────────────────────────────

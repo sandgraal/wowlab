@@ -469,7 +469,9 @@ class MatchRecap(_Model):
     inside the stay. `result` (`won`, `lost` or None) and `result_from`
     (`log`, `crew_book`, or None). `book_foes`: the crew book's scoreboard
     of that match, when it was found. `fights`: damage lines between you
-    and a player there; `lines`: lines read."""
+    and a player there; `lines`: lines read. `unknown_map`: the place is on
+    a map the game's map table does not hold (M22-22), so it is not known to
+    be a match: a place the table does not know, shown as such."""
 
     log: str
     zone: str | None
@@ -492,6 +494,7 @@ class MatchRecap(_Model):
     book_foes: list[str] = Field(default_factory=list)
     fights: int
     lines: int
+    unknown_map: bool = False
 
 
 @dataclasses.dataclass
@@ -748,6 +751,8 @@ def match_recap(
             newer = chosen[index + 1] if index < len(chosen) - 1 else None
             recap = _recap(stay, owners, upper, pvp, book, newer=newer, second_names=second_names)
             if recap is not None:
+                if worldpvp.unknown_map(stay.state, maps):
+                    recap = recap.model_copy(update={"unknown_map": True})
                 return recap
     return None
 
@@ -1139,11 +1144,14 @@ def world_since(
     max_bytes: int = SESSION_LOG_BYTES,
     second_names: bool = False,
     maps: Mapping[int, int] | None = None,
+    set_aside: list[worldpvp.WorldEncounter] | None = None,
 ) -> tuple[list[worldpvp.WorldEncounter], str | None]:
     """The open-world encounters of the logs written since `since_ns`
     (oldest first), within `max_bytes` (the newest first), and what was
     not read, in words, or None. `maps`: the game's map table, as `crew
-    scan-log` reads with it (M22-22)."""
+    scan-log` reads with it (M22-22); an encounter on a map the table does
+    not hold is not the open world and is left out, and appended to
+    `set_aside` when given, so the caller can say so."""
     budget = max_bytes
     picked: list[Path] = []
     skipped = 0
@@ -1164,13 +1172,13 @@ def world_since(
     pvp = list(pvp_maps)
     for log in reversed(picked):
         try:
-            found.extend(
-                e  # one set aside (its map not in the table) is not the open world
-                for e in worldpvp.read_world(
-                    log, owners, pvp_maps=pvp, second_names=second_names, maps=maps
-                ).encounters
-                if not e.unknown_map
-            )
+            read = worldpvp.read_world(
+                log, owners, pvp_maps=pvp, second_names=second_names, maps=maps
+            ).encounters
+            # One set aside (its map not in the table) is not the open world.
+            found.extend(e for e in read if not e.unknown_map)
+            if set_aside is not None:
+                set_aside.extend(e for e in read if e.unknown_map)
         except OSError:
             unreadable += 1
     words = []

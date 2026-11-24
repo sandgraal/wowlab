@@ -282,3 +282,10 @@ def test_constructed_read_world_and_scan_entries_agree_with_the_table(tmp_path: 
     scanned = _scan(data, maps=_maps())
     assert read.model_dump() == scanned.model_dump()
     assert (read.fights, read.outside_world) == (1, 1)
+
+
+@pytest.mark.parser
+def test_constructed_a_zone_line_with_no_instance_id_is_left_to_the_difficulty() -> None:
+    state = worldpvp.ZoneState(zone="Invented", instance_id=None, difficulty=0)
+    assert worldpvp.in_open_world(state, maps=_maps()) is True
+    assert not worldpvp.unknown_map(state, _maps())
