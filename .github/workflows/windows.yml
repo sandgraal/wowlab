@@ -6,8 +6,8 @@ name: Windows
 # (docs/LAB_PLAN.md §9; the first run caught the byte-0 lock bug on PR #59).
 #
 # Not a required check (owner decisions, ADR-0014 amendments of 2026-10-15 and
-# 2026-10-17): the job took 15 to 30 minutes and every PR waited on it. It runs
-# nightly and on demand for a branch:
+# 2026-10-17): the job took 15 to 30 minutes and every PR waited on it. It ran
+# nightly until the pause of 2026-11-24 (below), and runs on demand for a branch:
 #   gh workflow run windows.yml --ref <branch>
 # It also ran after each merge to main until 2026-11-18, when the owner made
 # it nightly only (M15-21): a run took 34 to 44 minutes, a burst of merges

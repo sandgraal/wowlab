@@ -209,6 +209,9 @@ def test_the_windows_jobs_are_paused_and_no_other_job_is() -> None:
     text = WORKFLOW.read_text(encoding="utf-8")
     assert text.count("\n    if: false\n") == len(WINDOWS_PAUSED)
     assert "PAUSED since 2026-11-24 (ADR-0031 amendment of 2026-11-24" in text
+    # The actionlint ignore below would also let a constant `if` on a step
+    # through, so no step carries an `if` at all (none did before the pause).
+    assert [(job, step.get("name")) for job, step in _steps() if "if" in step] == []
     # actionlint calls a constant condition an error; the one ignore that
     # lets `if: false` through is scoped to release.yml and to that message.
     config = yaml.safe_load((ROOT / ".github" / "actionlint.yaml").read_text(encoding="utf-8"))

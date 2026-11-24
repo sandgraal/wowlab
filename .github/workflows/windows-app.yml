@@ -1,8 +1,8 @@
 name: Windows app
 
 # Builds and smoke-tests the Windows app (M17-09, ADR-0038) without a release:
-# on a pull request that changes what the app is built from, and by hand
-# (workflow_dispatch) on any branch. It publishes nothing, holds no secret
+# by hand (workflow_dispatch) on any branch, and until the pause of 2026-11-24
+# (below) also on a pull request that changed what the app is built from. It publishes nothing, holds no secret
 # and writes nothing outside its own artifacts; the zip it uploads is kept
 # seven days for a person to try. The release itself builds the app in
 # release.yml, from the tag's wheel, with the same steps as the

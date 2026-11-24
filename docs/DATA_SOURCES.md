@@ -229,8 +229,8 @@ it (read from the run logs on 2026-11-24; the pytest steps print skips only,
   where the test expects 0). Not diagnosed: the likely cause is the
   database being removed or replaced while a connection still holds it
   open, which Windows refuses and POSIX allows **[verify]**.
-  The nightly of 2026-11-23 failed both the same way.
-- **The lab-addon mutation probes, by 2026-11-23.** The nightly of
+  The nightlies of 2026-11-23 and 2026-11-24 failed both the same way.
+- **The lab-addon mutation probes, on 2026-11-23 only.** The nightly of
   2026-11-23 (run 45147243198, 7 failed, 12,985 passed, 1,126 skipped) added
   five probe failures under `lab/core/tests/review/`:
   `test_m20_14_kept_rules_miss_a_method_cut_note_and_a_non_unit_tooltip_hook.py`
@@ -240,7 +240,11 @@ it (read from the run logs on 2026-11-24; the pytest steps print skips only,
   `ModuleNotFoundError: No module named 'test_crew_book'` when the probe
   loads its graders, and the xdist worker running
   `test_m20_13_kept_rules_miss_a_new_gather_path_and_an_own_value_outside_identity.py::test_positive_control_is_rejected[control-own-guid-stored-untested-in-identity]`
-  crashed. The same probes pass in the Linux CI.
+  crashed. The same probes pass in the Linux CI, and the next nightly did
+  not fail them.
+- **The last nightly before the pause,** 2026-11-24 (run 45364911855): 2
+  failed, 13,571 passed, 1,126 skipped; the two failures were the two
+  crew-database tests above, and nothing else.
 
 To resume: put the two triggers back and delete the three `if: false`
 lines (each workflow's header comment says how, and

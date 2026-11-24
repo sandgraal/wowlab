@@ -349,8 +349,9 @@ jobs:
   # same spec as the macOS app. Like `app`, this job never runs what it
   # built: it hashes the zip and uploads it, and `windows_app_smoke` runs it.
   # The steps of this job and of `windows_app_smoke` are the same, step for
-  # step, as those of windows-app.yml, which builds the app on a pull request
-  # that changes it or by hand (tests/packaging/test_windows_app.py). Bash
+  # step, as those of windows-app.yml, which builds the app by hand (and until
+  # the pause below, on a pull request that changed it;
+  # tests/packaging/test_windows_app.py). Bash
   # (Git for Windows), so the checks read as the macOS jobs' do.
   #
   # PAUSED since 2026-11-24 (ADR-0031 amendment of 2026-11-24, owner
