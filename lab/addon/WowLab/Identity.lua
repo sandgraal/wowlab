@@ -204,7 +204,9 @@ ns.Section({
                 if keptSecond then
                     record.second_name = ns.String(keptSecond)
                     record.second_name_from = "full_name"
-                    realmWhy = realmWhy .. "; the second return of UnitFullName is the second name"
+                    realmWhy = realmWhy
+                        .. "; the second return of UnitFullName, kept as `second_name`"
+                        .. " (taken to be the second name, not yet confirmed)"
                 else
                     realmWhy = realmWhy .. "; " .. ns.String(whySecond)
                 end

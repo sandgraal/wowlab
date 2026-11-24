@@ -302,7 +302,9 @@ def test_m20_17_the_crew_home_realm_is_one_rule_for_every_key() -> None:
     assert text.count("GetNormalizedRealmName ( )") == 1
     assert "UnitFullName" not in text
     assert text.count('string . gsub ( normalized , "[%s%-]" , "" )') == 1
-    assert text.count("homeRealm ( )") == 6  # the definition and five uses
+    # The definition and four uses (fix round 1 of M21-11: `/wowlab crew`
+    # no longer asks it; its line counts the members skipped instead).
+    assert text.count("homeRealm ( )") == 5
     assert text.count("local home = homeRealm ( )") == 3
     assert "local home , hidden = homeRealm ( )" in text
     # Kept only once found: the cache is set only to a non-empty bare text.
@@ -310,8 +312,8 @@ def test_m20_17_the_crew_home_realm_is_one_rule_for_every_key() -> None:
     assert text.count("homeFound =") == 2  # and its declaration, `= nil`
     assert "local homeFound = nil" in text
     assert text.count('if bare ~= "" then homeFound = bare return homeFound , false end') == 1
-    # `/wowlab crew` says when no home realm could be found.
-    assert "if homeRealm ( ) == nil then missing = missing .." in text
+    # `/wowlab crew` says how many members were skipped for want of one.
+    assert "if noSecond > 0 then missing = missing .." in text
 
 
 def test_m20_17_identity_keeps_what_the_other_realm_sources_gave() -> None:

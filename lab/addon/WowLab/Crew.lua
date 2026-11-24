@@ -371,6 +371,19 @@ local function addSkipped()
     WowLabCrewDB.skipped = (ns.Number(WowLabCrewDB.skipped) or 0) + 1
 end
 
+-- M21-11: a member the game named with no second part (no second name on
+-- Forever, no realm elsewhere) while no home realm was found is skipped, and
+-- counted here, so the owner's check can see whether it happens [verify].
+local function addNoSecond()
+    if not crewOn() then
+        return
+    end
+    if crewBlocked() then
+        return
+    end
+    WowLabCrewDB.no_second = (ns.Number(WowLabCrewDB.no_second) or 0) + 1
+end
+
 -- Why the book cannot record at all, or nil.
 local function featureMissing()
     if not crewOn() then
@@ -444,10 +457,13 @@ local function fieldsMissing()
         return
     end
     local missing = ""
-    if homeRealm() == nil then
+    -- M21-11: said only when a member was skipped that way (addNoSecond).
+    local noSecond = ns.Number(WowLabCrewDB.no_second) or 0
+    if noSecond > 0 then
         missing = missing
-            .. " Players the game names without a realm are skipped: no home realm could be found"
-            .. " (GetNormalizedRealmName gave none)."
+            .. " "
+            .. noSecond
+            .. " players came back with no second name or realm and were skipped (not yet confirmed)."
     end
     if type(UnitClass) ~= "function" then
         missing = missing .. " No class: the client has no UnitClass function."
@@ -838,6 +854,10 @@ local function readMember(unit)
                 addSkipped()
                 return
             end
+            -- M21-11: with no home realm the member is skipped, and counted.
+            if home == nil then
+                addNoSecond()
+            end
             if type(home) == "string" then
                 local key = name .. "-" .. home
                 entry = admit(key)
@@ -1189,6 +1209,9 @@ local function recordMatch()
     -- Each row's key, built as a group member's is; the own row left out.
     local keys = {}
     local ownAt = nil
+    -- M21-11: rows whose name has no second part while no home realm was
+    -- found get no key; counted in the match record as `rows_unkeyed`.
+    local unkeyed = 0
     for i = 1, #rows do
         local score = rows[i]
         local name = score.name
@@ -1198,6 +1221,8 @@ local function recordMatch()
                 key = name
             elseif home ~= nil then
                 key = name .. "-" .. home
+            else
+                unkeyed = unkeyed + 1
             end
         end
         local isOwn = (ownKey ~= nil and key == ownKey) or (mine ~= nil and score.guid == mine)
@@ -1311,6 +1336,9 @@ local function recordMatch()
     local record = { at = now, map = ns.String(mapName), map_id = mapId, kind = matchKind, team = team, foes = foes }
     if result ~= nil then
         record.won = result
+    end
+    if unkeyed > 0 then
+        record.rows_unkeyed = unkeyed
     end
     if type(WowLabCrewDB.matches) ~= "table" then
         WowLabCrewDB.matches = {}

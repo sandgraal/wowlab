@@ -3863,6 +3863,9 @@ def _binding_set_words(record: Bindings) -> str:
     if which is None:
         return "not returned"
     sets = record.binding_sets if isinstance(record, BindingsV5) else None
+    if sets is not None and not sets:
+        # The client's table had no member the addon could keep.
+        return f"{which} (no binding set recorded)"
     if sets is not None:
         for member, words in BINDING_SET_WORDS.items():
             if sets.get(member) == which:
@@ -4061,12 +4064,14 @@ NO_GUILD_REASONS = (
 # Where a normalized realm came from (Identity.lua, `realm_from`; M20-16).
 REALM_SOURCE_WORDS = {
     "normalized_realm_name": "the game gave no realm name with spaces",
-    # Written only by the M20-16 to M20-19 addons (M21-11).
-    "full_name": (
-        "taken from the character's full name, where it is probably the second name; the "
-        "game gave no realm name"
-    ),
 }
+# M21-11: `realm_from = "full_name"` was written only by the M20-16 to M20-19
+# addons; on Forever that value is very likely the second name, so it is
+# shown as either, never as a realm written without spaces.
+FULL_NAME_REALM_WORDS = (
+    "realm or second name {value} (from the character's full name; probably the second "
+    "name [verify]{tried})"
+)
 
 
 def _own_lines(char: CharDBV5, render: Callable[[str], str] = str) -> list[str]:
@@ -4086,6 +4091,9 @@ def _own_lines(char: CharDBV5, render: Callable[[str], str] = str) -> list[str]:
                         "realm given) [verify]"
                     )
                 )
+            elif name == "realm" and value is not None and section.realm_from == "full_name":
+                tried = f"; {section.realm_tried}" if section.realm_tried is not None else ""
+                parts.append(render(FULL_NAME_REALM_WORDS.format(value=value, tried=tried)))
             elif name == "realm" and value is not None and section.realm_normalized:
                 where = REALM_SOURCE_WORDS.get(section.realm_from or "", "source not recorded")
                 if section.realm_tried is not None:

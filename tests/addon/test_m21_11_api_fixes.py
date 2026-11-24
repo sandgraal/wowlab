@@ -81,7 +81,7 @@ SCORE_FALLBACK = (
 )
 IS_LOGGING = 'local isLogging = ns . Fn ( C_ChatInfo , "IsLoggingCombat" )'
 LOG_STATE = (
-    f"function logState ( ) {IS_LOGGING} "
+    f"function logState ( ) stateFrom = nil {IS_LOGGING} "
     "if isLogging then local okIs , onIs = pcall ( isLogging ) "
     'if okIs and type ( onIs ) == "boolean" then stateFrom = "IsLoggingCombat" '
     "return onIs end end "
@@ -115,6 +115,25 @@ HOME_REALM = (
     'if bare ~= "" then homeFound = bare return homeFound , false end end end '
     "return nil , hidden end"
 )
+ADD_NO_SECOND = (
+    "function addNoSecond ( ) if not crewOn ( ) then return end "
+    "if crewBlocked ( ) then return end "
+    "WowLabCrewDB . no_second = ( ns . Number ( WowLabCrewDB . no_second ) or 0 ) + 1 end"
+)
+MEMBER_NO_SECOND = (
+    "local home , hidden = homeRealm ( ) if home == nil and hidden then addSkipped ( ) "
+    "return end if home == nil then addNoSecond ( ) end"
+)
+NO_SECOND_LINE = (
+    "local noSecond = ns . Number ( WowLabCrewDB . no_second ) or 0 if noSecond > 0 then "
+    'missing = missing .. " " .. noSecond .. " players came back with no second name or '
+    'realm and were skipped (not yet confirmed)." end'
+)
+ROWS_UNKEYED = (
+    "local unkeyed = 0",
+    'elseif home ~= nil then key = name .. "-" .. home else unkeyed = unkeyed + 1 end',
+    "if unkeyed > 0 then record . rows_unkeyed = unkeyed end",
+)
 IDENTITY_SECOND_NAME = (
     "if not record . realm then "
     'if type ( UnitFullName ) ~= "function" then '
@@ -124,7 +143,8 @@ IDENTITY_SECOND_NAME = (
     '"the second return of UnitFullName" ) '
     "if keptSecond then record . second_name = ns . String ( keptSecond ) "
     'record . second_name_from = "full_name" '
-    'realmWhy = realmWhy .. "; the second return of UnitFullName is the second name" '
+    'realmWhy = realmWhy .. "; the second return of UnitFullName, kept as `second_name`" '
+    '.. " (taken to be the second name, not yet confirmed)" '
     'else realmWhy = realmWhy .. "; " .. ns . String ( whySecond ) end end end'
 )
 
@@ -167,7 +187,7 @@ def pin_problems(
         problems.append("CombatLog.lua: IsLoggingCombat is reached other than by the two reads")
     for name in ("stateFrom", "advancedFrom"):
         sets = len(re.findall(rf"(?<![\w.]){name} = ", text))
-        if sets != {"stateFrom": 3, "advancedFrom": 5}[name]:
+        if sets != {"stateFrom": 4, "advancedFrom": 5}[name]:
             problems.append(f"CombatLog.lua: {name} is set other than by its read")
     flow = _flow(crew)
     text = g._render(flow.tokens)
@@ -177,6 +197,19 @@ def pin_problems(
         problems.append("Crew.lua: UnitFullName is asked again")
     if text.count(SCORE_FALLBACK) != 1 or text.count("side = packed [ 6 ]") != 1:
         problems.append("Crew.lua: the scoreboard probe takes the sixth value without a row")
+    # Fix round 1 (domain review): a skip for want of a home realm is
+    # counted, on the book and on the match record, and said only then.
+    if g._body(flow, "addNoSecond") != ADD_NO_SECOND or text.count("addNoSecond ( )") != 2:
+        problems.append("Crew.lua: a member skipped for no second part is not counted once")
+    if MEMBER_NO_SECOND not in g._body(flow, "readMember"):
+        problems.append("Crew.lua: readMember does not count a member skipped for no second part")
+    if NO_SECOND_LINE not in g._body(flow, "fieldsMissing"):
+        problems.append("Crew.lua: the skipped line is not said only after a skip")
+    if "home realm" in g._body(flow, "fieldsMissing"):
+        problems.append("Crew.lua: the skipped line still speaks of a home realm")
+    for piece in ROWS_UNKEYED:
+        if text.count(piece) != 1:
+            problems.append(f"Crew.lua: the match record's unkeyed rows: {piece!r}")
     text = _text(identity)
     if text.count(IDENTITY_SECOND_NAME) != 1:
         problems.append("Identity.lua: the second name is not the pinned read")
@@ -293,8 +326,42 @@ def test_m21_11_the_one_chat_info_read_is_the_only_one() -> None:
             "    local isLogging = C_ChatInfo.IsLoggingCombat\n    if isLogging then\n"
             "        local okIs, onIs",
         ),
+        # Fix round 1 (security review): an index by string.
+        (
+            '    local isLogging = ns.Fn(C_ChatInfo, "IsLoggingCombat")\n    if isLogging then\n'
+            "        local okIs, onIs",
+            '    local isLogging = C_ChatInfo["SendAddonMessage"]\n    if isLogging then\n'
+            "        local okIs, onIs",
+        ),
+        # The table bound to a local.
+        (
+            "local function logState()\n",
+            "local function logState()\n    local c = C_ChatInfo\n",
+        ),
+        # The field name built from two strings.
+        (
+            '    local isLogging = ns.Fn(C_ChatInfo, "IsLoggingCombat")\n    if isLogging then\n'
+            "        local okIs, onIs",
+            '    local isLogging = ns.Fn(C_ChatInfo, "IsLogging" .. "Combat")\n'
+            "    if isLogging then\n        local okIs, onIs",
+        ),
+        # The same text through another table's `ns`.
+        (
+            '    local isLogging = ns.Fn(C_ChatInfo, "IsLoggingCombat")\n    if isLogging then\n'
+            "        local okIs, onIs",
+            '    local isLogging = t.ns.Fn(C_ChatInfo, "IsLoggingCombat")\n    if isLogging then\n'
+            "        local okIs, onIs",
+        ),
     ],
-    ids=["constructed-second-use", "constructed-other-field", "constructed-direct"],
+    ids=[
+        "constructed-second-use",
+        "constructed-other-field",
+        "constructed-direct",
+        "constructed-string-index",
+        "constructed-local-alias",
+        "constructed-joined-name",
+        "constructed-field-ns",
+    ],
 )
 def test_m21_11_constructed_other_chat_info_uses_stay_refused(
     old: str, new: str, tmp_path: Path
@@ -541,6 +608,7 @@ class LogModel:
         return True, tuple(self.c.is_logging)
 
     def log_state(self) -> bool | None:
+        self.state_from = None
         if self.c.is_logging is not None:
             ok, values = self._is_logging()
             on = values[0] if values else None
@@ -638,6 +706,17 @@ def test_m21_11_advanced_flag(
     model = LogModel(client)
     assert model.advanced_on() is advanced
     assert model.advanced_from == advanced_from
+
+
+def test_m21_11_a_later_unknown_state_clears_its_source() -> None:
+    """Fix round 1: `state_from` names the call that answered at the last
+    read, and nothing when neither did."""
+    model = LogModel(LogClient((True, True)))
+    assert model.log_state() is True
+    assert model.state_from == "IsLoggingCombat"
+    model.c.is_logging, model.c.logging = (None, None), None
+    assert model.log_state() is None
+    assert model.state_from is None
 
 
 def test_m21_11_a_later_unknown_flag_clears_the_source() -> None:
@@ -750,3 +829,104 @@ def test_m21_11_the_second_name_is_never_a_realm(
     client.calls.clear()
     assert home_realm(client) == home
     assert client.calls == ["GetNormalizedRealmName"]
+
+
+# The crew book's skips for want of a home realm (fix round 1) -------------
+
+
+@dataclass
+class Book:
+    """WowLabCrewDB's counters and keys, as readMember, fieldsMissing and
+    the match pass touch them."""
+
+    skipped: int = 0
+    no_second: int = 0
+    keys: list[str] = field(default_factory=list)
+
+
+def read_member(book: Book, name: str, second: Any, home: tuple[str | None, bool]) -> None:
+    """readMember's keying, line for line from the name test on: `second`
+    is UnitName's second value, `home` what homeRealm gave."""
+    if isinstance(second, str) and second != "":
+        book.keys.append(f"{name}-{second}")
+        return
+    realm, hidden = home
+    if realm is None and hidden:
+        book.skipped += 1
+        return
+    if realm is None:
+        book.no_second += 1
+    if isinstance(realm, str):
+        book.keys.append(f"{name}-{realm}")
+
+
+def fields_missing_line(book: Book) -> str:
+    if book.no_second > 0:
+        return (
+            f" {book.no_second} players came back with no second name or realm and were "
+            "skipped (not yet confirmed)."
+        )
+    return ""
+
+
+def score_keys(names: list[Any], home: str | None) -> tuple[list[str | None], int | None]:
+    """The match pass's row keys and `rows_unkeyed` (None when none)."""
+    keys: list[str | None] = []
+    unkeyed = 0
+    for name in names:
+        key = None
+        if isinstance(name, str) and name != "":
+            if "-" in name:
+                key = name
+            elif home is not None:
+                key = f"{name}-{home}"
+            else:
+                unkeyed += 1
+        keys.append(key)
+    return keys, (unkeyed if unkeyed > 0 else None)
+
+
+def test_m21_11_a_member_with_a_second_name_is_keyed_by_it() -> None:
+    """Forever as the owner saw it: UnitName gives "Tay", "Soulrend"."""
+    book = Book()
+    read_member(book, "Tay", "Soulrend", (None, False))
+    assert book.keys == ["Tay-Soulrend"]
+    assert book.no_second == 0
+    assert fields_missing_line(book) == ""
+
+
+def test_m21_11_a_member_with_no_second_part_is_counted_and_said() -> None:
+    book = Book()
+    read_member(book, "Tay", None, (None, False))
+    read_member(book, "Rizz", "", (None, False))
+    assert book.keys == [] and book.no_second == 2 and book.skipped == 0
+    assert fields_missing_line(book) == (
+        " 2 players came back with no second name or realm and were skipped (not yet confirmed)."
+    )
+
+
+def test_m21_11_a_secret_home_is_a_skip_not_a_missing_second_name() -> None:
+    book = Book()
+    read_member(book, "Tay", None, (None, True))
+    assert (book.skipped, book.no_second) == (1, 0)
+
+
+def test_m21_11_a_home_realm_keys_a_member_as_before() -> None:
+    book = Book()
+    read_member(book, "Tay", None, ("InventedRealm", False))
+    assert book.keys == ["Tay-InventedRealm"] and book.no_second == 0
+
+
+@pytest.mark.parametrize(
+    ("names", "home", "keys", "unkeyed"),
+    [
+        (["Tay-Soulrend", "Rizz-Other"], None, ["Tay-Soulrend", "Rizz-Other"], None),
+        (["Tay", "Rizz-Other", None], None, [None, "Rizz-Other", None], 1),
+        (["Tay", "Rizz"], "Home", ["Tay-Home", "Rizz-Home"], None),
+    ],
+    ids=["constructed-dashed", "constructed-no-home", "constructed-home"],
+)
+def test_m21_11_scoreboard_rows_with_no_key_are_counted(
+    names: list[Any], home: str | None, keys: list[str | None], unkeyed: int | None
+) -> None:
+    assert score_keys(names, home) == (keys, unkeyed)

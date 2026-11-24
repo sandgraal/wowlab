@@ -17,12 +17,13 @@ record (the real 70450 schema-4 record with the schema-5 keys added the way
 
 from __future__ import annotations
 
+import types
 from typing import Any
 
 import pytest
 import test_m20_16_schema_5_first_run as m16
 
-from wowlab_core import labaddon
+from wowlab_core import cli, labaddon
 
 # The members of Enum.BindingSet in the API list at 70938.
 BINDING_SETS = {"Default": 0, "Account": 1, "Character": 2, "Current": 3}
@@ -94,6 +95,17 @@ def test_constructed_bindings_without_the_enum_keep_the_old_words() -> None:
         "binding set 2 (the client's raw value; which number is the account's and which the "
         "character's was not recorded)"
     ) in _bindings_line(raw)
+
+
+def test_constructed_an_empty_binding_sets_claims_nothing() -> None:
+    """Fix round 1: a client table with no member the addon kept names no
+    set and does not call the number the client's raw value."""
+    raw = m16._raw()
+    raw["bindings"]["binding_set"] = 1
+    raw["bindings"]["binding_sets"] = {}
+    line = _bindings_line(raw)
+    assert "binding set 1 (no binding set recorded)" in line
+    assert "raw value" not in line
 
 
 def test_constructed_a_bad_binding_sets_member_is_refused() -> None:
@@ -201,12 +213,48 @@ def test_constructed_an_unknown_second_name_source_is_refused() -> None:
         labaddon.load_char(raw)
 
 
-def test_constructed_an_earlier_full_name_realm_still_reads() -> None:
-    """A file the M20-16 to M20-19 addons wrote (`realm_from = "full_name"`)
-    is read as before; the words say the value is probably the second name."""
+def _full_name_raw() -> dict[str, Any]:
+    """As the M20-16 to M20-19 addons wrote identity on Forever: the full
+    name's second value as the realm (`realm_from = "full_name"`)."""
     raw = m16._raw()
     raw["identity"].update(
         {"realm": "Inventedsecond", "realm_from": "full_name", "realm_normalized": True}
     )
-    text = "\n".join(labaddon.describe(m16._char(raw)))
-    assert "where it is probably the second name" in text
+    return raw
+
+
+def test_constructed_an_earlier_full_name_realm_still_reads() -> None:
+    """Such a file is read as before; `char show` calls the value a realm or
+    second name, probably the second name, and not a realm written without
+    spaces."""
+    lines = labaddon.describe(m16._char(_full_name_raw()))
+    character = next(line for line in lines if line.startswith("Character: "))
+    assert (
+        "realm or second name Inventedsecond (from the character's full name; probably the "
+        "second name [verify])"
+    ) in character
+    assert "written without spaces" not in character
+
+
+def _owners(raw: dict[str, Any], monkeypatch: pytest.MonkeyPatch) -> dict[str, str | None]:
+    files = [types.SimpleNamespace(record=m16._char(raw))]
+    monkeypatch.setattr(labaddon, "read_all", lambda lay, account=None: files)
+    owners, without = cli._owner_guids(None, "ACCOUNT")  # type: ignore[arg-type]
+    assert without == 0
+    return owners
+
+
+def test_constructed_scan_log_takes_no_home_realm_from_the_full_name(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`crew scan-log` keys a log name without a realm on your stored realm;
+    an older record's `realm_from = "full_name"` value is very likely your
+    second name, so it is not taken as one."""
+    assert _owners(_full_name_raw(), monkeypatch) == {m16.GUID: None}
+
+
+def test_constructed_scan_log_keeps_a_realm_a_realm_call_gave(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Control: a realm from GetRealmName is still the home realm."""
+    assert _owners(m16._raw(), monkeypatch) == {m16.GUID: "Invented Realm"}

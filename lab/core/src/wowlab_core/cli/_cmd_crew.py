@@ -137,6 +137,8 @@ class CrewReport(_Out):
     probe_loads: int | None
     skipped: int | None
     current_count: int
+    # M21-11: members skipped for no second name or realm (the book's count).
+    no_second: int | None = None
     total: int
     sort: CrewSort
     rated: crewbook.RatedFilter | None
@@ -596,6 +598,7 @@ def crew_list(
         probe_loads=book.probe_loads,
         skipped=book.skipped,
         current_count=book.current_count,
+        no_second=book.no_second,
         total=len(kept) + len(_unread(book)),
         sort=sort,
         rated=rated,
@@ -1198,7 +1201,13 @@ def _owner_guids(lay: layout.Layout, account: str) -> tuple[dict[str, str | None
         ):
             guid = record.identity.guid
             if isinstance(guid, str) and crewbook.guid_shaped(guid):
-                owners[guid] = record.identity.realm
+                # M21-11: an older addon's `realm_from = "full_name"` holds the
+                # full name's second value, very likely the second name on
+                # Forever, never a home realm for a log name without one.
+                realm = record.identity.realm
+                if record.identity.realm_from == "full_name":
+                    realm = None
+                owners[guid] = realm
                 continue
         if record is not None:
             without += 1

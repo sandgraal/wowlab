@@ -760,7 +760,11 @@ fires `ZONE_CHANGED_NEW_AREA` before the 15 s check; the setting's name
 `advancedCombatLogging`; since M21-11, that `C_ChatInfo.IsLoggingCombat`
 answers addons with the log's state and the advanced flag (read first;
 `state_from` and `advanced_from` in the record say which call answered,
-`LoggingCombat()` and the setting being the fallbacks). The owner's first run should check: the chat lines
+`LoggingCombat()` and the setting being the fallbacks); and whether
+`C_ChatInfo.IsLoggingCombat`, which the switch also asks in combat (at the
+start of a fight, as it asked `LoggingCombat()` before), ever answers with
+a secret value there: its answers are tested with `type` only, as
+`LoggingCombat()`'s are (2026-11-23, M21-11). The owner's first run should check: the chat lines
 at login, an instance and an idle; a switch in combat; and how many files
 `Logs/` holds after a session.
 
@@ -889,7 +893,11 @@ by 2 s, and once 15 s after entering the world (so `/wowlab crew off` can be
 typed first); never in combat or when that cannot be asked, and again at
 `PLAYER_REGEN_ENABLED`. `raid1` to `raid40` in a raid, `party1` to `party4`
 otherwise; you are skipped with `UnitIsUnit`. A realm that comes back nil
-or empty is your own (`GetNormalizedRealmName`). A name that is nil or the
+or empty is your own (`GetNormalizedRealmName`). *2026-11-23 (M21-11):* on
+Forever that second value is the member's second name, and when
+`GetNormalizedRealmName` gives nothing a member whose second value is nil
+or empty is skipped and counted in the book's `no_second`; `/wowlab crew`
+then says how many [verify]. A name that is nil or the
 client's "unknown" text is tried again later. Every value read goes
 through `issecretvalue` where the client has it: a secret name or realm
 skips the member, any other secret value leaves its field as it was, and
@@ -966,6 +974,12 @@ battleground and an arena, whether a winner is reported before the player
 is moved out, and whether a scoreboard value is a secret value. Confirmed
 from the repository only: the migration, the limits and the near-full
 test, by reading the code (the static checks in `tests/addon`).
+*2026-11-23 (M21-11), for the M20-06 check:* with no home realm (Forever,
+where `GetNormalizedRealmName` gave nothing on the owner's runs) the
+player's own scoreboard row is recognised by its GUID alone, since no
+`<name>-<home realm>` key can be built for it; and a row whose name has no
+`-` gets no key and is counted in the match record's `rows_unkeyed`. Both
+are [verify] until a battleground on Forever.
 
 ## Lint
 
@@ -1187,7 +1201,7 @@ on from one, fails the test until someone lists it on purpose.
 | `IsInRaid` | crew book: `raidN` units in a raid, `partyN` otherwise; combatlog: a raid group turns the log off | [verify] | yes |
 | `UnitIsUnit` | crew book: the owner skipped (`raidN` includes the owner), never by comparing names; the target is not the owner | [verify] | yes |
 | `UnitIsPlayer` | crew book: `/wowlab crew good`, `bad`, `clear` and `note` use the target only when it is a player; the tooltip line is shown only for a player (`mouseover`) | [verify] | yes |
-| `UnitName` | crew book: a member's or the target's name and realm (nil or empty realm: the owner's own); identity (schema 5): the character's `name` | [verify] | yes |
+| `UnitName` | crew book: a member's or the target's name and realm (nil or empty realm: the owner's own when `GetNormalizedRealmName` gives one, else the member is skipped and counted in `no_second`, M21-11); identity (schema 5): the character's `name`. *2026-11-23 (M21-11):* on Forever the second value is the second name, not a realm (the owner's `UnitName("target")` gave `"Tay", "Soulrend"`), so a key there is `<First>-<Second>` | [verify] | yes |
 | `GetRealmName` | identity (schema 5): the character's `realm`, as its display name; gave nothing usable at the first pass on the owner's run on 71037 (2026-11-20), so two fallbacks follow it (M20-16) | [verify] | yes |
 | `GetNormalizedRealmName` | crew book: the owner's realm, for a member whose realm comes back nil or empty (since M21-11 the only source: with none, such a member is skipped); identity (M20-16): the character's `realm` when `GetRealmName` gives none (`realm_from = "normalized_realm_name"`) | [verify] | yes |
 | `UnitFullName` | identity (M21-11): its second return, for the player only, when neither realm call gives a realm, kept as `second_name` (`second_name_from = "full_name"`), never as the realm; from M20-16 to M21-11 it was the `realm` (`realm_from = "full_name"`), and from M20-17 to M21-11 the crew book's home realm when `GetNormalizedRealmName` gave none. On Forever the realm slot of a unit name holds the second name (the owner's `UnitName("target")`, 2026-11-23) | [verify]: `/dump UnitFullName("player")` and `/dump GetNormalizedRealmName()` (M22-O1) | yes |

@@ -75,7 +75,7 @@ HASHED = {
     "turn": "78ff540ad54d94993dfa0e58a735119c730265ffa6c4425a460a3c97c48f73a1",
     "turnOn": "534838797f8a6f26f9cff024a27a49c4ba0046d82da94f756c398aac416da991",
     "noted": "0e36c3a46268186517e100c77a6054ab15d24825a3db671dea83b79aaf47b5d1",
-    "logState": "ff6b9ba4bd28ccff82c0b2081b687f946f062829a561d393106803c89dae6058",
+    "logState": "a63ff61238d5f4feb0384c777fd9fcae2080af2294d5fc7c9f9264caadf28931",
     "place": "3f4da679586b0e01b9c389ddc1fc7b041e8f01a540722eaeb0447f555070e6a9",
     "inCombatNow": "7c30f6318c8fef757bc9fed6bd633d0d1bda542e749857a59bcfdfc629f82765",
     "readBack": "0322b4e0ed7cbf91eef704dc622ac75351805c5f8ca691225953ef2a818bbae7",
@@ -354,6 +354,7 @@ class Switch:
         self.mine = held.get("mine") is True
 
     def log_state(self) -> bool | None:
+        self.state_from = None
         # M21-11: the documented C_ChatInfo.IsLoggingCombat first.
         if self.c.has_is_logging:
             on_is, _ = self.c.is_logging_combat()

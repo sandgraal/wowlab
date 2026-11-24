@@ -196,8 +196,8 @@ def test_the_real_schema_4_action_bars_keep_the_old_words() -> None:
             True,
             # M21-11: only an earlier addon wrote this source; on Forever the
             # value is very likely the second name.
-            "realm InventedRealm (written without spaces: taken from the character's full "
-            "name, where it is probably the second name; the game gave no realm name), ",
+            "realm or second name InventedRealm (from the character's full name; probably "
+            "the second name [verify]), ",
         ),
     ],
     ids=["constructed-realm-name", "constructed-normalized", "constructed-full-name"],

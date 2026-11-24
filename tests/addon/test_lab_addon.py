@@ -679,7 +679,9 @@ CHAT_INFO_READ = 'ns . Fn ( C_ChatInfo , "IsLoggingCombat" )'
 
 def _chat_info_reads(path: Path, tokens: list[Token]) -> set[int]:
     """The indices of the C_ChatInfo tokens of the allowed lookup: none
-    outside CombatLog.lua, and each only where it stands in CHAT_INFO_READ."""
+    outside CombatLog.lua, and each only where it stands in CHAT_INFO_READ,
+    with `ns` itself not a field (fix round 1: `t.ns.Fn(C_ChatInfo, ...)`
+    is some other table's function, refused)."""
     if path.name != CHAT_INFO_FILE:
         return set()
     return {
@@ -689,6 +691,7 @@ def _chat_info_reads(path: Path, tokens: list[Token]) -> set[int]:
         and t.text == "C_ChatInfo"
         and i >= 4
         and _render(tokens[i - 4 : i + 4]) == CHAT_INFO_READ
+        and (i == 4 or tokens[i - 5].text not in {".", ":"})
     }
 
 

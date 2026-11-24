@@ -113,7 +113,7 @@ local arrivedAt = nil -- time() of the last loading screen
 local fighting = false
 local logOn = nil -- the log's state at the last check
 local advanced = nil -- Advanced Combat Logging at the last switch on
-local stateFrom = nil -- the call that last said the log's state (M21-11)
+local stateFrom = nil -- the call that said the log's state at the last read (M21-11)
 local advancedFrom = nil -- where `advanced` came from (M21-11)
 local told = {}
 
@@ -179,8 +179,9 @@ end
 -- neither. M21-11: the documented C_ChatInfo.IsLoggingCombat first (its
 -- first return; 71037 API documentation), else LoggingCombat() with no
 -- argument, which has no entry there; `stateFrom` names the one that
--- answered. Both [verify].
+-- answered, and is cleared when neither did. Both [verify].
 local function logState()
+    stateFrom = nil
     -- The one name of C_ChatInfo the addon reads (M21-11): tests/addon allows
     -- this lookup and no other use of the table, whose sends stay refused.
     local isLogging = ns.Fn(C_ChatInfo, "IsLoggingCombat")
