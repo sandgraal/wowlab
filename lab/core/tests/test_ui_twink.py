@@ -173,9 +173,11 @@ def test_the_links_are_static_markup_with_no_href() -> None:
     # The one sink's helper: its definition and its calls, each given an
     # address `outsideAddress` returned for that link's own site (the
     # dressing room, the three saved links, the planner, the Wowhead link,
-    # since M21-06 See my look, graded in test_ui_purist.py, and since
-    # M21-07 Open my talents, test_ui_talents.py).
-    assert script.count("pointLink(") == 7
+    # and M21-04's `pointOutside`, which every profile, guild and gear-row
+    # link goes through; test_ui_char_links.py; and since M21-06 See my
+    # look, graded in test_ui_purist.py; and since M21-07 Open my talents,
+    # test_ui_talents.py).
+    assert script.count("pointLink(") == 8
     assert script.count("function pointLink(link, checked) {") == 1
     for call, checked in (
         ("pointLink(link, checked);", "const checked = dressingAddress(dressing.url);"),
@@ -189,6 +191,7 @@ def test_the_links_are_static_markup_with_no_href() -> None:
             'const planner = outsideAddress(panel.planner, "forevertwinking");',
         ),
         ("pointLink(link, address);", 'outsideAddress(c.wowhead, "wowhead")'),
+        ("pointLink(anchor, checked);", "const checked = outsideAddress(url, site);"),
     ):
         assert script.count(call) == (3 if call == "pointLink(link, checked);" else 1), call
         assert script.count(checked) == 1, checked

@@ -430,6 +430,17 @@ pre:empty { display: none; }
   padding: 0; color: var(--gear-text); background: none; border: none; overflow-wrap: anywhere; unicode-bidi: isolate;
 }
 .gear-name[aria-expanded="true"] { text-decoration: underline; text-underline-offset: 3px; }
+/* an item name that is its Wowhead link (M21-04), with the outbound mark;
+   a name with no link is plain text, and the Details button opens the row */
+span.gear-name { cursor: auto; }
+.gear-wowhead { text-decoration: underline; text-underline-offset: 3px; }
+.gear-wowhead::after { content: "\2197" / ""; margin-left: var(--space-1); }
+.gear-more {
+  flex: none; min-height: 32px; padding: 0 var(--space-2); cursor: pointer; font-size: 13px; font-weight: 500;
+  color: var(--gear-muted); background: none; border: 1px solid var(--line); border-radius: var(--radius-row);
+}
+.gear-more:hover { background: var(--gear-detail); }
+.gear-more[aria-expanded="true"] { color: var(--gear-text); border-color: var(--line-strong); }
 .gear-empty { color: var(--faint); font-size: 15px; line-height: 22px; }
 .gear-detail { margin-top: var(--space-2); padding-top: var(--space-2); border-top: 1px solid var(--line); color: var(--gear-text); font-size: 14px; }
 .gear-detail dl { margin: 0; display: grid; grid-template-columns: max-content 1fr; gap: var(--space-1) var(--space-3); }
@@ -499,6 +510,11 @@ pre:empty { display: none; }
 .char-talents { flex-basis: 100%; max-width: 60rem; margin: var(--space-2) 0 0; display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2) var(--space-3); }
 .talents-why { color: var(--muted); font-size: 13px; overflow-wrap: anywhere; }
 .talents-why:empty { display: none; }
+/* the character's profile and guild links (M21-04) */
+.char-profiles { flex-basis: 100%; margin: 0; display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2) var(--space-3); }
+.profiles-title, .profiles-why { color: var(--muted); }
+.profiles-why { font-size: 13px; overflow-wrap: anywhere; }
+.profiles-why:empty { display: none; }
 /* the addresses the player saved (M21-03) */
 .char-saved { flex-basis: 100%; max-width: 60rem; }
 .char-saved-links { margin: var(--space-2) 0 0; display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2) var(--space-3); }
