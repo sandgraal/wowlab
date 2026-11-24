@@ -603,3 +603,21 @@ def test_the_text_says_over_by_at_the_latest_only_when_the_log_was_off_construct
     assert " at the latest" not in on_text[0] and " to " in on_text[0]
     # The book was saved after the match's last line: it holds no result.
     assert "the crew book saved after this match holds no match" in on_text[1]
+    # With the log off there, a save before the line that ended it is no
+    # save after the match.
+    assert "saves it at your next /reload or logout" in _cmd_live._live_match_lines(off, book)[1]
+
+
+def test_a_match_the_log_was_off_for_and_shows_no_end_reads_from_only_constructed(
+    tmp_path: Path,
+) -> None:
+    from wowlab_core.cli import _cmd_live
+
+    path = _write(_flavor(tmp_path), log(zone(100, instance=BG, name=BG_NAME)))
+    recap = live.match_recap([path], OWNERS, pvp_maps=[BG])
+    assert recap is not None and recap.logged == 0 and recap.ended_by is None
+    book = _cmd_live._LiveBook([], on=True, saved_ns=(BASE + 150) * 10**9)
+    head, result = _cmd_live._live_match_lines(recap, book)[:2]
+    assert ", from " in head and " to " not in head and "at the latest" not in head
+    assert head.endswith(", the log shows no end yet.")
+    assert "at the first /reload or logout after the match ends" in result

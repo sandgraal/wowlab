@@ -196,7 +196,15 @@ def _live_result_words(m: live.MatchRecap, book: _LiveBook) -> str:
             "  Result: not in the combat log, and the crew book is not on (turn it on in game "
             "with /wowlab crew on)."
         )
-    if book.saved_ns is not None and m.end is not None and book.saved_ns // 10**9 > m.end:
+    if m.ended_by is None:
+        return (
+            "  Result: not in the combat log yet; the crew book saves it at the first /reload or "
+            "logout after the match ends."
+        )
+    # With the log off there, the match's last line is the zone line in: only
+    # a save after the line that ended it can hold the match.
+    after = m.end if m.logged else (m.end_at_latest if m.end_at_latest is not None else m.end)
+    if book.saved_ns is not None and after is not None and book.saved_ns // 10**9 > after:
         return (
             "  Result: not in the combat log, and the crew book saved after this match holds no "
             "match on this map near that time."
@@ -213,8 +221,10 @@ def _live_match_lines(m: live.MatchRecap, book: _LiveBook) -> list[str]:
         None: "the log shows no end yet",
     }[m.ended_by]
     kind = "Arena" if m.arena else "Match"
-    if m.logged or m.end_at_latest is None:
+    if m.logged:
         span = f"from {_live_when(m.start)} to {_live_when(m.end)}"
+    elif m.end_at_latest is None:  # the log was off, and shows no end yet
+        span = f"from {_live_when(m.start)}"
     else:  # the log was off: only when it left is known
         span = f"from {_live_when(m.start)}, over by {_live_when(m.end_at_latest)} at the latest"
     lines = [f"{kind}: {where}, {span}, {ended}."]
@@ -316,7 +326,7 @@ def _live_session_lines(s: live.SessionRecap) -> list[str]:
 
 @live_app.command(
     "recap",
-    short_help="Your latest match, and your last save against your last backup.",
+    short_help="Latest match; your last save, against an earlier one your backups hold.",
 )
 @_handled
 def live_recap(

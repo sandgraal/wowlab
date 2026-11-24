@@ -486,11 +486,13 @@ crew_app = typer.Typer(
 app.add_typer(crew_app, name="crew", short_help="The players you grouped with (the crew book).")
 live_app = typer.Typer(
     help="What the Live view of wowlab ui shows: your latest match from the combat log, and your "
-    "last save against your last backup.",
+    "last save, against an earlier one your backups hold.",
     no_args_is_help=True,
 )
 app.add_typer(
-    live_app, name="live", short_help="Your latest match, and your last save against your backup."
+    live_app,
+    name="live",
+    short_help="Latest match; last save, against an earlier one your backups hold.",
 )
 
 # The modules of this package in the order they register their commands when
