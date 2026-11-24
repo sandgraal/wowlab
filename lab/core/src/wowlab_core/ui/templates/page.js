@@ -56,15 +56,12 @@
   const NO_SESSION =
     "This page needs the link wowlab ui opened. Open that link again, or, if wowlab ui was stopped, start it again.";
   const byId = (id) => document.getElementById(id);
-  // The one outside origin the page may link to (M15-02; ADR-0019's and
-  // ADR-0031's amendments of 2026-10-19): the dressing room `char gear --json`
-  // builds an address for, as `dressing_sites.toml` names it. The page never
-  // requests it; a link to it opens in the player's browser on a click.
-  const DRESSING_ORIGIN = "https://www.wowhead.com";
-  // The twink panel's planner (M22-06): the other outside origin, checked the
-  // same way before the Twink panel's "Plan on ForeverTwinking" link takes an
-  // address `char twink --json` built. Its Wowhead links use DRESSING_ORIGIN.
-  const PLANNER_ORIGIN = "https://forevertwinking.com";
+  // The outside origins the page may link to, by site key (M21-03; ADR-0019's
+  // amendments of 2026-10-19 and 2026-11-23): `link_sites.toml`'s sites, sent
+  // by the server with the command list, never fetched from outside. Empty
+  // until then, so no outside link is drawn before it. The page never
+  // requests any of them; a link opens in the player's browser on a click.
+  const linkOrigins = new Map();
   let current = null;
   let inputs = [];
   // The plan the server offered Confirm for: its command, the parameters it
@@ -1565,6 +1562,7 @@
     for (const id of CHAR_BOXES) byId(id).replaceChildren();
     clearDressing();
     clearSim();
+    clearSaved();
     character.params = null;
     clearTwink();
     character.kept = null;
@@ -1607,6 +1605,7 @@
     drawGear(report);
     drawDressing(report.dressing);
     byId("char-sim-button").hidden = false;
+    drawSaved(report.saved_links, params);
   }
 
   // One fact; `title`, when given, is the exact value behind the one shown.
@@ -1996,18 +1995,36 @@
     box.appendChild(list);
   }
 
-  // ─── the dressing-room link (M15-02, §16.3's amendment of 2026-10-19) ───
-  // `dressing` is `{url, site, note}` or `{items, note}`. The address becomes
-  // the static link's href only when it parses, is https: and its origin is
-  // exactly DRESSING_ORIGIN, and only as the parser writes it back (no
-  // userinfo, nothing the parser would change); anything else leaves the
-  // link hidden with no href, and says so. The fallback is the item ids as
-  // text, with a Copy button.
-  // The same check for the Twink panel's links (M22-06), against the origin
-  // each one may name: DRESSING_ORIGIN for Wowhead, PLANNER_ORIGIN for the
-  // planner. `origin` is always one of the two constants.
-  function outsideAddress(value, origin) {
-    if (typeof value !== "string") return null;
+  // ─── outside links (M21-03) ───
+  // The allowlist the server sent: each site key with its origin, kept only
+  // when the key is a plain word and the origin is an https: origin exactly
+  // as the URL parser writes it (no path, no port, no user name).
+  function takeLinkOrigins(given) {
+    linkOrigins.clear();
+    if (!given || typeof given !== "object" || Array.isArray(given)) return;
+    for (const site of Object.keys(given)) {
+      const origin = given[site];
+      if (!/^[a-z][a-z0-9_]{0,31}$/.test(site) || typeof origin !== "string") continue;
+      let parsed = null;
+      try {
+        parsed = new URL(origin);
+      } catch (_) {
+        continue;
+      }
+      if (parsed.protocol !== "https:" || parsed.origin !== origin) continue;
+      if (parsed.username !== "" || parsed.password !== "") continue;
+      linkOrigins.set(site, origin);
+    }
+  }
+
+  // The one check every outside link goes through: the address, when it
+  // parses, is https:, its origin is exactly the origin the allowlist gives
+  // the site it names, it has no user name or password, and the parser
+  // writes it back unchanged; else null, and the caller draws no link.
+  function outsideAddress(value, site) {
+    if (typeof value !== "string" || typeof site !== "string") return null;
+    const origin = linkOrigins.get(site);
+    if (typeof origin !== "string") return null;
     let parsed = null;
     try {
       parsed = new URL(value);
@@ -2019,14 +2036,21 @@
     return value;
   }
 
-  function dressingAddress(value) {
-    return outsideAddress(value, DRESSING_ORIGIN);
-  }
-
-  // The page's one URL sink: a static link of page.html given an address
-  // `outsideAddress` returned.
+  // The page's one URL sink: a static link of page.html (each opens in a new
+  // tab, `rel="noopener noreferrer"`) given an address `outsideAddress`
+  // returned.
   function pointLink(link, checked) {
     link.href = checked;
+  }
+
+  // ─── the dressing-room link (M15-02, §16.3's amendment of 2026-10-19) ───
+  // `dressing` is `{url, site, note}` or `{items, note}`. The address becomes
+  // the static link's href only when `outsideAddress` passes it for Wowhead,
+  // the site `dressing_sites.toml` names; anything else leaves the link
+  // hidden with no href, and says so. The fallback is the item ids as text,
+  // with a Copy button.
+  function dressingAddress(value) {
+    return outsideAddress(value, "wowhead");
   }
 
   function clearDressing() {
@@ -2075,6 +2099,176 @@
     ids.className = "dressing-ids";
     box.append(make("span", "Item ids: "), ids, copyButton(text, "Copy the item ids"));
     box.hidden = false;
+  }
+
+  // ─── addresses the player saved (M21-03) ───
+  // `char gear --json`'s `saved_links`: what `char link set` kept for this
+  // character (a ForeverTwinking page or build, a Warcraft Logs report),
+  // each in its own static link of page.html. An address that does not pass
+  // `outsideAddress` for its site is shown as plain text, never as a link.
+  // Adding or forgetting one runs `char link set` or `char link forget`:
+  // the plan first, then Confirm with the server's token, as the Crew tab's
+  // changes do. The address typed goes to the CLI as an argument and is
+  // checked there; nothing here reads it as a URL.
+  const SAVED_SLOTS = [
+    { site: "forevertwinking", kind: "profile", id: "char-saved-ft-profile" },
+    { site: "forevertwinking", kind: "build", id: "char-saved-ft-build" },
+    { site: "warcraftlogs", kind: "report", id: "char-saved-wcl-report" },
+  ];
+  const saved = { params: null, pending: null, seq: 0 };
+
+  // Not a live region: the tab's status line (`charSay`) is its only one.
+  function savedSay(text, isError) {
+    const node = byId("char-saved-status");
+    node.textContent = text;
+    node.classList.toggle("error", Boolean(isError));
+  }
+
+  function clearSavedConfirm() {
+    saved.pending = null;
+    byId("char-saved-confirm-box").hidden = true;
+    byId("char-saved-plan-lines").textContent = "";
+    byId("char-saved-plan-lines").hidden = true;
+    byId("char-saved-confirm-note").textContent = "";
+    const button = byId("char-saved-confirm");
+    button.hidden = true;
+    button.disabled = true;
+  }
+
+  function clearSavedSlots() {
+    for (const slot of SAVED_SLOTS) {
+      const link = byId(slot.id);
+      link.removeAttribute("href");
+      link.hidden = true;
+      byId(slot.id + "-text").textContent = "";
+      byId(slot.id + "-box").hidden = true;
+    }
+    byId("char-saved-none").hidden = false;
+  }
+
+  function clearSaved() {
+    saved.params = null;
+    saved.seq += 1;
+    clearSavedConfirm();
+    clearSavedSlots();
+    byId("char-saved-address").value = "";
+    savedSay("", false);
+    byId("char-saved").hidden = true;
+  }
+
+  // The character's saved addresses: one per slot, the first of each site
+  // and kind. `params` is the pick's (character, account, flavor).
+  function drawSaved(rows, params) {
+    clearSavedSlots();
+    saved.params = params && typeof params === "object" ? Object.assign({}, params) : null;
+    byId("char-saved").hidden = saved.params === null;
+    const list = Array.isArray(rows) ? rows.filter((r) => r && typeof r === "object") : [];
+    let any = false;
+    for (const slot of SAVED_SLOTS) {
+      const row = list.find((r) => r.site === slot.site && r.kind === slot.kind);
+      if (!row || typeof row.url !== "string") continue;
+      any = true;
+      byId(slot.id + "-box").hidden = false;
+      const checked = outsideAddress(row.url, slot.site);
+      if (checked === null) {
+        byId(slot.id + "-text").textContent = visible(row.url) + " (not shown as a link: it is not an address this page links to)";
+        continue;
+      }
+      const link = byId(slot.id);
+      pointLink(link, checked);
+      link.hidden = false;
+    }
+    byId("char-saved-none").hidden = any;
+  }
+
+  // The plan run of one change; Confirm is offered only when the server
+  // minted a token for it and the plan changes something.
+  async function savedPlan(command, extra) {
+    if (saved.params === null) return;
+    const seq = ++saved.seq;
+    clearSavedConfirm();
+    savedSay("Working out what would change…", false);
+    const params = withFlavor(command, Object.assign({}, saved.params, extra));
+    const reply = await postRun({ command: command, params: params });
+    if (seq !== saved.seq) return;
+    if (reply.error) {
+      savedSay(reply.error, true);
+      return;
+    }
+    const result = reply.result;
+    const offer = result.confirm && result.confirm.stage === "plan" ? result.confirm : null;
+    const token = offer && typeof offer.token === "string" && offer.token ? offer.token : null;
+    let report = null;
+    try {
+      report = JSON.parse(result.stdout);
+    } catch (_) {
+      // no report: the command's own words say why
+    }
+    if (!token || !report || report.changed !== true) {
+      const nothing = result.exit_code === 0 && Boolean(report) && report.changed === false;
+      const text = String(result.stderr || "").trim();
+      savedSay(nothing ? "Nothing would change: it is already so." : text ? shown(text) : "This change could not be planned.", !nothing);
+      return;
+    }
+    saved.pending = { command: command, params: params, token: token };
+    savedSay("", false);
+    const lines = Array.isArray(report.plan_lines) ? report.plan_lines.filter((l) => typeof l === "string") : [];
+    const planLines = byId("char-saved-plan-lines");
+    planLines.textContent = lines.map(visible).join("\n");
+    planLines.hidden = lines.length === 0;
+    byId("char-saved-confirm-note").textContent = "Confirm changes only wowlab's own list of your links; nothing in the game folder changes.";
+    const button = byId("char-saved-confirm");
+    button.hidden = false;
+    button.disabled = false;
+    byId("char-saved-confirm-box").hidden = false;
+  }
+
+  async function savedConfirm() {
+    const plan = saved.pending;
+    if (plan === null) return;
+    saved.pending = null;
+    const seq = ++saved.seq;
+    const button = byId("char-saved-confirm");
+    button.disabled = true;
+    button.hidden = true;
+    savedSay("Saving…", false);
+    const reply = await postRun({ command: plan.command, params: plan.params, confirm: plan.token });
+    if (seq !== saved.seq) return;
+    byId("char-saved-confirm-box").hidden = true;
+    if (reply.error) {
+      savedSay(reply.error, true);
+      return;
+    }
+    const result = reply.result;
+    let report = null;
+    try {
+      report = JSON.parse(result.stdout);
+    } catch (_) {
+      // no report: a refusal, said below
+    }
+    if (result.exit_code !== 0 || !report || !Array.isArray(report.links)) {
+      const text = String(result.stderr || "").trim();
+      savedSay(text ? shown(text) : "The change was not made.", true);
+      return;
+    }
+    drawSaved(report.links, saved.params);
+    byId("char-saved-address").value = "";
+    savedSay(plan.command[2] === "set" ? "Saved." : "Forgotten.", false);
+  }
+
+  byId("char-saved-plan").addEventListener("click", () => {
+    const address = byId("char-saved-address").value.trim();
+    if (!address) {
+      savedSay("Paste an address first.", true);
+      return;
+    }
+    savedPlan(["char", "link", "set"], { address: address });
+  });
+  byId("char-saved-confirm").addEventListener("click", () => savedConfirm());
+  for (const slot of SAVED_SLOTS) {
+    byId(slot.id + "-forget").addEventListener("click", () =>
+      savedPlan(["char", "link", "forget"], { site: slot.site, kind: slot.kind }),
+    );
   }
 
   // ─── Copy for WoWSims (M21-08) ───
@@ -2246,7 +2440,7 @@
     twinkSay(visible(String(panel.words || "")) + yours, false);
     hideLink("char-twink-wowhead", "Open on Wowhead");
     twink.opened = null;
-    const planner = outsideAddress(panel.planner, PLANNER_ORIGIN);
+    const planner = outsideAddress(panel.planner, "forevertwinking");
     const link = byId("char-twink-planner");
     if (planner !== null) {
       pointLink(link, planner);
@@ -2350,7 +2544,7 @@
       detail.hidden = !open;
       button.setAttribute("aria-expanded", open ? "true" : "false");
       twink.opened = open ? { button: button, detail: detail } : null;
-      const address = open ? outsideAddress(c.wowhead, DRESSING_ORIGIN) : null;
+      const address = open ? outsideAddress(c.wowhead, "wowhead") : null;
       if (address === null) {
         hideLink("char-twink-wowhead", "Open on Wowhead");
         return;
@@ -2527,7 +2721,7 @@
     return objects(report.keys).filter((row) => {
       if (onlyDisagreeing && row.disagrees !== true) return false;
       if (!needle) return true;
-      const hay = [row.key, row.command, row.does, ...texts(row.sources)]
+      const hay = [row.key, row.command, row.command_label, row.does, ...texts(row.sources)]
         .filter((s) => typeof s === "string")
         .join("\n")
         .toLowerCase();
@@ -2584,6 +2778,11 @@
     key.className = "key-key";
     const command = make("td", visible(String(row.command)));
     command.className = "key-command";
+    // The game's own name for the command (M22-18), from the report; a
+    // command the game's interface does not have (an addon's) is marked by
+    // its class, and its `does` says so in the report's words.
+    if (typeof row.command_label === "string") command.appendChild(make("small", visible(row.command_label)));
+    if (row.client_command === false) tr.classList.add("key-not-client");
     const slot = make("td", typeof row.slot === "number" ? String(row.slot) : "-");
     slot.className = "key-slot";
     if (typeof row.page_note === "string") slot.title = visible(row.page_note);
@@ -2695,15 +2894,29 @@
       plural(m.bytes, "byte", "bytes");
     if (m.complete === false) facts += " (the file ends before this macro's END)";
     card.appendChild(charLine(facts, "macro-facts"));
-    // The body, one element a line, as text.
+    // The body, one element a line, as text. A line a finding is about is
+    // marked, with the finding's words as its tooltip (M22-18): body line k
+    // is line `m.line + 1 + k` of the file.
     const lines = texts(m.body_lines);
+    const flagged = new Map();
+    for (const f of objects(m.findings)) {
+      if (typeof f.line !== "number" || typeof m.line !== "number") continue;
+      const at = f.line - m.line - 1;
+      if (at < 0) continue;
+      const said = visible(String(f.detail));
+      flagged.set(at, flagged.has(at) ? flagged.get(at) + "\n" + said : said);
+    }
     const body = make("div");
     body.className = "macro-body";
-    for (const text of lines) {
+    lines.forEach((text, at) => {
       const one = make("code", visible(text));
       one.className = "macro-line";
+      if (flagged.has(at)) {
+        one.classList.add("macro-line-finding");
+        one.title = flagged.get(at);
+      }
       body.appendChild(one);
-    }
+    });
     if (!lines.length) body.appendChild(charLine("no body lines", "char-none"));
     card.append(body, placementBox(m.placement, keysIncomplete));
     const found = objects(m.findings);
@@ -3490,6 +3703,8 @@
           ),
           // A backup's record of a folder with no lab record (M18-11).
           held: Array.isArray(report.records_in_backups) ? objects(report.records_in_backups) : [],
+          // The flavor folders, for the Addons view's reads (M22-16).
+          flavors: objects(report.flavors).map((f) => f.folder).filter((f) => typeof f === "string" && f !== ""),
         };
         hub.note = reply.error ? shown(reply.error) : "";
         // Each card fails on its own: an error in one is said in that card,
@@ -3786,18 +4001,19 @@
   // Commands, Looks). A section with more than one view has its own row of
   // tabs. `showTab` shows one view and marks its section and its tab.
   const SECTIONS = {
-    characters: ["account", "character", "crew"],
+    characters: ["account", "character", "crew", "lookup"],
     backups: ["backups"],
     addons: ["addons"],
     keybinds: ["keybinds"],
+    live: ["live"],
     advanced: ["explorer", "gaps", "commands", "looks"],
   };
   // The views with a tab, in their order; the first is shown when the page opens.
-  const TABS = ["account", "character", "crew", "explorer", "gaps", "commands", "looks"];
+  const TABS = ["account", "character", "crew", "lookup", "explorer", "gaps", "commands", "looks"];
   // Every view's element. Keybinds shows the character page's own element
   // with its keys and macros panels alone, so the picker and the keys are
   // one; the character page shows the rest.
-  const VIEWS = ["account", "character", "crew", "backups", "addons", "explorer", "gaps", "commands", "looks"];
+  const VIEWS = ["account", "character", "crew", "lookup", "backups", "addons", "live", "explorer", "gaps", "commands", "looks"];
   const CHARACTER_PANELS = ["char-page", "char-about"];
   const KEYBIND_PANELS = ["char-keys-panel", "char-macros-panel"];
   // The view each section showed last, so going back to it lands there.
@@ -3840,8 +4056,12 @@
       }
       loadHub();
     }
+    if (name === "addons") alone(sourcesSay, () => loadSources());
     if (name === "gaps") loadGaps();
     if (name === "crew") loadCrew();
+    if (name === "lookup") byId("lookup-query").focus();
+    if (name === "live") startLive();
+    else stopLive();
     if (name === "character" || keys) {
       const listed = loadCharacters();
       if (keys && character.kept) {
@@ -3860,6 +4080,312 @@
     showTab("account");
     byId("tab-account").focus();
   });
+
+  // ─── Seen by Spy (M22-01) ───
+
+  // What the Spy addon saved, from `spy list --json`: its search, filters
+  // and order are the command's own options, so the matching and the order
+  // are Python's. A row opens what `spy show --json` prints (its `lines`),
+  // sent the row's key as an argument. Read only: nothing here writes.
+  // Every name, guild and place is other people's text: it reaches the page
+  // only as text, through `visible()`, never in an attribute, a class or an
+  // id, and no link or address is built from it.
+  const spySeen = { listSeq: 0, showSeq: 0, searchTimer: null, read: false };
+  const SPY_FILTER = [["", "Everyone"], ["enemies", "Enemies"], ["kos", "Kill on sight"]];
+  const SPY_SORT = [["last", "Last seen, newest first"], ["name", "By name"], ["level", "Highest level first"]];
+  const SPY_COLUMNS = ["Player", "Who", "Guild", "Last seen", "Place Spy last recorded", "Seen by"];
+  fillSelect(byId("spy-filter"), SPY_FILTER);
+  fillSelect(byId("spy-sort"), SPY_SORT);
+
+  function spySay(text, isError) {
+    const node = byId("spy-status");
+    announce(node, text, Boolean(isError));
+    node.classList.toggle("error", Boolean(isError));
+  }
+
+  function spyParams() {
+    const params = {};
+    const search = byId("spy-search").value;
+    if (search.trim() !== "") params.search = search;
+    const filter = byId("spy-filter").value;
+    if (filter === "enemies") params.enemies = true;
+    if (filter === "kos") params.kos_only = true;
+    params.sort = byId("spy-sort").value || "last";
+    return params;
+  }
+
+  function spyWho(p) {
+    const level = hubNum(p.level);
+    const parts = [
+      level === null ? null : "level " + level + (p.is_guess === true ? "?" : ""),
+      hubStr(p.race) ? visible(p.race) : null,
+      crewClass(p.class_token),
+    ].filter(Boolean);
+    const side = hubStr(p.faction) ? visible(p.faction) : null;
+    const enemy = p.is_enemy === true ? "hostile when Spy last looked" : null;
+    const marks = [p.kos === true ? "kill on sight" : null, p.ignored === true ? "ignored" : null];
+    return [parts.join(" "), side, enemy, ...marks].filter(Boolean).join(", ") || NOT_RECORDED;
+  }
+
+  function spyWhere(p) {
+    const zone = hubStr(p.zone) ? visible(p.zone) : "";
+    const sub = hubStr(p.sub_zone) ? visible(p.sub_zone) : "";
+    return [zone, sub].filter(Boolean).join(": ") || NOT_RECORDED;
+  }
+
+  function spySeenBy(p) {
+    const source = p.source && typeof p.source === "object" ? p.source : {};
+    const character = hubStr(source.character) ? source.character : "";
+    return character ? visible(character.split("/").pop()) : NOT_RECORDED;
+  }
+
+  function spyRow(p) {
+    const tr = make("tr");
+    tr.className = "hub-row";
+    const name = make("td");
+    const open = make("button", visible(p.key));
+    open.type = "button";
+    open.className = "hub-open";
+    open.title = "Show everything Spy saved about this player";
+    name.appendChild(open);
+    tr.appendChild(name);
+    const cells = [
+      spyWho(p),
+      hubStr(p.guild) ? visible(p.guild) : "none",
+      crewDay(p.time) || NOT_RECORDED,
+      spyWhere(p),
+      spySeenBy(p),
+    ];
+    for (const text of cells) tr.appendChild(make("td", text));
+    tr.addEventListener("click", () => openSpyPlayer(p.key));
+    return tr;
+  }
+
+  async function loadSpy() {
+    const seq = ++spySeen.listSeq;
+    spySay("Reading Spy's saved data…", false);
+    const reply = await runJson(["spy", "list"], spyParams(), true);
+    if (seq !== spySeen.listSeq) return;
+    const report = reply.data;
+    const box = byId("spy-table");
+    const warnings = byId("spy-warnings");
+    if (!report || typeof report !== "object" || !Array.isArray(report.players) || typeof report.words !== "string") {
+      box.replaceChildren();
+      box.hidden = true;
+      warnings.replaceChildren();
+      warnings.hidden = true;
+      spySay(reply.error ? shown(reply.error) : "Spy's list came back in a shape this page does not know.", true);
+      return;
+    }
+    spySeen.read = true;
+    // The version warnings and the caveat on shared rows, then the standing
+    // notes under the panel, as the command gives them.
+    const said = [...(Array.isArray(report.warnings) ? report.warnings : []), report.caveat]
+      .filter((w) => typeof w === "string");
+    warnings.replaceChildren(...said.map((w) => make("li", visible(w))));
+    warnings.hidden = said.length === 0;
+    byId("spy-notes").replaceChildren(...(Array.isArray(report.notes) ? report.notes : [])
+      .filter((n) => typeof n === "string").map((n) => make("li", visible(n))));
+    const players = report.players.filter((p) => p && typeof p.key === "string");
+    const total = hubNum(report.total);
+    if (players.length === 0) {
+      box.replaceChildren();
+      box.hidden = true;
+      if (reply.error) spySay(shown(reply.error), true);
+      else spySay(total ? "No row matches." : visible(report.words), false);
+      return;
+    }
+    const table = make("table");
+    table.className = "char-table hub crew";
+    const caption = make("caption", "Players Spy saw");
+    caption.className = "unseen";
+    table.appendChild(caption);
+    const head = make("thead");
+    const tr = make("tr");
+    for (const label of SPY_COLUMNS) {
+      const th = make("th", label);
+      th.scope = "col";
+      tr.appendChild(th);
+    }
+    head.appendChild(tr);
+    table.appendChild(head);
+    const body = make("tbody");
+    for (const p of players) body.appendChild(spyRow(p));
+    table.appendChild(body);
+    box.replaceChildren(table);
+    box.hidden = false;
+    const n = players.length;
+    const all = total === null ? n : total;
+    if (reply.error) {
+      spySay(shown(reply.error), true);
+    } else {
+      // `total` counts rows, one per character that saw a player, as the
+      // command's own match line does.
+      spySay(n === all ? visible(report.words) : "Showing " + n + " of " + pluralWord(all, " row") + ".", false);
+    }
+  }
+
+  async function openSpyPlayer(key) {
+    const seq = ++spySeen.showSeq;
+    byId("spy-player").hidden = false;
+    byId("spy-player-title").textContent = visible(key);
+    const lines = byId("spy-player-lines");
+    lines.replaceChildren(make("li", "Reading…"));
+    const reply = await runJson(["spy", "show"], { name: key }, true);
+    if (seq !== spySeen.showSeq) return;
+    const report = reply.data;
+    const said = report && Array.isArray(report.lines) ? report.lines.filter((l) => typeof l === "string") : null;
+    if (!said) {
+      lines.replaceChildren(make("li", reply.error ? shown(reply.error) : "This player's entry came back in a shape this page does not know."));
+      return;
+    }
+    lines.replaceChildren(...said.map((line) => make("li", visible(line.trim()))));
+    byId("spy-player-title").focus();
+  }
+
+  function spyAgain() {
+    if (spySeen.read) loadSpy();
+  }
+
+  byId("spy-show").addEventListener("click", () => loadSpy());
+  byId("spy-filter").addEventListener("change", () => spyAgain());
+  byId("spy-sort").addEventListener("change", () => spyAgain());
+  byId("spy-search").addEventListener("input", () => {
+    if (spySeen.searchTimer !== null) clearTimeout(spySeen.searchTimer);
+    spySeen.searchTimer = setTimeout(() => {
+      spySeen.searchTimer = null;
+      spyAgain();
+    }, 300);
+  });
+
+  // ─── the Live view (M22-05) ───
+  // For a second screen while the game runs. While the view is shown (and
+  // the browser tab is not hidden) it asks the server every few seconds
+  // (`GET /api/live`, the interval the server gives): the newest time of
+  // the SavedVariables, which the game writes at /reload and logout, and
+  // the newest combat log with its count of zone lines and arena end lines.
+  // When one of those changed, it runs `live recap --json` and draws its
+  // `lines`: the match's, up to the first empty line, then the session's.
+  // The server reads the files; the page reads only the server. Zone,
+  // file and player names are text from the machine: textContent only.
+  const liveState = {
+    timer: null, // the next poll
+    seq: 0, // bumped when the view closes, so a late reply draws nothing
+    seen: null, // what the last poll saw, as one string
+    running: false, // a recap run in progress
+    again: false, // something changed while it ran: run it once more
+    seconds: 3,
+    started: false, // whether the view is polling
+  };
+
+  function liveKey(watch) {
+    const saved = watch.saved || {};
+    const log = watch.log || {};
+    return [watch.flavor_folder, saved.newest_ns, log.name, log.zone_changes, log.match_ends].join("|");
+  }
+
+  function liveWatchWords(watch) {
+    const parts = [];
+    const log = watch.log;
+    if (log) {
+      let where = "the log has not named a place yet";
+      if (typeof log.zone === "string" && log.zone) {
+        where = "the log last showed " + visible(log.zone);
+        if (typeof log.zone_at === "number") where += " (at " + new Date(log.zone_at * 1000).toLocaleTimeString() + ")";
+      }
+      parts.push("Combat log: " + visible(String(log.name)) + "; " + where);
+    } else {
+      parts.push("No combat log yet: type /combatlog in game to start one");
+    }
+    const saved = watch.saved || {};
+    if (typeof saved.newest_ns === "number") {
+      parts.push("last save " + new Date(saved.newest_ns / 1e6).toLocaleString());
+    }
+    parts.push("checked " + new Date().toLocaleTimeString() + " in " + Math.max(1, Math.round(watch.cost_us / 1000)) + " ms");
+    return parts.join(" · ") + ".";
+  }
+
+  async function liveRecap() {
+    if (liveState.running) {
+      liveState.again = true;
+      return;
+    }
+    liveState.running = true;
+    const seq = liveState.seq;
+    announce(byId("live-status"), "Reading the latest match and your last save…", false);
+    try {
+      const got = await runJson(["live", "recap"], {});
+      if (seq !== liveState.seq) return;
+      if (got.error && !got.data) {
+        announce(byId("live-status"), got.error, true);
+        return;
+      }
+      const lines = Array.isArray(got.data.lines) ? got.data.lines.map((l) => String(l)) : [];
+      const cut = lines.indexOf("");
+      const match = cut < 0 ? lines : lines.slice(0, cut);
+      const session = cut < 0 ? [] : lines.slice(cut + 1);
+      byId("live-match-lines").replaceChildren(...match.map((l) => make("li", visible(l))));
+      byId("live-session-lines").replaceChildren(...session.map((l) => make("li", visible(l))));
+      announce(byId("live-status"), "Read at " + new Date().toLocaleTimeString() + ".", false);
+    } finally {
+      liveState.running = false;
+      // Asked again while it ran, or the view was left and opened again
+      // meanwhile (this run's reply was dropped): read once more while the
+      // view is open, so what it shows is never left behind.
+      if (liveState.started && (liveState.again || seq !== liveState.seq)) {
+        liveState.again = false;
+        liveRecap();
+      }
+    }
+  }
+
+  async function livePoll() {
+    const seq = liveState.seq;
+    liveState.timer = null;
+    if (!document.hidden) {
+      let reply;
+      let body;
+      try {
+        await runFlavor.ready;
+        const query = runFlavor.picked ? "?flavor=" + encodeURIComponent(runFlavor.picked) : "";
+        reply = await fetch(api("/api/live") + query, { cache: "no-store", credentials: "omit", headers: keyed() });
+        body = await reply.json();
+      } catch (error) {
+        body = null;
+      }
+      if (seq !== liveState.seq) return;
+      if (!reply || !reply.ok || !body) {
+        announce(byId("live-watch"), "wowlab could not check your game folder: " + ((body && body.error) || "no answer") + ".", true);
+      } else if (!body.found) {
+        announce(byId("live-watch"), String(body.words || "wowlab found no game folder to watch."), true);
+      } else {
+        if (typeof body.poll_seconds === "number" && body.poll_seconds >= 1) liveState.seconds = body.poll_seconds;
+        announce(byId("live-watch"), liveWatchWords(body.watch), false);
+        const key = liveKey(body.watch);
+        if (key !== liveState.seen) {
+          liveState.seen = key;
+          liveRecap();
+        }
+      }
+    }
+    if (seq === liveState.seq) liveState.timer = setTimeout(livePoll, liveState.seconds * 1000);
+  }
+
+  function startLive() {
+    if (liveState.timer !== null || liveState.started) return;
+    liveState.started = true;
+    livePoll();
+  }
+
+  function stopLive() {
+    if (!liveState.started) return;
+    liveState.started = false;
+    liveState.seq += 1;
+    liveState.seen = null;
+    liveState.again = false;
+    if (liveState.timer !== null) clearTimeout(liveState.timer);
+    liveState.timer = null;
+  }
 
   // ─── the crew book (M19-06, docs/LAB_PLAN.md §20.4) ───
   // The players the lab-addon's crew book keeps, from `crew list --json`:
@@ -4426,6 +4952,141 @@
   byId("crew-note").addEventListener("click", () => crewPlan(["crew", "note"], { text: byId("crew-note-text").value }));
   byId("crew-forget").addEventListener("click", () => crewPlan(["crew", "forget"], {}));
   byId("crew-confirm").addEventListener("click", () => crewConfirm());
+
+
+  // ─── look up (M22-08) ───
+  // What `lookup --json` finds in the game version's QuestieDB addon and the
+  // game's item and zone tables: each hit's heading and lines are the
+  // command's own text, shown through `visible()` only, never in an
+  // attribute, a class or an id, and no link or address is built from them.
+  // Typing searches after a pause; the button searches now. The download
+  // offer runs the same command with `fetch`, which fetches only the tables
+  // not here yet.
+
+  const LOOKUP_KINDS = [
+    ["", "Everything"],
+    ["item", "Items"],
+    ["npc", "NPCs"],
+    ["quest", "Quests"],
+    ["object", "Objects"],
+  ];
+  const lookupState = { seq: 0, timer: null, fetching: false, running: false, queued: null, waiters: [] };
+  fillSelect(byId("lookup-kind"), LOOKUP_KINDS);
+
+  function lookupSay(text, isError) {
+    const node = byId("lookup-status");
+    announce(node, text, Boolean(isError));
+    node.classList.toggle("error", Boolean(isError));
+  }
+
+  function lookupParams(fetch) {
+    const params = { query: byId("lookup-query").value.trim(), limit: "10" };
+    if (byId("lookup-kind").value) params.kind = byId("lookup-kind").value;
+    if (fetch) params.fetch = true;
+    return params;
+  }
+
+  function lookupHit(hit) {
+    const box = make("section");
+    box.className = "panel lookup-hit";
+    box.appendChild(make("h3", visible(typeof hit.heading === "string" ? hit.heading : "")));
+    const list = make("ul");
+    list.className = "crew-lines";
+    for (const line of Array.isArray(hit.lines) ? hit.lines : []) {
+      if (typeof line === "string") list.appendChild(make("li", visible(line)));
+    }
+    box.appendChild(list);
+    return box;
+  }
+
+  function drawLookup(report) {
+    const hits = Array.isArray(report.hits) ? report.hits.filter((h) => h && typeof h === "object") : [];
+    byId("lookup-hits").replaceChildren(...hits.map(lookupHit));
+    const tables = Array.isArray(report.game_tables) ? report.game_tables : [];
+    const missing = tables.some((t) => t && t.state === "missing");
+    byId("lookup-offer").hidden = !missing;
+    byId("lookup-fetch").disabled = lookupState.fetching;
+    // The caveat and the notes are the command's own sentences, the ones
+    // its text output prints (one fact, one place).
+    const caveat = typeof report.caveat === "string" ? report.caveat : "";
+    byId("lookup-caveat").textContent = visible(caveat);
+    byId("lookup-caveat").hidden = !caveat;
+    const notes = Array.isArray(report.notes) ? report.notes.filter((n) => typeof n === "string") : [];
+    byId("lookup-left-out").replaceChildren(...notes.map((n) => make("li", visible(n))));
+    byId("lookup-left-out").hidden = notes.length === 0;
+  }
+
+  // One run at a time: a search asked for while one runs waits, and only the
+  // latest of those runs when it ends, so typing never stacks up runs.
+  async function runLookup(fetch) {
+    const query = byId("lookup-query").value.trim();
+    if (!query && !fetch) {
+      lookupState.seq += 1;
+      lookupState.queued = null;
+      byId("lookup-hits").replaceChildren();
+      lookupSay("", false);
+      return;
+    }
+    if (lookupState.running) {
+      lookupState.queued = { fetch: Boolean(fetch) || Boolean(lookupState.queued && lookupState.queued.fetch) };
+      // Settled once the queued run has run, so a caller (the download
+      // button) waits for it.
+      return new Promise((resolve) => lookupState.waiters.push(resolve));
+    }
+    lookupState.running = true;
+    const seq = ++lookupState.seq;
+    try {
+      lookupSay(fetch ? "Downloading zone and item names…" : "Looking up…", false);
+      const reply = await runJson(["lookup"], lookupParams(fetch), true);
+      if (seq !== lookupState.seq) return;
+      const report = reply.data;
+      if (!report || typeof report !== "object" || typeof report.words !== "string") {
+        byId("lookup-hits").replaceChildren();
+        byId("lookup-caveat").hidden = true;
+        lookupSay(reply.error ? shown(reply.error) : "The lookup came back in a shape this page does not know.", true);
+        return;
+      }
+      drawLookup(report);
+      lookupSay(visible(report.words), Boolean(reply.error));
+    } finally {
+      lookupState.running = false;
+      const next = lookupState.queued;
+      const waiters = lookupState.waiters;
+      lookupState.queued = null;
+      lookupState.waiters = [];
+      if (next) await runLookup(next.fetch);
+      for (const resolve of waiters) resolve();
+    }
+  }
+
+  function lookupSoon() {
+    if (lookupState.timer !== null) clearTimeout(lookupState.timer);
+    lookupState.timer = setTimeout(() => {
+      lookupState.timer = null;
+      runLookup(false);
+    }, 400);
+  }
+
+  async function fetchLookupTables() {
+    if (lookupState.fetching) return;
+    lookupState.fetching = true;
+    byId("lookup-fetch").disabled = true;
+    try {
+      await runLookup(true);
+    } finally {
+      lookupState.fetching = false;
+      byId("lookup-fetch").disabled = false;
+    }
+  }
+
+  byId("lookup-query").addEventListener("input", () => lookupSoon());
+  byId("lookup-kind").addEventListener("change", () => runLookup(false));
+  byId("lookup-go").addEventListener("click", () => {
+    if (lookupState.timer !== null) clearTimeout(lookupState.timer);
+    lookupState.timer = null;
+    runLookup(false);
+  });
+  byId("lookup-fetch").addEventListener("click", () => fetchLookupTables());
 
   // ─── the Characters home (M18-04, docs/design/COMPANION.md) ───
   // Above the table of every character: two status cards, then one card per
@@ -5736,6 +6397,227 @@
     return box;
   }
 
+  // ─── where each addon came from (M22-16) ───
+  // Per flavor the hub's report lists, the `sources` of `addons list
+  // --json`: the records of the addon managers wowlab reads (the WowUp
+  // app's), joined to the addon folders of their own game folder by the
+  // command. Every judgement (which game folder WowUp manages, a record out
+  // of date, an update, a folder not in the list) is the command's;
+  // the page lays it out. Read the first time the Addons view is shown,
+  // after the patch-day reads, one run at a time. Nothing here edits
+  // anything, and no address in a record becomes a link.
+
+  const sources = {
+    asked: null, // the reads, once; asked again after the hub failed
+    flavors: [], // per flavor folder, what `addons list` said
+  };
+
+  function sourcesSay(text, isError) {
+    const node = byId("sources-status");
+    announce(node, text, Boolean(isError));
+    node.classList.toggle("error", Boolean(isError));
+  }
+
+  function loadSources() {
+    if (!sources.asked) {
+      sources.asked = (async () => {
+        await loadHub();
+        if (!hub.report) {
+          // The hub's own line says why; the next visit asks again.
+          sources.asked = null;
+          return;
+        }
+        await (patchDay.reading || Promise.resolve());
+        const folders = [...new Set(hub.report.flavors || [])];
+        if (!folders.length) {
+          sourcesSay("wowlab found no flavor folder to read.", false);
+          return;
+        }
+        sourcesSay("Reading where your addons came from…", false);
+        const read = [];
+        for (const folder of folders) {
+          const reply = await runJson(["addons", "list"], { flavor: folder }, false, true);
+          read.push(sourcesRead(folder, reply));
+        }
+        sources.flavors = read;
+        sourcesSay("", false);
+        drawSources();
+      })();
+    }
+    return sources.asked;
+  }
+
+  function sourcesRead(folder, reply) {
+    const data = reply.data && typeof reply.data === "object" ? reply.data.sources : null;
+    if (!data || typeof data !== "object" || !Array.isArray(data.files) || !Array.isArray(data.records) ||
+        !Array.isArray(data.folders) || !Array.isArray(data.scopes)) {
+      return {
+        flavor: folder,
+        error: reply.error ? shown(reply.error) : "wowlab addons list printed something this page does not know.",
+        files: [], scopes: [], records: [], folders: [],
+      };
+    }
+    return {
+      flavor: folder,
+      error: "",
+      files: data.files.map((f) => (f && typeof f === "object" ? f : {})),
+      // One per file, in file order: never filtered, so the two stay paired.
+      scopes: data.scopes.map((s) => (s && typeof s === "object" ? s : {})),
+      records: objects(data.records).filter((r) => typeof r.record_id === "string"),
+      folders: objects(data.folders).filter((f) => typeof f.folder === "string"),
+    };
+  }
+
+  function sourcesLine(box, className, text) {
+    const line = make("p", text);
+    line.className = className;
+    box.appendChild(line);
+  }
+
+  // `n` and a word, the word made plural with an s.
+  function sourcesCount(n, word) {
+    return n === null ? "?" + word + "s" : grouped(n) + word + (n === 1 ? "" : "s");
+  }
+
+  // The present folders' versions, each with the folders that carry it.
+  function sourcesVersions(versions) {
+    const all = objects(versions).filter((v) => typeof v.version === "string");
+    if (all.length === 1 && texts(all[0].folders).length === 1) return "the TOC here says " + visible(all[0].version);
+    return "the TOCs here say " + all.map((v) => {
+      const folders = texts(v.folders);
+      const more = folders.length - 1;
+      return visible(v.version) + " (" + visible(folders[0] || "") + (more > 0 ? " and " + more + " more" : "") + ")";
+    }).join(", ");
+  }
+
+  // One record as a line: its name, the site, the version WowUp installed,
+  // and the update WowUp knew of, that WowUp leaves it alone, or why the
+  // record is out of date.
+  function sourcesRecord(record) {
+    const item = make("li");
+    item.className = "sources-item";
+    const name = hubStr(record.name) ? record.name : record.record_id;
+    item.appendChild(make("strong", visible(name)));
+    const words = [];
+    if (record.provider_known === false) words.push("WowUp does not know where it came from");
+    else if (hubStr(record.provider)) words.push("from " + visible(record.provider));
+    const installed = hubStr(record.installed_version);
+    const stale = record.stale === true;
+    if (installed) words.push((stale ? "WowUp installed " : "version ") + visible(installed));
+    if (stale) {
+      const why = texts(record.stale_why);
+      const parts = [];
+      if (why.includes("version_differs") && objects(record.toc_versions).length) {
+        parts.push(sourcesVersions(record.toc_versions));
+      }
+      if (why.includes("folders_missing") && texts(record.folders_missing).length) {
+        parts.push("not here: " + texts(record.folders_missing).map(visible).join(", "));
+      }
+      words.push("WowUp's record is out of date" + (parts.length ? " (" + parts.join("; ") + ")" : ""));
+    } else if (record.ignored === true) {
+      words.push("WowUp is set to leave it alone");
+    } else if (record.update_available === true && hubStr(record.latest_version)) {
+      words.push("update " + visible(record.latest_version) + " available when WowUp last checked");
+    }
+    item.appendChild(make("span", (words.length ? ": " + words.join(", ") : "") + "."));
+    const here = texts(record.folders_here);
+    if (here.length) {
+      const folders = make("span", " Folders: " + here.map(visible).join(", ") + ".");
+      folders.className = "sources-folders";
+      item.appendChild(folders);
+    }
+    return item;
+  }
+
+  function sourcesList(box, what, items) {
+    if (!items.length) return;
+    sourcesLine(box, "sources-what", what);
+    const list = make("ul");
+    list.className = "sources-list";
+    list.append(...items);
+    box.appendChild(list);
+  }
+
+  // Which game folders WowUp's list is for, said first, as the command
+  // reports it.
+  function sourcesScope(item, read, file, scope) {
+    const others = objects(scope.others).filter((o) => typeof o.folder === "string")
+      .map((o) => shown(o.folder) + " (" + sourcesCount(hubNum(o.records), " addon") + ")").join("; ");
+    const hinted = read.folders.filter((f) => objects(f.same_name_as).length > 0).length;
+    const shares = hinted ? ", and " + sourcesCount(hinted, " folder") + " here " +
+      (hinted === 1 ? "shares" : "share") + " a name with one of them" : "";
+    const byName = hubNum(scope.by_name) || 0;
+    if (scope.manages === false && byName === 0) {
+      sourcesLine(item, "sources-clear", "WowUp does not manage this game folder" +
+        (others ? "; its list is for " + others : "; its list holds no addon") + shares + ".");
+      return;
+    }
+    if (byName > 0) {
+      const why = file.settings_state === "missing" ? "its settings file is not there"
+        : file.settings_state === "unreadable"
+          ? "its settings file could not be read" + (hubStr(file.settings_error) ? ": " + visible(file.settings_error) : "")
+          : sourcesCount(byName, " record") + " " + (byName === 1 ? "names" : "name") +
+            " a game folder its settings do not list";
+      sourcesLine(item, "sources-note", "wowlab cannot tell which game folder WowUp's list is for (" + why +
+        "), so its records are matched to these addons by folder name.");
+    }
+    if (others) sourcesLine(item, "sources-note", "WowUp's list also holds addons for " + others + shares + ".");
+  }
+
+  function sourcesBlock(read, several) {
+    const item = make("li");
+    if (several) item.appendChild(make("h4", visible(read.flavor)));
+    if (read.error) sourcesLine(item, "sources-error", read.error);
+    let anyRead = false;
+    let managed = false;
+    read.files.forEach((file, at) => {
+      if (file.state === "read") {
+        anyRead = true;
+        const scope = read.scopes[at] || {};
+        if (scope.manages !== false) managed = true;
+        sourcesScope(item, read, file, scope);
+        const n = hubNum(file.written_ns);
+        const held = Array.isArray(file.records) ? file.records.length : null;
+        sourcesLine(item, "sources-clear",
+          "WowUp's list" + (n === null ? "" : ", last written " + localTime(n)) + ": " +
+          (held === 1 ? "one addon" : (held === null ? "?" : grouped(held)) + " addons") + ".");
+      } else if (file.state === "unreadable") {
+        sourcesLine(item, "sources-error", "wowlab could not read WowUp's list: " +
+          (hubStr(file.error) ? visible(file.error) : "no reason given") + ".");
+      }
+    });
+    if (!read.error && !anyRead && !read.files.some((f) => f.state === "unreadable")) {
+      sourcesLine(item, "sources-clear",
+        "wowlab found no WowUp list on this computer, so it cannot tell where these addons came from.");
+    }
+    const records = read.records.filter((r) => r.installation !== "other_folder");
+    sourcesList(item, "In WowUp's list",
+      records.filter((r) => texts(r.folders_here).length > 0).map(sourcesRecord));
+    sourcesList(item, "In WowUp's list, with none of their folders here",
+      records.filter((r) => texts(r.folders_here).length === 0).map(sourcesRecord));
+    const loose = read.folders.filter((f) => f.unclaimed === true).map((f) => visible(f.folder));
+    if (loose.length) {
+      sourcesLine(item, "sources-what",
+        "Not in WowUp's list, the only addon manager's list wowlab reads (" + grouped(loose.length) + ")");
+      sourcesLine(item, "sources-loose", loose.join(", "));
+    }
+    if (anyRead && managed) {
+      sourcesLine(item, "sources-note",
+        "An out-of-date record means the addon changed after WowUp last wrote its list, by hand or by another app.");
+    }
+    return item;
+  }
+
+  function drawSources() {
+    const flavor = byId("hub-flavor").value;
+    const several = sources.flavors.length > 1;
+    byId("sources-lines").replaceChildren(
+      ...sources.flavors.filter((r) => !flavor || "f:" + r.flavor === flavor).map((r) => sourcesBlock(r, several)),
+    );
+  }
+
+  byId("hub-flavor").addEventListener("change", () => drawSources());
+
   // ─── the confirm step (M14-02) ───
 
   // The note under a plan or a confirmed run. `#confirm-note` is a status
@@ -5959,6 +6841,7 @@
       return;
     }
     const data = await reply.json();
+    takeLinkOrigins(data.link_origins);
     if (typeof data.home === "string") home = data.home;
     if (typeof data.sep === "string" && data.sep) sep = data.sep;
     offeredCommands = Array.isArray(data.commands) ? data.commands : [];

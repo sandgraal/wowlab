@@ -242,11 +242,12 @@ def test_account_is_the_first_tab_and_opens_by_default(server: Any) -> None:
     body = _page(server).body.decode("utf-8")
     tabs = re.findall(r'<button id="tab-([a-z]+)" class="tab"[^>]*role="tab"', body)
     # Explorer moves after Character.
-    # M22-20: Practice after Crew.
+    # M22-20: Practice after Look up.
     assert tabs == [
         "account",
         "character",
         "crew",
+        "lookup",
         "practice",
         "explorer",
         "gaps",

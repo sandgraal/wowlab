@@ -305,6 +305,7 @@
   "game_name": "Labchard Labrealmg",
   "region": null,
   "region_absent": "the portal setting in WTF/Config.wtf is \"test\", not one of us, eu, kr, tw, cn",
+  "saved_links": [],
   "flavor_folder": "_classic_beta_",
   "dressing": {
     "items": [

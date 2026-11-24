@@ -155,35 +155,38 @@ def _twink_steps(out: dict[str, Any]) -> list[dict[str, Any]]:
 def test_the_links_are_static_markup_with_no_href() -> None:
     page = (_TEMPLATES / "page.html").read_text(encoding="utf-8")
     anchors = re.findall(r"<a\b[^>]*>", page)
-    assert anchors == [
-        '<a id="char-dressing-link" class="dressing-link" target="_blank" '
-        'rel="noopener noreferrer" hidden>',
+    twink_links = [
         '<a id="char-twink-planner" class="dressing-link" target="_blank" '
         'rel="noopener noreferrer" hidden>',
         '<a id="char-twink-wowhead" class="dressing-link" target="_blank" '
         'rel="noopener noreferrer" hidden>',
     ]
+    assert anchors[-2:] == twink_links  # after the dressing room's and M21-03's
     script = (_TEMPLATES / "page.js").read_text(encoding="utf-8")
-    assert script.count('const PLANNER_ORIGIN = "https://forevertwinking.com";') == 1
-    # Each twink link takes only an address checked against its own origin.
-    assert script.count("outsideAddress(panel.planner, PLANNER_ORIGIN)") == 1
-    assert script.count("outsideAddress(c.wowhead, DRESSING_ORIGIN)") == 1
+    # Since M21-03 the page names no origin: each twink link takes only an
+    # address checked against the origin the server's allowlist gives its
+    # own site (`link_sites.toml`; test_ui_links.py).
+    assert "PLANNER_ORIGIN" not in script and "DRESSING_ORIGIN" not in script
+    assert script.count('outsideAddress(panel.planner, "forevertwinking")') == 1
+    assert script.count('outsideAddress(c.wowhead, "wowhead")') == 1
     assert script.count("link.href = checked;") == 1
-    # The one sink's helper: its definition and three calls, each given an
-    # address `outsideAddress` returned for that link's own origin.
-    assert script.count("pointLink(") == 4
+    # The one sink's helper: its definition and its calls, each given an
+    # address `outsideAddress` returned for that link's own site (the
+    # dressing room, the three saved links, the planner, the Wowhead link).
+    assert script.count("pointLink(") == 5
     assert script.count("function pointLink(link, checked) {") == 1
     for call, checked in (
         ("pointLink(link, checked);", "const checked = dressingAddress(dressing.url);"),
+        ("pointLink(link, checked);", "const checked = outsideAddress(row.url, slot.site);"),
         (
             "pointLink(link, planner);",
-            "const planner = outsideAddress(panel.planner, PLANNER_ORIGIN);",
+            'const planner = outsideAddress(panel.planner, "forevertwinking");',
         ),
-        ("pointLink(link, address);", "outsideAddress(c.wowhead, DRESSING_ORIGIN)"),
+        ("pointLink(link, address);", 'outsideAddress(c.wowhead, "wowhead")'),
     ):
-        assert script.count(call) == 1, call
+        assert script.count(call) == (2 if call == "pointLink(link, checked);" else 1), call
         assert script.count(checked) == 1, checked
-        assert script.index(checked) < script.index(call), call
+        assert script.index(checked) < script.index(call, script.index(checked)), call
     assert script.count('runJson(["char", "twink"], params)') == 1
 
 
