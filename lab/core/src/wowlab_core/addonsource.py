@@ -181,12 +181,14 @@ class ManagerRecord(_Model):
     external_id: str | None
     external_url: str | None
     installed_version: str | None
-    latest_version: str | None  # as of WowUp's last check, not now
+    latest_version: str | None  # as of the app's last check, not now
     folders: tuple[str, ...]  # `installedFolderList`, else `installedFolders` split
-    client_type: int | None  # WowUp's own number for the game folder's kind
-    installation_id: str | None  # WowUp's id of the game folder it installed into
+    client_type: int | None  # WowUp's own number for the game folder's kind (CurseForge: None)
+    installation_id: str | None  # the app's id of the game folder it installed into
     installed_at: str | None  # `installedAt` as written (ISO 8601 text)
-    ignored: bool | None  # `isIgnored`: the player told WowUp to leave it alone
+    # WowUp's `isIgnored`, CurseForge's `preferenceIsIgnored`: the app's own
+    # mark; what it changes in the app is **[verify]**.
+    ignored: bool | None
     # CurseForge: the ids and dates (`fileDate`, as written) of the installed
     # and latest files, and its versions are file names (`fileName`, as
     # written, `.zip` and all).
@@ -313,7 +315,7 @@ class FolderSource(_Model):
 
 class OtherInstallation(_Model):
     installation_id: str
-    folder: str  # the folder holding WowUp's `location` for it
+    folder: str  # the flavor folder its installation's location names
     records: int
 
 
