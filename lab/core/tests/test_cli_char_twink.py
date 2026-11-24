@@ -145,8 +145,10 @@ def test_the_default_bracket_is_the_first_at_or_above_the_level(served: Tables, 
     assert p.weights_source == "default" and r.config_source == "default"
     assert p.tables_build == BUILD
     assert r.flavor_folder == FLAVOR and r.character == CHARACTER
-    # The 19 list as the full tables ranked it.
-    assert ids(slot(r, 1)) == [271812, 4368, 4373]
+    # The 19 list as the full tables ranked it. Discarded Circlet (271812,
+    # required level 1, item level 43) is left out: a required level of 1 is
+    # none, and its item level is far above 19.
+    assert ids(slot(r, 1)) == [4368, 4373]
     assert ids(slot(r, 16)) == [16889, 3452, 16894, 5613, 276888]
     # No trinket with a stat the affliction weights count, at 19.
     assert slot(r, 13).candidates == [] and slot(r, 13).gap is None
@@ -189,8 +191,8 @@ def test_the_29_list_slot_by_slot(served: Tables, root: Path) -> None:
     p = r.twink
     assert (p.bracket, p.bracket_from) == (29, "asked")
     expected = {
-        1: [253981, 253955, 271812, 253975, 7050],
-        2: [288926, 276900, 271807, 272075, 277981],
+        1: [253981, 253955, 253975, 7050, 253949],
+        2: [288926, 272075, 7427, 10299, 19537],
         3: [11884, 215365, 4314, 5274, 17047],
         5: [253967, 253961, 253907, 7065, 14158],
         6: [20164, 16975, 253931, 253925, 215366],
@@ -202,13 +204,18 @@ def test_the_29_list_slot_by_slot(served: Tables, root: Path) -> None:
         12: [288931, 288930, 19521, 19525, 282283],
         13: [21120, 21566, 21568],
         14: [21120, 21566, 21568],
-        15: [19529, 19533, 271810, 3719, 20427],
+        15: [19529, 19533, 3719, 20427, 20428],
         16: [249392, 15109, 249393, 281312, 271767],
-        17: [276897, 15935, 15934, 2944, 249394],
+        17: [15935, 15934, 2944, 249394, 15975],
         18: [6677, 5246, 5818, 5250, 5356],
     }
     assert {s.slot: ids(s) for s in p.slots} == expected
     assert all(c.required_level <= 29 for s in p.slots for c in s.candidates)
+    # A required level of 1 with an item level far above the bracket: A
+    # Lesson in Destruction (276897, item level 38), Denric's Dog Tags
+    # (276900), Discarded Circlet (271812) are quest rewards, left out.
+    every = {c.item_id for s in p.slots for c in s.candidates}
+    assert every.isdisjoint({276897, 276900, 271812})
     assert p.planner == PLANNER and p.planner_absent is None
 
 
@@ -242,11 +249,12 @@ def test_a_caster_weapon_carries_its_spell_power(served: Tables, root: Path) -> 
 
 
 def test_an_item_with_suffixes_is_scored_per_suffix(served: Tables, root: Path) -> None:
-    rod = slot(report("--bracket", "29"), 17).candidates[1]
+    rod = slot(report("--bracket", "29"), 17).candidates[0]
     assert (rod.item_id, rod.name) == (15935, "Durable Rod")
     assert rod.suffix is not None
     assert (rod.suffix.id, rod.suffix.name) == (12761, "of Shadow Wrath")
-    assert rod.wowhead == "https://www.wowhead.com/forever/item=15935?bonus=12761"
+    # No `?bonus=` until Wowhead is confirmed to read it (twink.WOWHEAD_BONUS).
+    assert rod.wowhead == "https://www.wowhead.com/forever/item=15935"
     assert rod.score == 10.0 and rod.suffix.score == 10.0
     others = rod.other_suffixes
     assert others and all(o.score <= rod.score for o in others)
@@ -268,7 +276,7 @@ def test_the_worn_items_and_the_gap(served: Tables, root: Path) -> None:
     waist = slot(r, 6)
     assert waist.worn is not None and waist.worn.item_id == 14113
     assert waist.worn.score is None and waist.gap is None
-    assert waist.worn.unscored is not None and "not in the game tables" in waist.worn.unscored
+    assert waist.worn.unscored == "a hotfix the copy of the game tables wowlab downloads lacks"
     # The suffix is the link's bonus id that is a suffix list (12720, of the Owl).
     off = slot(r, 17).worn
     assert off is not None and off.suffix is not None
@@ -278,7 +286,7 @@ def test_the_worn_items_and_the_gap(served: Tables, root: Path) -> None:
         "of the Owl",
         0.55,
     )
-    assert off.wowhead == "https://www.wowhead.com/forever/item=15970?bonus=12720"
+    assert off.wowhead == "https://www.wowhead.com/forever/item=15970"
     assert not off.above_cap
     # The shirt and the tabard are not twink slots.
     assert {s.slot for s in r.twink.slots}.isdisjoint({4, 19})
@@ -362,11 +370,12 @@ def test_the_text_answer(served: Tables, root: Path) -> None:
     )
     assert "  slot  1 Head: empty" in out
     assert (
-        "    best: Filigreed Shadow Circlet (requires level 25): score 23.6, 12 stamina, 14 "
+        "    best: Filigreed Shadow Circlet (requires level 25, binds when picked up): score 23.6, "
+        "12 stamina, 14 "
         "shadow damage" in out
     )
-    assert "    best: Durable Rod of Shadow Wrath (requires level 29): score 10" not in out
-    assert "    also: Durable Rod of Shadow Wrath (requires level 29): score 10" in out
+    assert "    best: Durable Rod of Shadow Wrath (requires level 29): score 10" in out
+    assert "    also: Durable Rod of Shadow Wrath (requires level 29): score 10" not in out
     assert "  slot  6 Waist: Aboriginal Sash of the Sorcerer: not scored (" in out
     assert "  slot  5 Chest: Barbaric Linen Vest: score 3.6" in out
     assert "    gap: the best candidate scores 17.6 more" in out
@@ -392,8 +401,13 @@ def test_the_text_is_player_copy(served: Tables, root: Path, args: tuple[str, ..
 def test_the_notes(served: Tables, root: Path) -> None:
     out = run("--bracket", "29", "--notes").stdout
     flat = " ".join(out.split())
-    assert "Where each item comes from (a quest, a drop) is not known yet." in flat
-    assert "have no stats in the copy wowlab downloads" in flat
+    assert (
+        "Where each item comes from (a quest, a drop, a vendor, a craft) is not known yet" in flat
+    )
+    assert "are sent by the server as hotfixes, which the copy wowlab downloads lacks" in flat
+    assert "items only the other side's quests or vendors give are not yet left out" in flat
+    assert "Crit, hit and haste weights count per point of rating" in flat
+    assert "named as a test, placeholder or retired item were left out" in flat
     assert "A two-handed weapon also takes the off hand" in flat
     assert "a weight set replaces the whole set" in flat
     assert os.sep + "twink.toml" in out or "/twink.toml" in out

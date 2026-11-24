@@ -775,7 +775,7 @@ def run_commands(inst: install.Install, sweep: Sweep) -> None:
             sweep.cli("char", sub, *ch, "--json")
         # M22-06: `char twink` downloads its game tables on a first run, so it
         # runs only when every one is already cached for this version.
-        if f.version and not gamedata.missing_tables(twink.TABLES, f.version):
+        if _cached(twink.TABLES, f.version):
             sweep.cli("char", "twink", *ch, "--json")
         else:
             sweep.skipped.append(

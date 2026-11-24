@@ -1846,7 +1846,10 @@ def _twink_stats(stats: Sequence[twink.TwinkStat]) -> str:
 
 def _twink_item(c: twink.TwinkCandidate) -> str:
     name = c.name + (f" {c.suffix.name}" if c.suffix and c.suffix.name else "")
-    level = f"requires level {c.required_level}" if c.required_level else "no level required"
+    # A required level of 1 asks nothing more than 0 does.
+    level = f"requires level {c.required_level}" if c.required_level > 1 else "no level required"
+    if c.binds_on_pickup:
+        level += ", binds when picked up"
     return f"{name} ({level}): score {c.score:g}, {_twink_stats(c.stats)}"
 
 
@@ -1943,6 +1946,8 @@ def char_twink(
             weights_source=source.source,
             version=chosen.version,
             top=top,
+            # Home written as "~", as the text output and the page show it.
+            config_file=_home_words(source.user_file),
         )
     except twink.TwinkError as exc:
         raise CliError(str(exc), EXIT_USAGE) from exc
@@ -1990,9 +1995,6 @@ def char_twink(
         *panel.notes,
         "Each item links to its Wowhead page in --json and in wowlab ui; the planner link opens "
         "ForeverTwinking. wowlab sends nothing to either.",
-        f"To change the weights, the brackets or a class's gear types, put the values to change "
-        f"in {_home_words(source.user_file)} (create the folder if it is missing); a value there "
-        "replaces the shipped one, and a weight set replaces the whole set.",
     ]
     _say_notes(standing, notes_out, caveat=caveat, keep=[_home_words(source.user_file)])
 

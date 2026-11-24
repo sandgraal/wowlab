@@ -20,11 +20,17 @@ The rules, each **[verify]** on Forever:
   `MinFactionID` faction does not start the character's race at Hated
   (`Faction.ReputationRaceMasks<n>` and `ReputationBase_<n>`: the other
   side's battleground factions), and that is not an item with no required
-  level and an item level more than `no_level_margin` above the cap (most
-  are raid or dungeon drops out of reach at the cap).
+  level (`RequiredLevel` 0 or 1) and an item level more than
+  `no_level_margin` above the cap (mostly quest rewards, whose quest's level
+  is the real gate, M22-08). An armour type the class learns at a level
+  above the cap (`armor_from`) is left out; a one-handed weapon also fills
+  the off hand from the class's `dual_wield_from` level, and an off-hand
+  weapon fills nothing for a class that does not dual wield.
   About half of the armour and weapons in `Item` have no `ItemSparse`
-  row in wago.tools' export (at 70888 and 71037: 11231 of 19079; why is not
-  known), so they cannot be candidates; the report counts them.
+  row in wago.tools' export (at 70888 and 71037: 11231 of 19079): the server
+  sends these items as hotfixes, which wago.tools' copy lacks; wowlab will
+  read them from the client's hotfix cache (M22-23; GLOSSARY, "Hotfix
+  cache"). Until then they cannot be candidates; the report counts them.
 - **Stats.** The game tables hold no stat amounts, only each stat's share
   of the item's budget (`StatPercentEditor`, per 10000). The amount is that
   share of `RandPropPoints` at the item's level, in the column of its
@@ -76,6 +82,7 @@ from wowlab_core import dressing, gear, snapshot
 __all__ = [
     "CONFIG_FILE",
     "TABLES",
+    "WOWHEAD_BONUS",
     "ClassGear",
     "Planner",
     "TwinkCandidate",
@@ -116,6 +123,10 @@ TABLES: tuple[str, ...] = (
 )
 """The game tables the panel is read from, by name (L6: table names only)."""
 
+WOWHEAD_BONUS = False
+"""Whether a Wowhead item address carries `?bonus=<suffix>`: off until the
+owner's check (M21-O2) confirms Wowhead reads it; M21-03's link builder
+takes this over."""
 TOP_DEFAULT = 5
 TOP_MAX = 20
 LEVEL_MAX = 1000
@@ -152,6 +163,11 @@ _ARMOR_COLUMN: Mapping[int, int] = {
     **dict.fromkeys((2, 22, 23, 11, 16, 9, 14, 28), 2),  # neck, off hand, finger, back, ...
 }
 _TWO_HAND_TYPE = 17  # Item.InventoryType of a two-handed weapon
+_ONE_HAND_TYPE, _OFF_HAND_WEAPON_TYPE = 13, 22  # a one-hander, an off-hand weapon
+_OFF_HAND_SLOT = 17  # INVSLOT_OFFHAND, as `char gear` numbers it
+_BINDS_ON_PICKUP = 1  # ItemSparse.Bonding [verify]
+_NO_LEVEL = 1  # a RequiredLevel of 0 or 1 asks nothing of the character
+_CLASS_KEYS = frozenset({"armor", "weapons", "armor_from", "dual_wield_from"})
 _FACTION_SIDES = 4  # Faction.ReputationRaceMasks0..3 and ReputationBase_0..3
 _HATED = -42000  # the lowest standing: a race that starts there cannot earn the faction's
 
@@ -175,6 +191,14 @@ class TwinkConfigError(ValueError):
 class ClassGear(_Model):
     armor: list[int]  # Item.SubclassID of armour (ClassID 4)
     weapons: list[int]  # Item.SubclassID of weapons (ClassID 2)
+    armor_from: dict[int, int] = {}  # armour type: the level it is learned at
+    dual_wield_from: int | None = None  # the level from which a one-hander goes in the off hand
+
+
+def _level(where: str, value: object) -> int:
+    if type(value) is not int or not 1 <= value <= LEVEL_MAX:
+        raise TwinkConfigError(f"{where}: {value!r} is not a level from 1 to {LEVEL_MAX}")
+    return value
 
 
 class Planner(_Model):
@@ -358,11 +382,30 @@ def parse_config(text: str, base: TwinkConfig | None = None) -> TwinkConfig:
     for key, value in _table("[classes]", data.get("classes", {})).items():
         token = _word("[classes]", key, _CLASS)
         table = _table(f"[classes.{key}]", value)
-        if set(table) != {"armor", "weapons"}:
-            raise TwinkConfigError(f"[classes.{key}] needs armor and weapons, and nothing else")
+        if not {"armor", "weapons"} <= set(table) <= _CLASS_KEYS:
+            raise TwinkConfigError(
+                f"[classes.{key}] needs armor and weapons, and may have armor_from and "
+                "dual_wield_from, and nothing else"
+            )
+        armor = _ints(f"[classes.{key}] armor", table["armor"], 0, 1000)
+        armor_from: dict[int, int] = {}
+        for sub, level in _table(
+            f"[classes.{key}] armor_from", table.get("armor_from", {})
+        ).items():
+            number = _number_key(f"[classes.{key}] armor_from", sub, 1000)
+            if number not in armor:
+                raise TwinkConfigError(
+                    f"[classes.{key}] armor_from: {sub} is not one of the class's armor types"
+                )
+            armor_from[number] = _level(f"[classes.{key}] armor_from {sub}", level)
+        dual = table.get("dual_wield_from")
         classes[token] = ClassGear(
-            armor=_ints(f"[classes.{key}] armor", table["armor"], 0, 1000),
+            armor=armor,
             weapons=_ints(f"[classes.{key}] weapons", table["weapons"], 0, 1000),
+            armor_from=armor_from,
+            dual_wield_from=(
+                None if dual is None else _level(f"[classes.{key}] dual_wield_from", dual)
+            ),
         )
     names = set(stats.values())
     for key, sets in _table("[weights]", data.get("weights", {})).items():
@@ -442,6 +485,7 @@ class _Item:
     allowable_race: int
     shares: tuple[tuple[int, int], ...]  # (stat, share per 10000) of the item's own stats
     flags_4: int
+    bonding: int  # ItemSparse.Bonding: 1 binds when picked up [verify]
     min_faction: int  # ItemSparse.MinFactionID: the faction whose standing it needs, or 0
 
 
@@ -516,6 +560,7 @@ def load_tables(build: str, rows: Callable[[str], Iterable[Mapping[str, str]]]) 
             allowable_race=-1 if low == -1 and high == -1 else ((high << 32) | (low & 0xFFFFFFFF)),
             shares=tuple(shares),
             flags_4=_int("ItemSparse", row, "Flags_4"),
+            bonding=_int("ItemSparse", row, "Bonding"),
             min_faction=_int("ItemSparse", row, "MinFactionID"),
         )
     gear_ids = [i for i, k in kinds.items() if k[0] in (_ITEM_CLASS_WEAPON, _ITEM_CLASS_ARMOR)]
@@ -614,6 +659,7 @@ class TwinkCandidate(_Model):
     wowhead: str | None
     source: str | None  # where it comes from (M22-08); None: not known yet
     worn: bool  # the character wears this item, with this suffix, in this slot
+    binds_on_pickup: bool  # ItemSparse.Bonding 1: it binds to whoever picks it up [verify]
 
 
 class TwinkWorn(_Model):
@@ -657,6 +703,8 @@ class TwinkPanel(_Model):
     gear_without_details: int
     gear_in_item: int
     no_level_left_out: int  # items with no required level, too far above the cap
+    by_name_left_out: int  # test, placeholder or retired items, by name
+    config_file: str | None  # where your own twink.toml goes, as the caller words it
     other_side_left_out: int  # items needing standing the character's race cannot earn
     words: str  # the one line that opens the text output and the panel
     notes: list[str]
@@ -763,7 +811,9 @@ def wowhead_link(item_id: int, bonus: int | None, version: str | None) -> str | 
         return None
     base = sites.rooms[room].removesuffix("/dressing-room")
     url = f"{sites.site.origin}{base}/item={item_id}"
-    return url if bonus is None else f"{url}?{urlencode({'bonus': bonus})}"
+    if bonus is None or not WOWHEAD_BONUS:
+        return url
+    return f"{url}?{urlencode({'bonus': bonus})}"
 
 
 def planner_link(
@@ -857,8 +907,15 @@ def _standing_open(tables: TwinkTables, item: _Item, race_id: int | None) -> boo
     return True
 
 
-def _usable(item: _Item, gear_types: ClassGear, class_id: int | None, race_id: int | None) -> bool:
+def _usable(
+    item: _Item, gear_types: ClassGear, class_id: int | None, race_id: int | None, bracket: int
+) -> bool:
     if item.class_id == _ITEM_CLASS_ARMOR and item.subclass_id not in gear_types.armor:
+        return False
+    if (
+        item.class_id == _ITEM_CLASS_ARMOR
+        and gear_types.armor_from.get(item.subclass_id, 0) > bracket
+    ):
         return False
     if item.class_id == _ITEM_CLASS_WEAPON and item.subclass_id not in gear_types.weapons:
         return False
@@ -880,7 +937,7 @@ def _worn(
         why = (
             "the link has no item id"
             if slot.item_id is None
-            else "not in the game tables wowlab downloads"
+            else "a hotfix the copy of the game tables wowlab downloads lacks"
         )
         return TwinkWorn(
             item_id=slot.item_id,
@@ -949,6 +1006,7 @@ def build_panel(
     weights_source: Literal["default", "user"],
     version: str | None,
     top: int = TOP_DEFAULT,
+    config_file: str | None = None,
 ) -> TwinkPanel:
     """The panel. `filled` is `gear.rows`' first list; `version` the client's
     (it picks the Wowhead room). Raises `TwinkError` for a class or weight
@@ -980,21 +1038,36 @@ def build_panel(
     by_slot: dict[int, list[_Option]] = {}
     no_level_left_out = 0
     other_side_left_out = 0
+    by_name_left_out = 0
+    dual = gear_types.dual_wield_from is not None and gear_types.dual_wield_from <= bracket
     for item in tables.items.values():
-        slots = config.slots.get(item.inventory_type)
+        slots = list(config.slots.get(item.inventory_type, []))
+        if item.class_id == _ITEM_CLASS_WEAPON:
+            # The off hand takes a one-handed weapon only from a class that
+            # dual wields at the bracket's level; otherwise an off-hand
+            # weapon has no slot at all.
+            if item.inventory_type == _OFF_HAND_WEAPON_TYPE and not dual:
+                slots = []
+            if item.inventory_type == _ONE_HAND_TYPE and dual and _OFF_HAND_SLOT not in slots:
+                slots.append(_OFF_HAND_SLOT)
         if (
             not slots
             or not item.name
             or item.quality not in _QUALITY_COLUMN
             or item.required_level > bracket
-            or not _usable(item, gear_types, class_id, race_id)
-            or _skipped_name(item.name, config.filters)
+            or not _usable(item, gear_types, class_id, race_id, bracket)
         ):
+            continue
+        if _skipped_name(item.name, config.filters):
+            by_name_left_out += 1
             continue
         if not _standing_open(tables, item, race_id):
             other_side_left_out += 1
             continue
-        if item.required_level == 0 and item.item_level > bracket + config.filters.no_level_margin:
+        if (
+            item.required_level <= _NO_LEVEL
+            and item.item_level > bracket + config.filters.no_level_margin
+        ):
             no_level_left_out += 1
             continue
         option = _options(tables, item, config, weights)
@@ -1031,6 +1104,7 @@ def build_panel(
                 stats=_stats(o.amounts, config),
                 wowhead=wowhead_link(o.item.id, o.suffix.id if o.suffix else None, version),
                 source=sources.get(o.item.id),
+                binds_on_pickup=o.item.bonding == _BINDS_ON_PICKUP,
                 worn=worn is not None
                 and worn.item_id == o.item.id
                 and (worn.suffix.id if worn.suffix else None)
@@ -1060,9 +1134,9 @@ def build_panel(
         tables,
         level,
         bracket,
-        no_level_left_out,
+        _LeftOut(no_level_left_out, other_side_left_out, by_name_left_out),
         config.filters.no_level_margin,
-        other_side_left_out,
+        config_file,
     )
     words = f"Level {bracket} bracket, weights {weights_name}"
     if level is not None and level > bracket:
@@ -1085,18 +1159,28 @@ def build_panel(
         gear_without_details=tables.gear_without_details,
         gear_in_item=tables.gear_in_item,
         no_level_left_out=no_level_left_out,
+        by_name_left_out=by_name_left_out,
+        config_file=config_file,
         other_side_left_out=other_side_left_out,
         words=words,
         notes=notes,
     )
 
 
-SOURCE_NOTE = "Where each item comes from (a quest, a drop) is not known yet."
+SOURCE_NOTE = (
+    "Where each item comes from (a quest, a drop, a vendor, a craft) is not known yet, so items "
+    "only the other side's quests or vendors give are not yet left out, and a bind-on-pickup "
+    "item someone crafts needs that profession."
+)
 SCORE_NOTE = (
     "A score is each stat times its weight, summed. The stat amounts are worked out from the "
     "game tables' stat budget, as WoWSims' Forever sim does, and are not yet confirmed against "
-    "the game's tooltips. Weapon damage, armour and set bonuses are not scored, and a weapon type "
-    "still needs its skill trained."
+    "the game's tooltips. Weapon damage, armour and set bonuses are not scored, so the lists for "
+    "a melee weapon are weak, and a weapon type still needs its skill trained."
+)
+RATING_NOTE = (
+    "Crit, hit and haste weights count per point of rating; if a rating point is worth less of "
+    "a percent at a higher level, as in later clients, the same weight is off between brackets."
 )
 SUFFIX_NOTE = (
     'An item with random suffixes ("of the Owl") is scored with each suffix; the best is shown '
@@ -1106,33 +1190,62 @@ TWO_HAND_NOTE = (
     "A two-handed weapon also takes the off hand: compare it with the main hand and off hand "
     "together."
 )
+LEVEL_NOTE = (
+    "An armour type a class learns later (mail or plate at 40) is left out of a lower bracket, "
+    "and a one-handed weapon fills the off hand only for a class that dual wields by then."
+)
+
+
+@dataclass(frozen=True, slots=True)
+class _LeftOut:
+    no_level: int
+    other_side: int
+    by_name: int
+
+
+def _plural(n: int, one: str, many: str) -> str:
+    return f"{n} {one if n == 1 else many}"
 
 
 def _notes(
     tables: TwinkTables,
     level: int | None,
     bracket: int,
-    no_level: int,
+    left: _LeftOut,
     margin: int,
-    other_side: int,
+    config_file: str | None,
 ) -> list[str]:
-    notes = [SCORE_NOTE, SUFFIX_NOTE, TWO_HAND_NOTE, SOURCE_NOTE]
-    if other_side:
+    notes = [SCORE_NOTE, RATING_NOTE, SUFFIX_NOTE, TWO_HAND_NOTE, LEVEL_NOTE, SOURCE_NOTE]
+    if config_file is not None:
         notes.append(
-            f"{other_side} items that need standing with the other side's factions (such as "
-            "the other side's battleground rewards) were left out."
+            f"The weights, the brackets and each class's gear types can be edited: put the values "
+            f"to change in {config_file} (create the folder if it is missing); a value there "
+            "replaces the shipped one, and a weight set replaces the whole set."
+        )
+    if left.other_side:
+        were = "item that needs" if left.other_side == 1 else "items that need"
+        notes.append(
+            f"{left.other_side} {were} standing with the other side's factions (such as the other "
+            f"side's battleground rewards) {'was' if left.other_side == 1 else 'were'} left out."
+        )
+    if left.by_name:
+        notes.append(
+            f"{_plural(left.by_name, 'item', 'items')} named as a test, placeholder or retired "
+            f"item {'was' if left.by_name == 1 else 'were'} left out."
         )
     if tables.gear_without_details:
         notes.append(
             f"{tables.gear_without_details} of the {tables.gear_in_item} weapons and armour "
-            "pieces the game tables list have no stats in the copy wowlab downloads, so they are "
-            "never candidates, and a worn one is not scored."
+            "pieces the game tables list are sent by the server as hotfixes, which the copy "
+            "wowlab downloads lacks, so they are never candidates and a worn one is not scored; "
+            "a later version will read them from the game's own hotfix cache."
         )
-    if no_level:
+    if left.no_level:
         notes.append(
-            f"{no_level} items with no required level were left out because their item level "
-            f"is more than {margin} above the bracket's top level: most are raid or dungeon "
-            f"drops a level {bracket} character cannot reach."
+            f"{_plural(left.no_level, 'item', 'items')} with no required level "
+            f"{'was' if left.no_level == 1 else 'were'} left out because the item level is more "
+            f"than {margin} above the bracket's top level: most are quest rewards, and the "
+            "quest's level is the real gate."
         )
     if level is None:
         notes.append("The record has no level, so the first bracket is shown.")

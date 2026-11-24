@@ -169,6 +169,21 @@ def test_the_links_are_static_markup_with_no_href() -> None:
     assert script.count("outsideAddress(panel.planner, PLANNER_ORIGIN)") == 1
     assert script.count("outsideAddress(c.wowhead, DRESSING_ORIGIN)") == 1
     assert script.count("link.href = checked;") == 1
+    # The one sink's helper: its definition and three calls, each given an
+    # address `outsideAddress` returned for that link's own origin.
+    assert script.count("pointLink(") == 4
+    assert script.count("function pointLink(link, checked) {") == 1
+    for call, checked in (
+        ("pointLink(link, checked);", "const checked = dressingAddress(dressing.url);"),
+        (
+            "pointLink(link, planner);",
+            "const planner = outsideAddress(panel.planner, PLANNER_ORIGIN);",
+        ),
+        ("pointLink(link, address);", "outsideAddress(c.wowhead, DRESSING_ORIGIN)"),
+    ):
+        assert script.count(call) == 1, call
+        assert script.count(checked) == 1, checked
+        assert script.index(checked) < script.index(call), call
     assert script.count('runJson(["char", "twink"], params)') == 1
 
 
@@ -182,7 +197,7 @@ def test_the_csp_is_unchanged_by_the_panel(server: Any) -> None:
 
 
 def test_nothing_runs_until_asked_then_the_gaps_show(
-    server: Any, both: Path, tables: Path, tmp_path: Path
+    server: Any, both: Path, tables: Path, tmp_path: Path, home: Path
 ) -> None:
     scenario = _scenario(server, [{"twink": "look"}, {"twink": "show"}])
     run = _twink_run(scenario)
@@ -195,7 +210,7 @@ def test_nothing_runs_until_asked_then_the_gaps_show(
     looked, shown = _twink_steps(out)
     # Before Show: the pickers' defaults and no run of char twink.
     assert looked["panelHidden"] is False and looked["showDisabled"] is False
-    assert looked["brackets"] == [["", "The next one for this level"]]
+    assert looked["brackets"] == [["", "The first at or above this level"]]
     assert looked["weights"] == [["", "The class's first"]]
     assert looked["slots"] == [] and looked["plannerHidden"] is True
     bodies = _only_api(out)
@@ -217,12 +232,15 @@ def test_nothing_runs_until_asked_then_the_gaps_show(
     assert chest["worn"] == "Worn: Barbaric Linen Vest · score 3.6"
     waist = next(s for s in shown["slots"] if s["slot"] == "Waist")
     assert waist["worn"] == (
-        "Worn: Aboriginal Sash of the Sorcerer · not scored: not in the game tables wowlab "
-        "downloads"
+        "Worn: Aboriginal Sash of the Sorcerer · not scored: a hotfix the copy of the game "
+        "tables wowlab downloads lacks"
     )
     assert shown["plannerHidden"] is False
     assert shown["plannerHref"] == PLANNER.replace("l29", "l19")
     assert shown["notes"] == panel["notes"]
+    # Where the weights can be edited, the home folder written as "~".
+    edit = [n for n in shown["notes"] if n.startswith("The weights, the brackets and each class")]
+    assert len(edit) == 1 and "twink.toml" in edit[0] and str(home) not in edit[0]
     assert not out["traps"]
 
 

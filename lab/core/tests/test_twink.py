@@ -10,6 +10,7 @@ their edges. Nothing here reads an install or the network.
 from __future__ import annotations
 
 import csv
+import dataclasses
 from collections.abc import Iterator
 from pathlib import Path
 
@@ -224,12 +225,17 @@ def test_the_default_bracket(config: twink.TwinkConfig) -> None:
     assert twink.default_bracket(config, None) == (19, "first")
 
 
-def test_the_links(config: twink.TwinkConfig) -> None:
+def test_the_links(config: twink.TwinkConfig, monkeypatch: pytest.MonkeyPatch) -> None:
     assert twink.wowhead_link(6537, None, VERSION) == "https://www.wowhead.com/forever/item=6537"
+    # `?bonus=` is off until the owner's check confirms Wowhead reads it.
+    assert twink.WOWHEAD_BONUS is False
+    assert twink.wowhead_link(6537, 12720, VERSION) == "https://www.wowhead.com/forever/item=6537"
+    monkeypatch.setattr(twink, "WOWHEAD_BONUS", True)
     assert (
         twink.wowhead_link(6537, 12720, VERSION)
         == "https://www.wowhead.com/forever/item=6537?bonus=12720"
     )
+    monkeypatch.setattr(twink, "WOWHEAD_BONUS", False)
     assert twink.wowhead_link(6537, None, None) is None
     assert twink.wowhead_link(6537, None, "9.9.9.1") is None
     assert twink.planner_link(config, "WARLOCK", 5, 29) == (
@@ -291,3 +297,131 @@ def test_an_empty_record_has_every_slot_empty(
     assert all(len(s.candidates) <= 1 for s in panel.slots)
     assert all(s.gap == s.candidates[0].score for s in panel.slots if s.candidates)
     assert "The record has no level, so the first bracket is shown." in panel.notes
+
+
+# ─── review round 1: levels, dual wield, binding, the user file ──────────────
+
+
+def _item(item_id: int, **fields: object) -> twink._Item:
+    """A constructed item (L8: a boundary case of the class rules)."""
+    base: dict[str, object] = {
+        "id": item_id,
+        "name": f"Constructed {item_id}",
+        "class_id": 2,
+        "subclass_id": 15,  # dagger
+        "inventory_type": 13,  # one-hand
+        "item_level": 30,
+        "required_level": 25,
+        "quality": 3,
+        "allowable_class": -1,
+        "allowable_race": -1,
+        "shares": ((7, 10000),),  # stamina
+        "flags_4": 0,
+        "bonding": 2,
+        "min_faction": 0,
+    }
+    base.update(fields)
+    return twink._Item(**base)  # type: ignore[arg-type]
+
+
+def _panel(
+    tables: twink.TwinkTables, config: twink.TwinkConfig, class_file: str, bracket: int
+) -> twink.TwinkPanel:
+    return twink.build_panel(
+        tables,
+        config,
+        filled=[],
+        slot_names={},
+        class_file=class_file,
+        class_id=None,
+        race_id=5,
+        level=bracket,
+        bracket=bracket,
+        weights_name=None,
+        weights_source="default",
+        version=VERSION,
+        config_file="~/config/wowlab/twink.toml",
+    )
+
+
+def _with(tables: twink.TwinkTables, *items: twink._Item) -> twink.TwinkTables:
+    merged = {**tables.items, **{i.id: i for i in items}}
+    return dataclasses.replace(tables, items=merged)
+
+
+def _slot_ids(panel: twink.TwinkPanel, n: int) -> list[int]:
+    return [c.item_id for s in panel.slots if s.slot == n for c in s.candidates]
+
+
+def test_a_one_hander_fills_the_off_hand_only_for_a_dual_wielder_constructed(
+    tables: twink.TwinkTables, config: twink.TwinkConfig
+) -> None:
+    dagger = _item(900001, shares=((7, 40000),))
+    off_dagger = _item(900002, inventory_type=22, shares=((7, 40000),))
+    more = _with(tables, dagger, off_dagger)
+    rogue_29 = _panel(more, config, "ROGUE", 29)  # dual wields from 10
+    assert 900001 in _slot_ids(rogue_29, 16) and 900001 in _slot_ids(rogue_29, 17)
+    assert 900002 in _slot_ids(rogue_29, 17) and 900002 not in _slot_ids(rogue_29, 16)
+    warrior_19 = _panel(more, config, "WARRIOR", 19)  # from 20: not yet
+    assert 900001 not in _slot_ids(warrior_19, 17)
+    assert 900002 not in _slot_ids(warrior_19, 17)
+    warlock_29 = _panel(more, config, "WARLOCK", 29)  # never
+    assert {900001, 900002}.isdisjoint(_slot_ids(warlock_29, 17))
+
+
+def test_the_class_levels_as_shipped(config: twink.TwinkConfig) -> None:
+    assert config.classes["HUNTER"].armor_from == {3: 40}
+    assert config.classes["SHAMAN"].armor_from == {3: 40}
+    assert config.classes["PALADIN"].armor_from == {4: 40}
+    assert config.classes["WARRIOR"].armor_from == {4: 40}
+    assert config.classes["ROGUE"].dual_wield_from == 10
+    assert config.classes["WARRIOR"].dual_wield_from == 20
+    assert config.classes["HUNTER"].dual_wield_from == 20
+    assert config.classes["WARLOCK"].dual_wield_from is None
+    # Two-handed axes and maces come to a shaman through a talent only.
+    assert {1, 5}.isdisjoint(config.classes["SHAMAN"].weapons)
+
+
+@pytest.mark.parametrize(
+    ("text", "words"),
+    [
+        ('[classes.HUNTER]\narmor = [1]\nweapons = [2]\narmor_from = { "3" = 40 }\n', "is not one"),
+        ("[classes.HUNTER]\narmor = [1]\nweapons = [2]\ndual_wield_from = 0\n", "not a level"),
+        ("[classes.HUNTER]\narmor = [1]\nweapons = [2]\nlevel = 3\n", "nothing else"),
+    ],
+)
+def test_class_levels_are_checked_constructed(
+    config: twink.TwinkConfig, text: str, words: str
+) -> None:
+    with pytest.raises(twink.TwinkConfigError) as caught:
+        twink.parse_config(text, config)
+    assert words in str(caught.value)
+
+
+def test_a_required_level_of_one_is_none_and_bind_on_pickup_is_marked_constructed(
+    tables: twink.TwinkTables, config: twink.TwinkConfig
+) -> None:
+    cloth_head = {"class_id": 4, "subclass_id": 1, "inventory_type": 1, "required_level": 1}
+    quest_reward = _item(900003, item_level=38, **cloth_head)
+    near = _item(900004, item_level=33, bonding=1, shares=((7, 30000),), **cloth_head)
+    panel = _panel(_with(tables, quest_reward, near), config, "WARLOCK", 29)
+    head = [c for s in panel.slots if s.slot == 1 for c in s.candidates]
+    assert 900003 not in [c.item_id for c in head]
+    [kept] = [c for c in head if c.item_id == 900004]
+    assert kept.binds_on_pickup is True
+
+
+def test_the_notes_count_and_name_the_user_file_constructed(
+    tables: twink.TwinkTables, config: twink.TwinkConfig
+) -> None:
+    ring = {"class_id": 4, "subclass_id": 0, "inventory_type": 11}
+    test_ring = _item(900005, name="Ring of Critical Testing", **ring)
+    panel = _panel(_with(tables, test_ring), config, "WARLOCK", 29)
+    assert panel.by_name_left_out >= 1
+    assert panel.config_file == "~/config/wowlab/twink.toml"
+    joined = " ".join(panel.notes)
+    assert "put the values to change in ~/config/wowlab/twink.toml" in joined
+    assert "named as a test, placeholder or retired item" in joined
+    one = " ".join(twink._notes(tables, 29, 29, twink._LeftOut(1, 1, 1), 5, None))
+    assert "1 item that needs standing" in one and "was left out" in one
+    assert "1 item named as a test" in one and "1 item with no required level was" in one

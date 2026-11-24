@@ -2187,7 +2187,7 @@
     byId("char-twink-show").disabled = true;
     const bracket = byId("char-twink-bracket");
     bracket.replaceChildren();
-    twinkOption(bracket, "", "The next one for this level", true);
+    twinkOption(bracket, "", "The first at or above this level", true);
     const weights = byId("char-twink-weights");
     weights.replaceChildren();
     twinkOption(weights, "", "The class's first", true);
@@ -2319,8 +2319,10 @@
     button.type = "button";
     button.className = "gear-name";
     button.setAttribute("aria-expanded", "false");
-    const level = typeof c.required_level === "number" && c.required_level > 0 ? "requires level " + c.required_level : "no level required";
-    const facts = make("span", "score " + twinkScore(c.score) + " · " + level + (c.worn === true ? " · worn" : ""));
+    // A required level of 1 asks nothing more than 0 does (the CLI's words).
+    const level = typeof c.required_level === "number" && c.required_level > 1 ? "requires level " + c.required_level : "no level required";
+    const binds = c.binds_on_pickup === true ? " · binds when picked up" : "";
+    const facts = make("span", "score " + twinkScore(c.score) + " · " + level + binds + (c.worn === true ? " · worn" : ""));
     facts.className = "twink-facts";
     main.append(button, facts);
     li.appendChild(main);

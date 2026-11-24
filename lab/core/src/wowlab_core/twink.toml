@@ -133,9 +133,10 @@ skip_words = [
     "dnd", "monster",
 ]
 skip_prefixes = ["OLD"]
-# An item with no required level is left out when its item level is more than
-# this many levels above the bracket's top level: most such items are raid or
-# dungeon drops bound on pickup that a character at that level cannot reach.
+# An item with no required level (0 or 1) is left out when its item level is
+# more than this many levels above the bracket's top level: most such items
+# are quest rewards, and the quest's level is the real gate (M22-08 will give
+# the quest); the rest are raid or dungeon drops.
 no_level_margin = 5
 
 [slots]
@@ -155,10 +156,10 @@ no_level_margin = 5
 "11" = [11, 12]  # finger
 "12" = [13, 14]  # trinket
 "16" = [15]  # back
-"13" = [16]  # one-hand
+"13" = [16]  # one-hand; also the off hand for a class that dual wields (below)
 "21" = [16]  # main hand
 "17" = [16]  # two-hand: it also takes the off hand
-"22" = [17]  # off-hand weapon
+"22" = [17]  # off-hand weapon: only for a class that dual wields (below)
 "14" = [17]  # shield
 "23" = [17]  # held in the off hand
 "15" = [18]  # bow
@@ -173,6 +174,14 @@ no_level_margin = 5
 # 4 one-handed mace, 5 two-handed mace, 6 polearm, 7 one-handed sword,
 # 8 two-handed sword, 10 staff, 13 fist weapon, 15 dagger, 16 thrown,
 # 18 crossbow, 19 wand) it can use.
+#
+# `armor_from`: an armour type learned at a level, by its number: below that
+# level it is left out (Classic-era rules: hunters and shamans learn mail at
+# 40, warriors and paladins plate at 40; [verify] on Forever). The bracket's
+# top level is the level that counts, since a twink stays there.
+# `dual_wield_from`: the level from which the class wields a one-handed
+# weapon in the off hand (Classic-era: rogues 10, warriors and hunters 20;
+# [verify]); a class without it never does.
 [classes.WARLOCK]
 armor = [0, 1]
 weapons = [7, 10, 15, 19]
@@ -192,22 +201,31 @@ weapons = [4, 5, 10, 13, 15]
 [classes.ROGUE]
 armor = [0, 1, 2]
 weapons = [2, 3, 4, 7, 13, 15, 16, 18]
+dual_wield_from = 10
 
 [classes.HUNTER]
 armor = [0, 1, 2, 3]
+armor_from = { "3" = 40 }
 weapons = [0, 1, 2, 3, 6, 7, 8, 10, 13, 15, 16, 18]
+dual_wield_from = 20
 
+# Two-handed axes (1) and maces (5) come to a Classic-era shaman only through
+# an Enhancement talent, so they are not listed; add them if you have it.
 [classes.SHAMAN]
 armor = [0, 1, 2, 3, 6, 9]
-weapons = [0, 1, 4, 5, 10, 13, 15]
+armor_from = { "3" = 40 }
+weapons = [0, 4, 10, 13, 15]
 
 [classes.PALADIN]
 armor = [0, 1, 2, 3, 4, 6, 7]
+armor_from = { "4" = 40 }
 weapons = [0, 1, 4, 5, 6, 7, 8]
 
 [classes.WARRIOR]
 armor = [0, 1, 2, 3, 4, 6]
+armor_from = { "4" = 40 }
 weapons = [0, 1, 2, 3, 4, 5, 6, 7, 8, 10, 13, 15, 16, 18]
+dual_wield_from = 20
 
 # Weight sets: [weights.<class token>.<name>], stat name = points per point
 # of the stat. The first set of a class is the one used unless another is
