@@ -1,8 +1,8 @@
 name: Windows app
 
 # Builds and smoke-tests the Windows app (M17-09, ADR-0038) without a release:
-# on a pull request that changes what the app is built from, and by hand
-# (workflow_dispatch) on any branch. It publishes nothing, holds no secret
+# by hand (workflow_dispatch) on any branch, and until the pause of 2026-11-24
+# (below) also on a pull request that changed what the app is built from. It publishes nothing, holds no secret
 # and writes nothing outside its own artifacts; the zip it uploads is kept
 # seven days for a person to try. The release itself builds the app in
 # release.yml, from the tag's wheel, with the same steps as the
@@ -12,17 +12,24 @@ name: Windows app
 # release.yml's `build` job builds it. On a pull request from a fork, the
 # zip uploaded here is built from the fork's code: it is untrusted, and only
 # the zip on a release, built by release.yml, is wowlab's.
+#
+# PAUSED since 2026-11-24 (ADR-0031 amendment of 2026-11-24, owner decision:
+# "lets drop the windows version and the tests for it for now. lets come back
+# to it later"; M22-24). The `pull_request` trigger is removed, so the app is
+# built only when someone starts this by hand, and release.yml's three
+# Windows jobs are off (`if: false`). To resume, put the trigger back:
+#   pull_request:
+#     branches: [main]
+#     paths:
+#       - "packaging/**"
+#       - "scripts/app_smoke.py"
+#       - "scripts/record_url.py"
+#       - ".github/workflows/windows-app.yml"
+#       - ".github/workflows/release.yml"
+#       - "pyproject.toml"
+#       - "uv.lock"
+# with tests/packaging/test_windows_app.py, which pins the paused state.
 on:
-  pull_request:
-    branches: [main]
-    paths:
-      - "packaging/**"
-      - "scripts/app_smoke.py"
-      - "scripts/record_url.py"
-      - ".github/workflows/windows-app.yml"
-      - ".github/workflows/release.yml"
-      - "pyproject.toml"
-      - "uv.lock"
   workflow_dispatch:
 
 permissions:

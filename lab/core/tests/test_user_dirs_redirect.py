@@ -7,7 +7,9 @@ On Windows platformdirs ignores `HOME`, `USERPROFILE`, `APPDATA` and
 Windows, so these tests run platformdirs' own Windows class on any machine,
 with the system's answer replaced by a made-up runner folder, and show that
 the fixture moves the store and that the root conftest's check catches a
-fixture that forgets to. Windows CI is the end-to-end proof.
+fixture that forgets to. Windows CI is the end-to-end proof, while it runs:
+the Windows suite is paused since 2026-11-24 (ADR-0031 amendment of that
+date), so until it resumes these tests are the only check.
 """
 
 from __future__ import annotations

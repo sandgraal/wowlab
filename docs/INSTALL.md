@@ -36,7 +36,10 @@ The first run prints this too, before it does anything else (ADR-0031):
 
 ## Platforms
 
-wowlab is developed on macOS. Windows and Linux are **untested**: a
+wowlab is developed on macOS. **Windows is not supported for now**: since
+2026-11-24 the test suite no longer runs on Windows and new releases come
+with no Windows app. Windows support may come back later; until then the
+wheel may still install there, untested. Linux is **untested**: a
 platform is called supported only when CI runs the test suite on it and a
 person has run the first run below on a real install of it (ADR-0031).
 There is no native Linux client, so a Linux install means Wine, Lutris or
@@ -206,18 +209,18 @@ that passes both is the one the release workflow built.
 
 ### The Windows app (64-bit), no terminal needed
 
-Windows is untested (see Platforms above): CI builds this app and starts it
-on Windows, but nobody has yet run the first run below with it on a real
-Windows install.
+Windows is not supported for now (see Platforms above). Releases after
+v0.3.0 come with no Windows app. The v0.2.1 to v0.3.0 apps stay on their
+release pages as they were: built and started by the release checks, but
+never run by anyone on a real Windows install, and no longer tested.
 
-Since v0.2.1, the release page also carries `wowlab-<version>-windows-x64.zip`
+From v0.2.1 to v0.3.0, the release page also carried `wowlab-<version>-windows-x64.zip`
 (for v0.3.0: [`wowlab-0.3.0-windows-x64.zip`](https://github.com/sandgraal/wowlab/releases/download/v0.3.0/wowlab-0.3.0-windows-x64.zip)): wowlab as
 a Windows program, with its own Python inside, for 64-bit Windows on an
 Intel or AMD processor. It is the same wowlab as the wheel, built from it by
 the release workflow; it never updates itself and makes no network request
-of its own. To get a newer version, download the newer zip. The zip is
-attached a little after the rest of the release; a release without it is
-one whose Windows build failed, and the wheel is unaffected.
+of its own. There is no newer Windows zip than v0.3.0's. The steps below
+are for that zip.
 
 1. Download the zip from the release page. In File Explorer, right-click it
    and choose **Extract All…**, and extract it somewhere you keep programs,
