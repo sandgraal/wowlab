@@ -718,9 +718,12 @@ so world PvP can be read from the log at the desk:
   `LoggingCombat`, or the log does not change when asked out of combat: one
   line, no error; the record keeps its count and says why (`dormant`), and
   `/wowlab combatlog` says "stopped switching this session".
-- **Log files.** Each switch-on may start a new `WoWCombatLog-*.txt` in
-  `Logs/` [verify]; they pile up there, and deleting old ones is yours to
-  do. `wowlab crew scan-log` with no file reads every log not read before
+- **Log files.** A switch-on within one session adds to the log file
+  already there: a new header and zone lines at its end (seen in the
+  owner's log of 2026-11-23, which holds three). Whether a logout or another
+  character starts a new `WoWCombatLog-*.txt` in `Logs/` is not yet
+  confirmed [verify]; the files pile up there, and deleting old ones is
+  yours to do. `wowlab crew scan-log` with no file reads every log not read before
   (the newest 1,000), oldest first; one it cannot open is skipped and named,
   and the others are read.
 - The record, `WowLabCharDB.combatlog`: `idle_minutes`, `switches` (a count
@@ -734,7 +737,7 @@ so world PvP can be read from the log at the desk:
 `LoggingCombat` and lets a call switch the log, out of combat and in combat;
 that `LoggingCombat()` with no argument returns `true` or `false`; that the
 log stays on across `/reload` and across a logout to another character;
-whether each switch-on starts a new log file; whether entering an instance
+whether a switch-on after a logout starts a new log file; whether entering an instance
 fires `ZONE_CHANGED_NEW_AREA` before the 15 s check; the setting's name
 `advancedCombatLogging`. The owner's first run should check: the chat lines
 at login, an instance and an idle; a switch in combat; and how many files

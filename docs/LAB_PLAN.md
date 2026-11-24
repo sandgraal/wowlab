@@ -7467,6 +7467,49 @@ battleground's combat log (M22-15: the addon turns the log on in
 battlegrounds and `crew scan-log` reads those segments), which fold into
 that match's fight as its killing blows, never a second fight.
 
+*As built (2026-11-23, M22-22; owner decision of 2026-11-23, "Use the map
+table"; supersedes the **Where** rule above where they differ).* The
+launch client writes `ZONE_CHANGE,33,"Shadowfang Keep",0`, a dungeon with
+difficulty 0, so the difficulty no longer decides. **Where:** a stay is the
+open world when its instance id (the zone line's first field) is a map
+whose `InstanceType` in the build-keyed `Map` table is 0; 1 (dungeon), 2
+(raid), 3 (battleground), 4 (arena) and any other type are not. The rule
+lives in one function, `worldpvp.in_open_world(state, pvp_maps, *, maps)`
+(the name and positional arguments M22-05's live view uses; `maps` is
+keyword-only), with `worldpvp.map_types` reading `ID` and `InstanceType`
+from the table's rows; `scan_entries` and `read_world` take `maps=`. The
+arena span and a map the database keeps a match on stay excluded first.
+With no table cached for the flavor's version, or an instance id the table
+does not hold, the old reading holds (difficulty 0 is the open world). The
+table is read only from the `gamedata` cache (`cached_rows`; ADR-0022, L5),
+for the version of the flavor being read, never fetched by `crew scan-log`:
+`wowlab db2 fetch Map --flavor F` downloads it. A log read later than a
+patch is judged by the current version's table (a log names only the patch,
+§8). **Text:** with no table, `crew scan-log` adds one line naming the
+version and that command; with an unknown version, one line that the zone
+line alone decided. `--json` gains `map_table`, `map_version` and
+`recheck` (`checked`, `removed`, `players_removed`, `skipped`). **Store:**
+schema 6, after the `.before-schema-5` copy: `world_encounters.by_map`
+(0 or 1), whether the encounter's place was decided by the table. Every
+encounter of an older database, and every one kept while the table is
+missing, is 0. Once the table is cached, each `crew scan-log` first runs
+`crewdb.recheck_world`: each stored encounter with `by_map` 0 whose
+instance id the table names is checked by the same rule; one in an
+instance is deleted with its players' parts, and each of those players'
+rows held by nothing else (never in the game's list, no group, no match, no
+rating or note, no other encounter) with its `log_names` row, as M21-02's
+re-read deletes them; the others are marked 1; one the table does not name
+is left for a later table. One transaction after today's copy; running it
+again changes nothing; one text line says how many it checked and removed.
+The record against each opponent (M22-03) reads the kept encounters, so a
+removed one leaves its counts too.
+**UI:** after a read that says the table is missing, the Crew tab shows
+"Download the game's map table", which runs `db2 fetch` for the read's
+flavor and then reads again. M22-05's live view must pass the same `maps`
+to agree with `crew scan-log` (whichever of the two lands second threads
+it). Not yet confirmed: a battleground's and a raid's zone line (no log
+enters one); `InstanceType` 4 (no map of the recorded build has it).
+
 ### 21.4 The terms of ADR-0036, for the new store
 
 | Term | What holds it | Proof |

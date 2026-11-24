@@ -3884,6 +3884,7 @@
     matchSeq: 0, // the latest match history read
     world: false, // whether the history on show is the open-world fights (M20-18)
     scanSeq: 0, // the latest combat-log read (M20-18)
+    mapsFlavor: "", // the flavor whose map table a read said is missing (M22-22)
     key: null, // the stored key of the player shown
     pending: null, // the plan Confirm would run: { command, params, token }
     searchTimer: null,
@@ -4234,8 +4235,39 @@
     }
     await loadCrew();
     crewSay(visible(report.words), false);
+    drawMapsOffer(report);
   }
   byId("crew-scan-log").addEventListener("click", () => scanCrewLog());
+
+  // M22-22: the open world is told from dungeons, raids, battlegrounds and
+  // arenas by the game's map table, one download per game version. When a
+  // read says it is missing, one button downloads it (`db2 fetch Map`, for
+  // the read's flavor) and reads again, which checks what earlier reads
+  // kept against it.
+  function drawMapsOffer(report) {
+    const button = byId("crew-maps-fetch");
+    const missing = report && report.map_table === false && hubStr(report.map_version) && hubStr(report.flavor_folder);
+    crew.mapsFlavor = missing ? report.flavor_folder : "";
+    button.hidden = !missing;
+  }
+
+  async function fetchMapTable() {
+    const flavor = crew.mapsFlavor;
+    if (!flavor) return;
+    const button = byId("crew-maps-fetch");
+    button.disabled = true;
+    crewSay("Downloading the game's map table…", false);
+    const reply = await runJson(["db2", "fetch"], { table: "Map", flavor: flavor }, false, true);
+    button.disabled = false;
+    if (reply.error) {
+      crewSay("The map table could not be downloaded: " + shown(reply.error), true);
+      return;
+    }
+    button.hidden = true;
+    crew.mapsFlavor = "";
+    await scanCrewLog();
+  }
+  byId("crew-maps-fetch").addEventListener("click", () => fetchMapTable());
   byId("crew-player-matches-show").addEventListener("click", () => showPlayerMatches());
 
   function clearCrewConfirm() {

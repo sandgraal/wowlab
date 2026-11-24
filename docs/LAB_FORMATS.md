@@ -264,6 +264,9 @@ shows; anything wider is **[verify]**.
 - File name `WoWCombatLog-MMDDYY_HHMMSS.txt`, matching the first line's
   local time. Whether the client starts a new file each time logging is
   turned on, and whether the header repeats inside a file, are **[verify]**.
+  *Resolved 2026-11-23 (M22-22, see Amendments):* switched on again within
+  one session, the client appends a new header and zone lines to the same
+  file.
 - Header `COMBAT_LOG_VERSION,22,ADVANCED_LOG_ENABLED,1,BUILD_VERSION,1.60.1,PROJECT_ID,18`.
   `BUILD_VERSION` is the patch only (the retail example above is
   illustrative; retail writing the patch only is community documentation
@@ -1359,3 +1362,33 @@ Dated entries, newest last. Each names the fixture that prompted it.
   hyphen, which would make a four-part name ambiguous, is **[verify]**; so is
   whether the launch client writes the owner's own unit name in four parts
   too (the slice holds no line of the owner's).
+- **2026-11-23, §8, a dungeon's zone line, and logging switched on again
+  within one file (M22-22; fixture
+  `macos-71037/forever/Logs/WoWCombatLog-012427_232527.txt`, build
+  1.60.1.71037, 50 whole lines of the owner's log
+  `WoWCombatLog-112326_133025.txt` of 2026-11-23, 9,395 lines; table
+  `wago/Map.1.60.1.71037.csv`).** The launch client writes
+  `ZONE_CHANGE,33,"Shadowfang Keep",0` on entering a dungeon: the third
+  field, the difficulty, is 0, as on the open world's
+  `ZONE_CHANGE,0,"Tirisfal Glades",0`. So the difficulty does not tell an
+  instance from the open world. The first field is the map's id in the
+  game's `Map` table (33 is Shadowfang Keep there, `InstanceType` 1; the
+  open-world zones of the same log are on maps 0 and 1, `InstanceType` 0);
+  wowlab now decides the open world by that table's `InstanceType` (0 the
+  open world; 1 dungeon, 2 raid, 3 battleground; 4 arena by community
+  documentation, no map of this build has it), and by the difficulty only
+  when the table is not cached. A city on a continent map is the open world
+  by its zone line (`ZONE_CHANGE,0,"Undercity",0`). What a battleground's or
+  a raid's zone line holds is still **[verify]** (no log enters one).
+  Second: logging switched on again within one session appends to the same
+  file. The owner's 13:30 log holds three `COMBAT_LOG_VERSION` headers (at
+  13:30:25, 14:11:01 and 14:30:36 local time, after gaps of about 30 and 8
+  minutes with no line), each followed at the same millisecond by a
+  `ZONE_CHANGE` and one or two `MAP_CHANGE` lines; the file name keeps the
+  first header's time. This answers the **[verify]** above ("whether the
+  header repeats inside a file": it does) and M20-19's "each switch-on may
+  start a new `WoWCombatLog-*.txt`" for a switch within one session: it
+  does not. Whether a logout, or a switch on another character, starts a
+  new file is still **[verify]**. Every header of that log says
+  `ADVANCED_LOG_ENABLED,0`, yet its damage and cast lines carry the
+  advanced block; what the header's flag reports is **[verify]**.
