@@ -1258,8 +1258,17 @@ _KILLED_STORE_NOTE = (
 )
 # The leaves of the step whose confirmed run writes only the store (§16.1:
 # `snap gc` removes unreferenced objects, `doctor --yes` takes a first
-# snapshot). Any other leaf of the step gets `_KILLED_NOTE`.
-_STORE_ONLY: frozenset[tuple[str, ...]] = frozenset({("snap", "gc"), _DOCTOR})
+# snapshot), and those that write only wowlab's own list of saved links
+# (`char link set` and `forget`, M21-03; `_KILLED_LINKS_NOTE`). Any other
+# leaf of the step gets `_KILLED_NOTE`.
+_LINKS_ONLY: frozenset[tuple[str, ...]] = frozenset(
+    {("char", "link", "set"), ("char", "link", "forget")}
+)
+_STORE_ONLY: frozenset[tuple[str, ...]] = frozenset({("snap", "gc"), _DOCTOR}) | _LINKS_ONLY
+_KILLED_LINKS_NOTE = (
+    "It was stopped before it finished. It changes only wowlab's own list of your links, "
+    "never your game files, and that file is replaced whole or not at all: run it again."
+)
 
 
 def _confirmed_note(leaf: _Leaf, run: _Run) -> str | None:
@@ -1269,6 +1278,8 @@ def _confirmed_note(leaf: _Leaf, run: _Run) -> str | None:
     (`snap gc` and `doctor` make no record, and a refusal is shown as the
     CLI printed it)."""
     if run.timed_out or run.truncated:
+        if leaf.path in _LINKS_ONLY:
+            return _KILLED_LINKS_NOTE
         return _KILLED_STORE_NOTE if leaf.path in _STORE_ONLY else _KILLED_NOTE
     report = run.report()
     record = report.get("transaction") if report is not None else None
@@ -1416,16 +1427,32 @@ def _positive_bytes(value: object) -> int:
     return value
 
 
+def _link_origins() -> dict[str, str]:
+    """The outside origins the page may link to, by site key (M21-03): the
+    shipped `link_sites.toml`'s `[sites]`, never the player's files. The
+    page draws an outside link only when its address is https: and its
+    origin is exactly the one listed for the site it names. A file that
+    cannot be used gives none, so the page draws no outside link at all."""
+    from wowlab_core import links
+
+    try:
+        return links.origins()
+    except links.LinkSitesError:
+        return {}
+
+
 def _commands_body(leaves: Mapping[tuple[str, ...], _Leaf]) -> bytes:
     """The `/api/commands` body. The home folder is data from the machine,
     like a file name: escaped as a run's output is. `<`, `>` and `&` occur
-    only inside JSON strings, so translating the whole document is safe."""
+    only inside JSON strings, so translating the whole document is safe.
+    `link_origins` is the page's allowlist of outside origins (M21-03)."""
     return (
         json.dumps(
             {
                 "commands": [_describe(leaf) for leaf in leaves.values()],
                 "home": _home(),
                 "sep": os.sep,
+                "link_origins": _link_origins(),
             },
             ensure_ascii=True,
         )
