@@ -130,32 +130,74 @@ def test_the_library_names_no_build_and_no_flavor() -> None:
     assert re.search(r"\d\.\d+\.\d\.\d{5}|7\d{4}|_forever_|_classic_|camelot", SOURCE, re.I) is None
 
 
+# ─── the language and the build (review round 1) ─────────────────────────────
+
+
+def test_a_language_narrows_the_slash_list_to_it_and_english() -> None:
+    """`/wirken` is German for /cast: found with no language and with
+    deDE, not for an English client. `/em` is the emote chat type in English
+    and another command in Portuguese: each language gets its own."""
+    assert clientlists.slash_command("/wirken") is not None
+    assert clientlists.slash_command("/wirken", "deDE") is not None
+    assert clientlists.slash_command("/wirken", "enUS") is None
+    english = clientlists.slash_command("/em", "enUS")
+    assert english is not None and english.key == "EMOTE"
+    union = clientlists.slash_command("/em")
+    assert union is not None and union.key == "EMOTE"  # the English one wins the union
+    portuguese = clientlists.slash_command("/em", "ptBR")
+    assert portuguese is not None and portuguese.key == "SUMMON_BATTLE_PET"
+    # English texts count on every client.
+    assert clientlists.slash_command("/cast", "koKR") is not None
+    assert clientlists.languages_words(None).startswith("in any client language")
+    assert clientlists.languages_words("deDE") == "in English or this install's language, deDE"
+
+
+def test_the_lists_judge_only_their_own_patch_and_name_both_builds() -> None:
+    assert clientlists.source_words() == "interface code 1.60.1.71037, strings 1.60.1.70938"
+    assert clientlists.mismatch(None) is None
+    # Every real capture's build (69913 to 71037) is patch 1.60.1.
+    assert clientlists.mismatch(clientlists.Client(build="1.60.1.69913")) is None
+    why = clientlists.mismatch(clientlists.Client(build="1.61.0.72000"))  # constructed
+    assert why == (
+        "the game's command lists were read at interface code 1.60.1.71037, strings "
+        "1.60.1.70938, and this client is 1.61.0.72000"
+    )
+    unknown = clientlists.mismatch(clientlists.Client(build=None))
+    assert unknown is not None and unknown.endswith("this client's build is not known")
+
+
 # ─── constructed list files ──────────────────────────────────────────────────
 
 HEAD = "# ui-build: 9.9.9.1\n# ui-commit: abc\n# strings-build: 9.9.9.0\n\n"
+ROW = "/x\tregistered\tX\t*\n"
 
 
 def _parse(
-    slash: str = "/x\tregistered\tX\n", bind: str = "X\t\t\t\tf.xml\n", limit: str = "L\t1\tsize\n"
+    slash: str = ROW, bind: str = "X\t\t\t\tf.xml\n", limit: str = "L\t1\tsize\n"
 ) -> clientlists.ClientLists:
     return clientlists.parse(HEAD + slash, HEAD + bind, HEAD + limit)
 
 
 def test_constructed_lists_parse_with_empty_labels_as_none() -> None:
-    parsed = _parse()
+    parsed = _parse(slash=ROW + "/x\tnamed\tY\tdeDE,frFR\n")
     assert parsed.ui_build == "9.9.9.1"
     assert parsed.bindings["X"] == clientlists.BindingCommand(
         name="X", category=None, category_label=None, label=None, file="f.xml"
     )
-    assert parsed.slash["/x"].key == "X" and parsed.limits == {"L": 1}
+    assert [(e.key, e.languages) for e in parsed.slash["/x"]] == [
+        ("X", None),
+        ("Y", ("deDE", "frFR")),
+    ]
+    assert parsed.limits == {"L": 1}
 
 
 @pytest.mark.parametrize(
     ("kwargs", "message"),
     [
-        ({"slash": "/x\tregistered\n"}, "2 columns, not 3"),
-        ({"slash": "x\tregistered\tX\n"}, "not a slash command"),
-        ({"slash": "/x\tsomewhere\tX\n"}, "not a slash command"),
+        ({"slash": "/x\tregistered\tX\n"}, "3 columns, not 4"),
+        ({"slash": "x\tregistered\tX\t*\n"}, "not a slash command"),
+        ({"slash": "/x\tsomewhere\tX\t*\n"}, "not a slash command"),
+        ({"slash": "/x\tregistered\tX\tgerman\n"}, "has the languages 'german'"),
         ({"bind": "lower\t\t\t\tf.xml\n"}, "not a command name"),
         ({"limit": "L\tmany\tsize\n"}, "L = 'many'"),
         ({"limit": ""}, "no line"),
@@ -170,6 +212,6 @@ def test_constructed_malformed_lists_are_refused(kwargs: dict[str, str], message
 def test_constructed_lists_of_different_builds_are_refused() -> None:
     other = HEAD.replace("9.9.9.1", "9.9.9.2")
     with pytest.raises(clientlists.ClientListsError, match="different ui-builds"):
-        clientlists.parse(HEAD + "/x\tregistered\tX\n", other + "X\t\t\t\tf\n", HEAD + "L\t1\ts\n")
+        clientlists.parse(HEAD + ROW, other + "X\t\t\t\tf\n", HEAD + "L\t1\ts\n")
     with pytest.raises(clientlists.ClientListsError, match="no ui-build line"):
-        clientlists.parse("/x\tregistered\tX\n", HEAD + "X\t\t\t\tf\n", HEAD + "L\t1\ts\n")
+        clientlists.parse(ROW, HEAD + "X\t\t\t\tf\n", HEAD + "L\t1\ts\n")

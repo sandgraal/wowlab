@@ -321,9 +321,11 @@ def test_showtooltip_rule_constructed(flavor: Path) -> None:
 
 
 def test_unknown_command_rule_constructed(flavor: Path) -> None:
-    """M22-18: a `/command` the game's own interface does not have, in any
-    client language, is a finding; a known one in any case, an emote, a
-    chat channel's number and a `#` line are not."""
+    """M22-18: a `/command` the game's own interface does not have is a
+    finding; a known one in any case, an emote, a chat channel's number and
+    a `#` line are not. The capture's `Config.wtf` sets `textLocale` to
+    enUS, so another language's /cast is a finding there (review round 1)
+    and not in the union a caller without a language gets."""
     _put_macros(
         flavor,
         _macro(1, "Mac addon", "/cast Corruption", "/labaddoncmd show"),
@@ -332,16 +334,42 @@ def test_unknown_command_rule_constructed(flavor: Path) -> None:
         _macro(4, "Mac localized", "/wirken Fear", "/заклинание Fear"),  # German, Russian /cast
     )
     rep = report("--character", CHARACTER)
-    assert _ids(rep, "unknown-command") == [_id(1), _id(3)]
+    assert _ids(rep, "unknown-command") == [_id(1), _id(3), _id(4), _id(4)]
     addon = next(f for f in rep.findings if f.rule == "unknown-command")
     assert addon.line == 3  # the file's third line: macro 1's second body line
     assert addon.detail == (
-        "body line 2: '/labaddoncmd' is not a slash command of the game's own interface (in any "
-        "client language, at 1.60.1.71037): it may be an addon's command, which works only "
-        "while that addon is loaded, or a typo"
+        "body line 2: '/labaddoncmd' is not a slash command of the game's own interface (in "
+        "English, this install's language; interface code 1.60.1.71037, strings 1.60.1.70938): "
+        "it may be an addon's command, which works only while that addon is loaded, or a typo"
     )
     text = ok("macros", "check", "--character", CHARACTER).stdout
     assert "'/castt' is not a slash command of the game's own interface" in text
+    # Without the install's language, every language's texts count.
+    config = flavor / "WTF" / "Config.wtf"
+    config.write_bytes(config.read_bytes().replace(b'SET textLocale "enUS"\n', b""))
+    assert b"textLocale" not in config.read_bytes()
+    rep = report("--character", CHARACTER)
+    assert _ids(rep, "unknown-command") == [_id(1), _id(3)]
+    assert "(in any client language, this install's not being known; " in rep.findings[-1].detail
+
+
+def test_another_build_s_client_cannot_be_judged_constructed(flavor: Path) -> None:
+    """Review round 1: the lists judge only a client of their own
+    major.minor.patch. A `.build.info` rewritten to 1.61.0 (constructed)
+    makes the rule "cannot judge" for every macro, naming the three builds."""
+    _put_macros(flavor, _macro(1, "Mac addon", "/labaddoncmd show"))
+    info = flavor.parent / ".build.info"
+    data = info.read_bytes()
+    assert b"1.60.1." in data
+    info.write_bytes(data.replace(b"1.60.1.", b"1.61.0."))
+    rep = report("--character", CHARACTER)
+    assert _ids(rep, "unknown-command") == []
+    [judged] = [c for c in rep.cannot_judge if c.rule == "unknown-command"]
+    assert judged.macro is None and judged.reason.startswith(
+        "the game's command lists were read at interface code 1.60.1.71037, strings "
+        "1.60.1.70938, and this client is 1.61.0."
+    )
+    assert judged.reason.endswith(", so whether a /command is the game's cannot be told")
 
 
 def test_the_real_macros_have_no_unknown_command() -> None:

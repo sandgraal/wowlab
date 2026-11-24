@@ -9,15 +9,22 @@ short English labels only; that script's docstring says what each line
 means and how it was read. Nothing here opens a file outside the package,
 reads an install, or goes on the network.
 
-The build the lists were read at is in each file's header (`ui-build`) and is
-read from there, never written here (L6). A list from one build may miss a
-command a later client adds, so every word built from these lists that says
-"not the client's" names that build.
+The builds the lists were read at are in each file's header (`ui-build` for
+the interface code, `strings-build` for the strings) and are read from
+there, never written here (L6); `source_words()` names both. The lists judge
+only the client they were read from: `mismatch(client)` compares the opened
+flavor's build (`Client.build`, from `.build.info`, which the caller
+discovered) with `ui-build` at major.minor.patch, and a caller that gets a
+reason back says "cannot judge" rather than "not the game's".
 
-- `slash_command(text)`: the client's entry for a `/command` as typed (case
-  does not matter, as in the client, which upper-cases a command), or None.
-  The list is the union of every client language's texts, so a None means
-  that no client language has it: an addon's command, or a typo.
+- `slash_command(text, language)`: the client's entry for a `/command` as
+  typed (case does not matter, as in the client, which upper-cases a
+  command), or None. With a language (the install's `textLocale`), only
+  that language's texts and English ones count; without one, every
+  language's (the union), and the words built from a None say so.
+  Not applied **[verify]**: the game-mode filter of the client's
+  slash-command code, and whether every file that registers a command loads
+  on Forever (`scripts/forever_api.py`).
 - `binding_command(name)`: the client's key-binding command, with its English
   label and category label when the client's strings have them, or None: a
   command the client's own interface does not define (an addon's).
@@ -34,31 +41,40 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict
 
 __all__ = [
+    "ANY_LANGUAGE",
     "BINDING_FILE",
     "DATA_DIR",
+    "ENGLISH",
     "LIMIT_FILE",
     "SLASH_FILE",
     "BindingCommand",
+    "Client",
     "ClientLists",
     "ClientListsError",
     "SlashCommand",
     "SlashSource",
     "binding_command",
     "encoding_limits",
+    "languages_words",
     "lists",
+    "mismatch",
     "parse",
     "slash_command",
+    "source_words",
 ]
 
 DATA_DIR = "client_lists"
 SLASH_FILE = "slash-command.txt"
 BINDING_FILE = "binding-command.txt"
 LIMIT_FILE = "encoding-limit.txt"
+ANY_LANGUAGE = "*"
+ENGLISH = "enUS"
 
 SlashSource = Literal["registered", "named", "emote", "channel"]
 _SOURCES: tuple[SlashSource, ...] = ("registered", "named", "emote", "channel")
 _HEADER = re.compile(r"# ([a-z-]+): (\S+)")
 _COMMAND_NAME = re.compile(r"[A-Z][A-Z0-9_]*")
+_LANGUAGE = re.compile(r"[a-z]{2}[A-Z]{2}")
 
 
 class ClientListsError(ValueError):
@@ -74,11 +90,13 @@ class SlashCommand(_Model):
     client's slash-command code registers its key), `named` (a client string
     names it; registered elsewhere, or a chat type), `emote`, or `channel`
     (`/1` and up, a chat channel's number). `key` is the client's own name
-    for the command (`CAST`), the emote's token, or `CHANNEL`."""
+    for the command (`CAST`), the emote's token, or `CHANNEL`. `languages`:
+    the client languages whose strings name it; None for every one."""
 
     text: str
     source: SlashSource
     key: str
+    languages: tuple[str, ...] | None
 
 
 class BindingCommand(_Model):
@@ -94,14 +112,23 @@ class BindingCommand(_Model):
 
 
 class ClientLists(_Model):
-    """The three lists as shipped, with the build they were read at."""
+    """The three lists as shipped, with the builds they were read at."""
 
     ui_build: str
     ui_commit: str
     strings_build: str
-    slash: dict[str, SlashCommand]  # by the text, case-folded
+    slash: dict[str, list[SlashCommand]]  # by the text, case-folded; file order
     bindings: dict[str, BindingCommand]  # by the command name
     limits: dict[str, int]
+
+
+class Client(_Model):
+    """What the opened install says about the client the lists would judge:
+    the flavor's build (`.build.info`'s Version; None when it has none) and
+    its text language (`Config.wtf`'s `textLocale`; None when not set)."""
+
+    build: str | None
+    language: str | None = None
 
 
 def _rows(file: str, text: str, columns: int) -> tuple[dict[str, str], list[list[str]]]:
@@ -126,17 +153,33 @@ def _rows(file: str, text: str, columns: int) -> tuple[dict[str, str], list[list
     return header, rows
 
 
+def _languages(file: str, text: str, said: str) -> tuple[str, ...] | None:
+    if said == ANY_LANGUAGE:
+        return None
+    parts = tuple(said.split(","))
+    if any(_LANGUAGE.fullmatch(part) is None for part in parts):
+        raise ClientListsError(f"{file}: {text!r} has the languages {said!r}")
+    return parts
+
+
 def parse(slash_text: str, binding_text: str, limit_text: str) -> ClientLists:
     """The three files' text as one `ClientLists`. Raises `ClientListsError`."""
     heads: list[dict[str, str]] = []
-    header, rows = _rows(SLASH_FILE, slash_text, 3)
+    header, rows = _rows(SLASH_FILE, slash_text, 4)
     heads.append(header)
-    slash: dict[str, SlashCommand] = {}
-    for text, source, key in rows:
+    slash: dict[str, list[SlashCommand]] = {}
+    for text, source, key, said in rows:
         if not text.startswith("/") or source not in _SOURCES:
             raise ClientListsError(f"{SLASH_FILE}: {text!r} {source!r} is not a slash command")
-        entry = SlashCommand.model_validate({"text": text, "source": source, "key": key})
-        slash.setdefault(text.casefold(), entry)
+        entry = SlashCommand.model_validate(
+            {
+                "text": text,
+                "source": source,
+                "key": key,
+                "languages": _languages(SLASH_FILE, text, said),
+            }
+        )
+        slash.setdefault(text.casefold(), []).append(entry)
     header, rows = _rows(BINDING_FILE, binding_text, 5)
     heads.append(header)
     bindings: dict[str, BindingCommand] = {}
@@ -184,9 +227,56 @@ def lists() -> ClientLists:
     return parse(*texts)
 
 
-def slash_command(text: str) -> SlashCommand | None:
-    """The client's entry for a `/command` as typed, or None."""
-    return lists().slash.get(text.casefold())
+def source_words(read: ClientLists | None = None) -> str:
+    """The two builds the lists were read at, in words: "interface code
+    <ui-build>, strings <strings-build>"."""
+    read = read or lists()
+    return f"interface code {read.ui_build}, strings {read.strings_build}"
+
+
+def _patch(build: str) -> tuple[str, ...]:
+    return tuple(build.split(".")[:3])
+
+
+def mismatch(client: Client | None, read: ClientLists | None = None) -> str | None:
+    """None when the lists may judge `client` (no client given, or its build
+    has the lists' major.minor.patch); otherwise why not, naming both builds."""
+    if client is None:
+        return None
+    read = read or lists()
+    if client.build is not None and _patch(client.build) == _patch(read.ui_build):
+        return None
+    this = f"this client is {client.build}" if client.build else "this client's build is not known"
+    return f"the game's command lists were read at {source_words(read)}, and {this}"
+
+
+def _speaks(entry: SlashCommand, language: str) -> bool:
+    return entry.languages is None or language in entry.languages or ENGLISH in entry.languages
+
+
+def slash_command(text: str, language: str | None = None) -> SlashCommand | None:
+    """The client's entry for a `/command` as typed, or None. With
+    `language`, only that language's and English texts count; one text
+    that stands for different commands in different languages gives the
+    entry of `language`, then English, then the first."""
+    found = lists().slash.get(text.casefold(), [])
+    if language is not None:
+        found = [e for e in found if _speaks(e, language)]
+        mine = [e for e in found if e.languages is not None and language in e.languages]
+        picked = mine or found
+        return picked[0] if picked else None
+    english = [e for e in found if e.languages is None or ENGLISH in e.languages]
+    picked = english or found
+    return picked[0] if picked else None
+
+
+def languages_words(language: str | None) -> str:
+    """Which client languages `slash_command` looked in, in words."""
+    if language is None:
+        return "in any client language, this install's not being known"
+    if language == ENGLISH:
+        return "in English, this install's language"
+    return f"in English or this install's language, {language}"
 
 
 def binding_command(name: str) -> BindingCommand | None:

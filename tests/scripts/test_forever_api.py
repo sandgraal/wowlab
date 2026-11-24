@@ -334,13 +334,15 @@ def test_check_command_exits_zero_on_the_repository(capsys: pytest.CaptureFixtur
 @pytest.mark.live
 def test_live_fetch_and_generate_reproduce_the_committed_list(tmp_path: Path) -> None:
     """Owner-run, by hand, never in CI (ADR-0012; `-m 'not live'` is the
-    default): download the six pinned files from GitHub into a temp folder,
-    generate, and compare with the committed list byte for byte.
+    default): download every pinned file from GitHub into a temp folder,
+    generate, and compare with the committed list and the committed client
+    lists (M22-18) byte for byte.
 
         uv run pytest tests/scripts/test_forever_api.py -m live -p no:cacheprovider
     """
     fa.fetch(tmp_path)
     assert fa.generate(tmp_path) == _committed()
+    assert fa.generate_lists(tmp_path) == fa.read_lists()
 
 
 def test_the_addon_s_own_globals_are_the_ones_it_writes_whole() -> None:
@@ -444,23 +446,36 @@ def ui_constructed(tmp_path: Path) -> tuple[Path, dict[str, str], dict[str, str]
 def test_constructed_slash_list_joins_registrations_strings_emotes_and_channels() -> None:
     slash = fa.collect_slash(UI_CONSTRUCTED, STRINGS_CONSTRUCTED)
     assert slash.entries == {
-        "/cast": ("registered", "CAST"),
-        "/spell": ("registered", "CAST"),
-        "/wirken": ("registered", "CAST"),
-        "/dump": ("registered", "DUMP"),
-        "/s": ("named", "SAY"),
-        "/local": ("named", "LOCAL"),
-        "/agree": ("emote", "AGREE"),
-        "/1": ("channel", "CHANNEL"),
-        "/2": ("channel", "CHANNEL"),
+        ("/cast", "registered", "CAST"): {"enUS"},
+        ("/spell", "registered", "CAST"): {"enUS"},
+        ("/wirken", "registered", "CAST"): {"deDE"},
+        ("/dump", "registered", "DUMP"): {"enUS"},
+        ("/s", "named", "SAY"): {"enUS"},
+        ("/local", "named", "LOCAL"): {"*"},  # the code's own string: every language's
+        ("/agree", "emote", "AGREE"): {"enUS"},
+        ("/1", "channel", "CHANNEL"): {"*"},
+        ("/2", "channel", "CHANNEL"): {"*"},
     }
+    assert slash.languages == {"deDE", "enUS"}
+    # One line per (text, source, key), with its languages; `*` for every one.
+    assert slash.lines()[:3] == [
+        "/1\tchannel\tCHANNEL\t*",
+        "/2\tchannel\tCHANNEL\t*",
+        "/agree\temote\tAGREE\tenUS",
+    ]
+    slash.add("/cast", "registered", "CAST", "deDE")
+    slash.add("/cast", "named", "OTHER", "deDE")
+    assert [line for line in slash.lines() if line.startswith("/cast\t")] == [
+        "/cast\tregistered\tCAST\t*",
+        "/cast\tnamed\tOTHER\tdeDE",
+    ]
     # Everything left out is said, with where it is.
     assert slash.not_read == [
         f"{fa.SLASH_FILES[0]} line 14: registers SLASH_COMMAND.MISSING, which the table does "
         "not hold",
         f"{fa.SLASH_FILES[1]} line 3: local add = SlashCommandUtil.CheckAddSlashCommand;",
-        "GlobalStrings/deDE.lua: SLASH_COUNTDOWN2 = '/compte à rebours', not one word",
         'GlobalStrings/enUS.lua: 1 lines not of the form NAME = "text";',
+        "GlobalStrings/deDE.lua: SLASH_COUNTDOWN2 = '/compte à rebours', not one word",
         "1 strings named like a command whose text has no leading / (a command's parameters, "
         "such as the stopwatch's), left out",
         "ORPHAN: registered, and no client string read names a text for it",
@@ -566,7 +581,7 @@ def test_constructed_generate_lists_writes_three_marked_files(
     assert set(texts) == set(fa.LIST_FILES)
     assert fa.check_lists(texts) == []
     slash = texts[fa.SLASH_LIST]
-    assert "\n/agree\temote\tAGREE\n" in slash and "# not read: ORPHAN: registered" in slash
+    assert "\n/agree\temote\tAGREE\tenUS\n" in slash and "# not read: ORPHAN: registered" in slash
     assert f"# sha256: {string_pins['deDE.lua']}  GlobalStrings/deDE.lua\n" in slash
     assert texts[fa.LIMIT_LIST].endswith("\nEncodingStackSizeLimit\t100\tnumber\n")
     # A file other than its pin, and a version other than the pinned build, are refused.
@@ -595,6 +610,7 @@ def test_committed_client_lists_pass_check_and_name_the_pins() -> None:
     [
         (fa.SLASH_LIST, "/cast\tregistered", "/cast\tsomewhere", "the source 'somewhere'"),
         (fa.SLASH_LIST, "\n/cast\t", "\ncast\t", "is not a slash command text"),
+        (fa.SLASH_LIST, "\tCAST\t*\n", "\tCAST\tGerman\n", "are not language codes"),
         (fa.BINDING_LIST, "\nTOGGLEWORLDMAP\t", "\nToggleWorldMap\t", "not a command name"),
         (fa.LIMIT_LIST, "\t100\t", "\tmany\t", "is not a whole number"),
         (fa.LIMIT_LIST, f"# ui-build: {fa.UI_BUILD}", "# ui-build: 1.60.1.1", "ui-build"),
@@ -603,6 +619,7 @@ def test_committed_client_lists_pass_check_and_name_the_pins() -> None:
     ids=[
         "constructed-source",
         "constructed-text",
+        "constructed-languages",
         "constructed-name",
         "constructed-value",
         "constructed-build",
@@ -617,14 +634,3 @@ def test_constructed_edits_to_the_client_lists_are_reported(
     texts[file] = texts[file].replace(old, new, 1)
     problems = fa.check_lists(texts)
     assert any(problem in p for p in problems), problems
-
-
-@pytest.mark.live
-def test_live_fetch_and_generate_reproduce_the_committed_client_lists(tmp_path: Path) -> None:
-    """Owner-run, by hand, never in CI (ADR-0012): download every pinned file,
-    generate, and compare with the committed client lists byte for byte.
-
-        uv run pytest tests/scripts/test_forever_api.py -m live -p no:cacheprovider
-    """
-    fa.fetch(tmp_path)
-    assert fa.generate_lists(tmp_path) == fa.read_lists()

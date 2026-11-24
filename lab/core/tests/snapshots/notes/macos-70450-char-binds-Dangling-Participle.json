@@ -30,7 +30,7 @@
       "key": "1",
       "command": "ACTIONBUTTON1",
       "slot": 1,
-      "page_note": "main bar button 1, page 1, the page shown with no form, stance or stealth active; paging, a form, stance or stealth, or a possess, override or vehicle bar [verify] shows another page, and the key then presses that page's slot (not followed)",
+      "page_note": "Action Bar (the main bar) button 1, page 1, the page shown with no form, stance or stealth active; paging, a form, stance or stealth, or a possess, override or vehicle bar [verify] shows another page, and the key then presses that page's slot (not followed)",
       "holds": {
         "type": "spell",
         "id": 143,
@@ -52,7 +52,7 @@
       "key": "2",
       "command": "ACTIONBUTTON2",
       "slot": 2,
-      "page_note": "main bar button 2, page 1, the page shown with no form, stance or stealth active; paging, a form, stance or stealth, or a possess, override or vehicle bar [verify] shows another page, and the key then presses that page's slot (not followed)",
+      "page_note": "Action Bar (the main bar) button 2, page 1, the page shown with no form, stance or stealth active; paging, a form, stance or stealth, or a possess, override or vehicle bar [verify] shows another page, and the key then presses that page's slot (not followed)",
       "holds": {
         "type": "spell",
         "id": 5143,
@@ -74,7 +74,7 @@
       "key": "3",
       "command": "ACTIONBUTTON3",
       "slot": 3,
-      "page_note": "main bar button 3, page 1, the page shown with no form, stance or stealth active; paging, a form, stance or stealth, or a possess, override or vehicle bar [verify] shows another page, and the key then presses that page's slot (not followed)",
+      "page_note": "Action Bar (the main bar) button 3, page 1, the page shown with no form, stance or stealth active; paging, a form, stance or stealth, or a possess, override or vehicle bar [verify] shows another page, and the key then presses that page's slot (not followed)",
       "holds": {
         "type": "spell",
         "id": 205,
@@ -96,7 +96,7 @@
       "key": "4",
       "command": "ACTIONBUTTON4",
       "slot": 4,
-      "page_note": "main bar button 4, page 1, the page shown with no form, stance or stealth active; paging, a form, stance or stealth, or a possess, override or vehicle bar [verify] shows another page, and the key then presses that page's slot (not followed)",
+      "page_note": "Action Bar (the main bar) button 4, page 1, the page shown with no form, stance or stealth active; paging, a form, stance or stealth, or a possess, override or vehicle bar [verify] shows another page, and the key then presses that page's slot (not followed)",
       "holds": {
         "type": "spell",
         "id": 2136,
@@ -118,7 +118,7 @@
       "key": "5",
       "command": "ACTIONBUTTON5",
       "slot": 5,
-      "page_note": "main bar button 5, page 1, the page shown with no form, stance or stealth active; paging, a form, stance or stealth, or a possess, override or vehicle bar [verify] shows another page, and the key then presses that page's slot (not followed)",
+      "page_note": "Action Bar (the main bar) button 5, page 1, the page shown with no form, stance or stealth active; paging, a form, stance or stealth, or a possess, override or vehicle bar [verify] shows another page, and the key then presses that page's slot (not followed)",
       "holds": {
         "type": "spell",
         "id": 20572,
@@ -140,7 +140,7 @@
       "key": "6",
       "command": "ACTIONBUTTON6",
       "slot": 6,
-      "page_note": "main bar button 6, page 1, the page shown with no form, stance or stealth active; paging, a form, stance or stealth, or a possess, override or vehicle bar [verify] shows another page, and the key then presses that page's slot (not followed)",
+      "page_note": "Action Bar (the main bar) button 6, page 1, the page shown with no form, stance or stealth active; paging, a form, stance or stealth, or a possess, override or vehicle bar [verify] shows another page, and the key then presses that page's slot (not followed)",
       "holds": {
         "type": "item",
         "id": 1251,
@@ -162,7 +162,7 @@
       "key": "7",
       "command": "ACTIONBUTTON7",
       "slot": 7,
-      "page_note": "main bar button 7, page 1, the page shown with no form, stance or stealth active; paging, a form, stance or stealth, or a possess, override or vehicle bar [verify] shows another page, and the key then presses that page's slot (not followed)",
+      "page_note": "Action Bar (the main bar) button 7, page 1, the page shown with no form, stance or stealth active; paging, a form, stance or stealth, or a possess, override or vehicle bar [verify] shows another page, and the key then presses that page's slot (not followed)",
       "holds": null,
       "does": "empty slot (nothing recorded in it)",
       "sources": [
@@ -178,7 +178,7 @@
       "key": "8",
       "command": "ACTIONBUTTON8",
       "slot": 8,
-      "page_note": "main bar button 8, page 1, the page shown with no form, stance or stealth active; paging, a form, stance or stealth, or a possess, override or vehicle bar [verify] shows another page, and the key then presses that page's slot (not followed)",
+      "page_note": "Action Bar (the main bar) button 8, page 1, the page shown with no form, stance or stealth active; paging, a form, stance or stealth, or a possess, override or vehicle bar [verify] shows another page, and the key then presses that page's slot (not followed)",
       "holds": null,
       "does": "empty slot (nothing recorded in it)",
       "sources": [
@@ -194,7 +194,7 @@
       "key": "9",
       "command": "ACTIONBUTTON9",
       "slot": 9,
-      "page_note": "main bar button 9, page 1, the page shown with no form, stance or stealth active; paging, a form, stance or stealth, or a possess, override or vehicle bar [verify] shows another page, and the key then presses that page's slot (not followed)",
+      "page_note": "Action Bar (the main bar) button 9, page 1, the page shown with no form, stance or stealth active; paging, a form, stance or stealth, or a possess, override or vehicle bar [verify] shows another page, and the key then presses that page's slot (not followed)",
       "holds": null,
       "does": "empty slot (nothing recorded in it)",
       "sources": [
@@ -210,7 +210,7 @@
       "key": "0",
       "command": "ACTIONBUTTON10",
       "slot": 10,
-      "page_note": "main bar button 10, page 1, the page shown with no form, stance or stealth active; paging, a form, stance or stealth, or a possess, override or vehicle bar [verify] shows another page, and the key then presses that page's slot (not followed)",
+      "page_note": "Action Bar (the main bar) button 10, page 1, the page shown with no form, stance or stealth active; paging, a form, stance or stealth, or a possess, override or vehicle bar [verify] shows another page, and the key then presses that page's slot (not followed)",
       "holds": null,
       "does": "empty slot (nothing recorded in it)",
       "sources": [
@@ -226,7 +226,7 @@
       "key": "NUMPADPLUS",
       "command": "ACTIONBUTTON11",
       "slot": 11,
-      "page_note": "main bar button 11, page 1, the page shown with no form, stance or stealth active; paging, a form, stance or stealth, or a possess, override or vehicle bar [verify] shows another page, and the key then presses that page's slot (not followed)",
+      "page_note": "Action Bar (the main bar) button 11, page 1, the page shown with no form, stance or stealth active; paging, a form, stance or stealth, or a possess, override or vehicle bar [verify] shows another page, and the key then presses that page's slot (not followed)",
       "holds": {
         "type": "item",
         "id": 5350,
@@ -248,7 +248,7 @@
       "key": "NUMPADMINUS",
       "command": "ACTIONBUTTON12",
       "slot": 12,
-      "page_note": "main bar button 12, page 1, the page shown with no form, stance or stealth active; paging, a form, stance or stealth, or a possess, override or vehicle bar [verify] shows another page, and the key then presses that page's slot (not followed)",
+      "page_note": "Action Bar (the main bar) button 12, page 1, the page shown with no form, stance or stealth active; paging, a form, stance or stealth, or a possess, override or vehicle bar [verify] shows another page, and the key then presses that page's slot (not followed)",
       "holds": {
         "type": "item",
         "id": 5349,
@@ -270,7 +270,7 @@
       "key": "Q",
       "command": "MULTIACTIONBAR1BUTTON1",
       "slot": 61,
-      "page_note": "bottom left bar button 1, page 6",
+      "page_note": "Action Bar 2 (bottom left) button 1, page 6",
       "holds": {
         "type": "spell",
         "id": 1459,
@@ -293,7 +293,7 @@
       "key": "BUTTON3",
       "command": "MULTIACTIONBAR1BUTTON2",
       "slot": 62,
-      "page_note": "bottom left bar button 2, page 6",
+      "page_note": "Action Bar 2 (bottom left) button 2, page 6",
       "holds": {
         "type": "spell",
         "id": 118,
@@ -316,7 +316,7 @@
       "key": "E",
       "command": "MULTIACTIONBAR1BUTTON3",
       "slot": 63,
-      "page_note": "bottom left bar button 3, page 6",
+      "page_note": "Action Bar 2 (bottom left) button 3, page 6",
       "holds": {
         "type": "spell",
         "id": 168,
@@ -2179,7 +2179,7 @@
   "unreached_slots": [
     {
       "slot": 64,
-      "page_note": "bottom left bar button 4, page 6",
+      "page_note": "Action Bar 2 (bottom left) button 4, page 6",
       "unfollowed_page": false,
       "holds": {
         "type": "spell",
@@ -2192,7 +2192,7 @@
     },
     {
       "slot": 66,
-      "page_note": "bottom left bar button 6, page 6",
+      "page_note": "Action Bar 2 (bottom left) button 6, page 6",
       "unfollowed_page": false,
       "holds": {
         "type": "macro",
@@ -2205,7 +2205,7 @@
     },
     {
       "slot": 69,
-      "page_note": "bottom left bar button 9, page 6",
+      "page_note": "Action Bar 2 (bottom left) button 9, page 6",
       "unfollowed_page": false,
       "holds": {
         "type": "spell",
@@ -2218,7 +2218,7 @@
     },
     {
       "slot": 71,
-      "page_note": "bottom left bar button 11, page 6",
+      "page_note": "Action Bar 2 (bottom left) button 11, page 6",
       "unfollowed_page": false,
       "holds": {
         "type": "spell",
@@ -2231,7 +2231,7 @@
     },
     {
       "slot": 72,
-      "page_note": "bottom left bar button 12, page 6",
+      "page_note": "Action Bar 2 (bottom left) button 12, page 6",
       "unfollowed_page": false,
       "holds": {
         "type": "spell",

@@ -140,11 +140,11 @@ Keys: 130 (main-bar keys at page 1, with no form, stance or stealth; 3 in a file
   RIGHT            TURNRIGHT                     -  Turn Right (Movement Keys)  (record only (no file line for this key))
   NUMPAD5          VEHICLEEXIT                   -  Exit Vehicle (Vehicle Controls)  (record only (no file line for this key))
 Filled slots no key reaches on the page its bar shows by default: 5
-  slot  64  casts Shatter Curse (Racial, spell 1299026)  (bottom left bar button 4, page 6)
-  slot  66  runs a macro that shows spell 1459 now; the record keeps no macro name or body  (bottom left bar button 6, page 6)
-  slot  69  casts Comprehend Scroll (Comprehension, spell 1296017)  (bottom left bar button 9, page 6)
-  slot  71  casts Conjure Water (Rank 1, spell 5504)  (bottom left bar button 11, page 6)
-  slot  72  casts Conjure Food (Rank 1, spell 587)  (bottom left bar button 12, page 6)
+  slot  64  casts Shatter Curse (Racial, spell 1299026)  (Action Bar 2 (bottom left) button 4, page 6)
+  slot  66  runs a macro that shows spell 1459 now; the record keeps no macro name or body  (Action Bar 2 (bottom left) button 6, page 6)
+  slot  69  casts Comprehend Scroll (Comprehension, spell 1296017)  (Action Bar 2 (bottom left) button 9, page 6)
+  slot  71  casts Conjure Water (Rank 1, spell 5504)  (Action Bar 2 (bottom left) button 11, page 6)
+  slot  72  casts Conjure Food (Rank 1, spell 587)  (Action Bar 2 (bottom left) button 12, page 6)
 Left out of the bindings record, counted with no list: 1 command not named in
   plain upper case (a key bound straight to a spell, macro, item or click may be
   one), and 0 keys not printable ASCII.

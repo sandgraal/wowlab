@@ -45,10 +45,15 @@ The rules:
   indented directive counts is **[verify]**), and ends with its `END`.
 - `unknown-command`: a body line whose `/command` is not one of the client's
   own slash commands (`clientlists.slash_command`: every text the client's
-  interface code and strings name, in every client language, at the build
-  the shipped list was read at). Such a command is an addon's, which works
-  only while that addon is loaded, or a typo; the finding says both. `#`
-  lines are not slash commands and are not read by this rule (M22-18).
+  interface code and strings name, in English and the install's
+  `textLocale`, or in every client language when that is not known). Such a
+  command is an addon's, which works only while that addon is loaded, or a
+  typo; the finding says both, and names the two builds the lists were read
+  at. When the opened flavor's build is not the lists' (major.minor.patch,
+  `clientlists.mismatch`), the rule is "cannot judge" for every macro. `#`
+  lines are not slash commands and are not read by this rule. The game-mode
+  filter of the client's slash-command code is not applied **[verify]**
+  (M22-18).
 
 A record section whose own probes say values were dropped (a call raised, a
 value was secret or untestable, a needed function was missing) or that holds
@@ -120,7 +125,11 @@ MacroScope = Literal["account", "character"]
 
 # Commands whose text is free (chat, emotes, scripts): their brackets mean
 # nothing to the client, so `unbalanced-brackets` does not read them. English
-# names only; a localized alias is checked like any other command.
+# names only; a localized alias is checked like any other command. Three of
+# them, `/raidwarning`, `/bn` and `/print`, are not commands of the client at
+# the build the shipped lists were read at (no client string names them):
+# kept, since a line that runs no client command has no brackets that matter,
+# and `unknown-command` already names it (M22-18).
 CHAT_COMMANDS = frozenset(
     {
         "/say",
@@ -669,8 +678,6 @@ def _check_lines(macros: Sequence[SourceMacro], findings: list[Finding]) -> None
                         ),
                     )
                 )
-            if parsed is not None and parsed[0].startswith("/"):
-                _check_command(m, k, text, findings)
             if k > 0 and parsed is not None and parsed[0] in _FIRST_LINE:
                 findings.append(
                     Finding(
@@ -686,27 +693,47 @@ def _check_lines(macros: Sequence[SourceMacro], findings: list[Finding]) -> None
                 )
 
 
-def _check_command(m: SourceMacro, k: int, text: str, findings: list[Finding]) -> None:
-    """`unknown-command` for one body line that starts with a `/command`."""
-    match = _COMMAND.fullmatch(text)
-    assert match is not None
-    command = match.group(1)
-    if clientlists.slash_command(command) is not None:
-        return
-    build = clientlists.lists().ui_build
-    findings.append(
-        Finding(
-            rule="unknown-command",
-            macro=_ref(m),
-            name=m.macro.name,
-            line=_body_line(m, k),
-            detail=(
-                f"body line {k + 1}: {command!r} is not a slash command of the game's own "
-                f"interface (in any client language, at {build}): it may be an addon's "
-                "command, which works only while that addon is loaded, or a typo"
-            ),
+def _check_commands(
+    macros: Sequence[SourceMacro],
+    client: clientlists.Client | None,
+    findings: list[Finding],
+    unjudged: list[CannotJudge],
+) -> None:
+    """`unknown-command` for every body line that starts with a `/command`;
+    "cannot judge" for all of them when the shipped lists were read from
+    another build than this client's (`clientlists.mismatch`)."""
+    why = clientlists.mismatch(client)
+    if why is not None:
+        unjudged.append(
+            CannotJudge(
+                rule="unknown-command",
+                reason=f"{why}, so whether a /command is the game's cannot be told",
+            )
         )
-    )
+        return
+    language = client.language if client is not None else None
+    where = f"{clientlists.languages_words(language)}; {clientlists.source_words()}"
+    for m in macros:
+        for k, text in enumerate(m.macro.body_lines):
+            match = _COMMAND.fullmatch(text)
+            if match is None or not match.group(1).startswith("/"):
+                continue
+            command = match.group(1)
+            if clientlists.slash_command(command, language) is not None:
+                continue
+            findings.append(
+                Finding(
+                    rule="unknown-command",
+                    macro=_ref(m),
+                    name=m.macro.name,
+                    line=_body_line(m, k),
+                    detail=(
+                        f"body line {k + 1}: {command!r} is not a slash command of the "
+                        f"game's own interface ({where}): it may be an addon's command, "
+                        "which works only while that addon is loaded, or a typo"
+                    ),
+                )
+            )
 
 
 def _check_length(
@@ -756,10 +783,13 @@ def check(
     *,
     character: str | None = None,
     no_record: str = NO_RECORD,
+    client: clientlists.Client | None = None,
 ) -> CheckResult:
     """Apply every rule. `record` is the character's lab-addon record, or
     None; `no_record` is then why, the two lab-addon rules' reason.
-    `character` names whose action bars the record holds."""
+    `character` names whose action bars the record holds. `client` is the
+    opened flavor's build and text language, for `unknown-command`; None
+    judges with the shipped lists as they are, in every language."""
     findings: list[Finding] = []
     unjudged: list[CannotJudge] = []
     checked = [_check_length(m, findings, unjudged) for m in macros]
@@ -781,6 +811,7 @@ def check(
             at_least = _check_bars(macros, bars, whose, findings, unjudged)
     _check_duplicates(macros, findings)
     _check_lines(macros, findings)
+    _check_commands(macros, client, findings, unjudged)
     order = {rule: i for i, rule in enumerate(RULES)}
     findings.sort(key=lambda f: (order[f.rule], f.macro.scope, f.macro.line, f.line))
     unjudged.sort(key=lambda c: order[c.rule])

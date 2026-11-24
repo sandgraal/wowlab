@@ -38,6 +38,7 @@ from wowlab_core.cli._common import (
     _account_words,
     _bytes,
     _chosen_lab_file,
+    _client_facts,
     _confirm,
     _emit,
     _handled,
@@ -276,7 +277,9 @@ def macros_check(
         no_record = "no spellbook record (no character chosen; use --character)"
     else:
         no_record = macrocheck.NO_RECORD
-    result = macrocheck.check(macros, record, character=who, no_record=no_record)
+    result = macrocheck.check(
+        macros, record, character=who, no_record=no_record, client=_client_facts(lay, chosen)
+    )
     report = MacrosCheckReport(
         flavor_folder=chosen.folder,
         account=acct.folder,
@@ -541,7 +544,12 @@ def macros_fix(
             "plan",
             EXIT_REFUSED,
         )
-    plan = macrofix.plan(wtfconfig.parse_macros(data), scope=scope, file=path)
+    plan = macrofix.plan(
+        wtfconfig.parse_macros(data),
+        scope=scope,
+        file=path,
+        client=_client_facts(lay, chosen),
+    )
     after = hashlib.sha256(plan.data).hexdigest() if plan.fixes else None
     if expect_fixed is not None and expect_fixed != after:
         if json_out:

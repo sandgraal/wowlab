@@ -65,6 +65,7 @@ from wowlab_core.cli._common import (
     NotesOpt,
     RootOpt,
     _account_words,
+    _client_facts,
     _damaged_records,
     _discover,
     _emit,
@@ -2010,7 +2011,11 @@ def char_binds(
         else f"no lab-addon record ({keymap.GET_RECORD})"
     )
     found = keymap.join_record(
-        account=account_doc, character=character_doc, record=record, no_record=no_record
+        account=account_doc,
+        character=character_doc,
+        record=record,
+        no_record=no_record,
+        client=_client_facts(lay, chosen),
     )
     report = CharBindsReport(
         flavor_folder=chosen.folder,
@@ -2342,7 +2347,11 @@ def char_macros(
         else f"no lab-addon record ({keymap.GET_RECORD})"
     )
     keys = keymap.join_record(
-        account=account_doc, character=character_doc, record=record, no_record=no_record
+        account=account_doc,
+        character=character_doc,
+        record=record,
+        no_record=no_record,
+        client=_client_facts(lay, chosen),
     )
     if isinstance(record, labaddon.CharDBV3):
         bars, no_bars = record.actionbars, f"no action-bar record ({keymap.GET_RECORD})"
@@ -2359,7 +2368,9 @@ def char_macros(
         no_book = "no spellbook record (no character chosen; use --character)"
     else:
         no_book = macrocheck.NO_RECORD
-    checked = macrocheck.check(sources, record, character=who, no_record=no_book)
+    checked = macrocheck.check(
+        sources, record, character=who, no_record=no_book, client=_client_facts(lay, chosen)
+    )
     positions: dict[macrocheck.MacroScope, int] = {"account": 0, "character": 0}
     order: list[tuple[macroplace.MacroScope, int]] = []
     for s in sources:
