@@ -7,10 +7,9 @@ Graded on real captures: the owner's CurseForge records
 `scripts/lab_capture.py --file`; one game instance, `_forever_`, 22 addons),
 the owner's WowUp list and settings (`fixtures/wowup/macos/`), and the
 launch client's install capture (`fixtures/macos-70888/`, Auctionator 346,
-Baganator 850 and BanterBlocker), each copied into `tmp_path`. Putting a
-record file where the app keeps it in a stand-in home, and pairing it with
-an install capture, is `constructed`; so is moving its `installPath` onto
-the copy (byte-level, that path only), and every file built here (a FIFO, a
+Baganator 850 and BanterBlocker), each copied into `tmp_path`. Pairing a
+record file with an install capture is `constructed`; so is moving
+its `installPath` onto the copy (byte-level, that path only), and every file built here (a FIFO, a
 link, an oversized file, a record with a name of its own); those test ids
 say so. The user's folders are redirected into `tmp_path`: nothing reads a
 real CurseForge or WowUp folder or a real install, and nothing writes to
@@ -394,7 +393,9 @@ def test_the_records_in_text_constructed(forever: Path, home: Path) -> None:
     assert hits(out) == [] and hits(ok("addons", "list", "--notes")) == []
 
 
-def test_records_of_another_game_folder_are_hints_only(forever: Path, home: Path) -> None:
+def test_records_of_another_game_folder_are_hints_only_constructed(
+    forever: Path, home: Path
+) -> None:
     # The real file as captured: its game folder is the owner's `_forever_`,
     # not this copy.
     _curseforge()
