@@ -128,7 +128,25 @@ def test_a_new_database_and_a_migrated_one_have_the_same_world_tables_constructe
         "world_encounter_players_key",
     }
     step = [crewdb._MIGRATIONS[k] for k in sorted(k for k in crewdb._MIGRATIONS if k[0] == 3)]
-    assert step == [s for s in crewdb._SQL_CREATE if " world_" in s]
+    created = [s for s in crewdb._SQL_CREATE if " world_" in s]
+    # M22-22: schema 6 adds `by_map` to `world_encounters`, so the 3 -> 4
+    # step's statement is the one before it; with the 5 -> 6 step after it,
+    # the columns are the new database's.
+    assert [s for s in step if "TABLE world_encounters " not in s] == [
+        s for s in created if "TABLE world_encounters " not in s
+    ]
+    later = [crewdb._MIGRATIONS[k] for k in sorted(k for k in crewdb._MIGRATIONS if k[0] == 5)]
+
+    def columns(statements: list[str]) -> list[tuple[object, ...]]:
+        mem = sqlite3.connect(":memory:")
+        try:
+            for statement in statements:
+                mem.execute(statement)
+            return mem.execute("PRAGMA table_info(world_encounters)").fetchall()
+        finally:
+            mem.close()
+
+    assert columns(step + later) == columns(created)
 
 
 def _as_schema_3(env: Env) -> None:
@@ -167,7 +185,7 @@ def test_a_schema_3_database_is_copied_then_migrated_and_scanned_constructed(
         conn.close()
     conn = sqlite3.connect(env.db())
     try:
-        assert conn.execute("PRAGMA user_version").fetchone()[0] == crewdb.SCHEMA == 5
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == crewdb.SCHEMA == 6
         assert conn.execute("SELECT count(*) FROM world_encounters").fetchone()[0] == 1
     finally:
         conn.close()

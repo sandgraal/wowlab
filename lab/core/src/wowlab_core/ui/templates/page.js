@@ -4677,7 +4677,10 @@
       parts.push("last save " + new Date(saved.newest_ns / 1e6).toLocaleString());
     }
     parts.push("checked " + new Date().toLocaleTimeString() + " in " + Math.max(1, Math.round(watch.cost_us / 1000)) + " ms");
-    return parts.join(" · ") + ".";
+    // M22-22: when the game's map table was not read, the open world is told
+    // by the zone line alone; the server says so in its own words.
+    const mapWords = typeof watch.map_words === "string" && watch.map_words ? " " + visible(watch.map_words) : "";
+    return parts.join(" · ") + "." + mapWords;
   }
 
   async function liveRecap() {
@@ -4787,6 +4790,7 @@
     matchSeq: 0, // the latest match history read
     world: false, // whether the history on show is the open-world fights (M20-18)
     scanSeq: 0, // the latest combat-log read (M20-18)
+    mapsFlavor: "", // the flavor whose map table a read said is missing (M22-22)
     key: null, // the stored key of the player shown
     pending: null, // the plan Confirm would run: { command, params, token }
     searchTimer: null,
@@ -5169,9 +5173,47 @@
       return;
     }
     await loadCrew();
-    crewSay(visible(report.words), false);
+    // M22-22: the map table's lines (why it was not used, what the re-check
+    // of earlier reads removed) follow the read's own sentence.
+    const mapLines = Array.isArray(report.map_lines) ? report.map_lines.filter((l) => typeof l === "string") : [];
+    crewSay([report.words, ...mapLines].map((l) => visible(l)).join(" "), false);
+    drawMapsOffer(report);
   }
   byId("crew-scan-log").addEventListener("click", () => scanCrewLog());
+
+  // M22-22: the open world is told from dungeons, raids and battlegrounds
+  // by the game's map table, one download per game version. When a read
+  // says it is not downloaded, one button downloads it (`db2 fetch Map`, for
+  // the read's flavor) and reads again, which checks what earlier reads
+  // kept against it.
+  function drawMapsOffer(report) {
+    const button = byId("crew-maps-fetch");
+    // Only a table not downloaded: one that is downloaded but cannot be read
+    // is never replaced by a download, so none is offered for it.
+    const missing = report && report.map_table_state === "missing" && hubStr(report.map_version) && hubStr(report.flavor_folder);
+    crew.mapsFlavor = missing ? report.flavor_folder : "";
+    button.hidden = !missing;
+    byId("crew-maps-note").hidden = !missing;
+  }
+
+  async function fetchMapTable() {
+    const flavor = crew.mapsFlavor;
+    if (!flavor) return;
+    const button = byId("crew-maps-fetch");
+    button.disabled = true;
+    crewSay("Downloading the game's map table…", false);
+    const reply = await runJson(["db2", "fetch"], { table: "Map", flavor: flavor }, false, true);
+    button.disabled = false;
+    if (reply.error) {
+      crewSay("The map table could not be downloaded: " + shown(reply.error), true);
+      return;
+    }
+    button.hidden = true;
+    byId("crew-maps-note").hidden = true;
+    crew.mapsFlavor = "";
+    await scanCrewLog();
+  }
+  byId("crew-maps-fetch").addEventListener("click", () => fetchMapTable());
   byId("crew-player-matches-show").addEventListener("click", () => showPlayerMatches());
 
   function clearCrewConfirm() {

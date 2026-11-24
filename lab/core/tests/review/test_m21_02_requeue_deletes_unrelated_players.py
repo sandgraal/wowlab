@@ -39,6 +39,8 @@ from test_crew_log_names import _as_schema_4_with_old_keys, _count, _fights
 from test_crew_world import _book, _scan, _write_log, owner  # noqa: F401 - the fixture
 from test_crewdb import Env, make  # noqa: F401 - the fixture
 
+from wowlab_core import crewdb
+
 FORMER = "Formerbook-Someone"  # constructed key
 
 
@@ -58,6 +60,8 @@ def _as_schema_4(env: Env) -> None:
     conn = sqlite3.connect(env.db(), isolation_level=None)
     try:
         conn.execute("DROP TABLE log_names")
+        # M22-22 added `by_map` at schema 6; schema 4 had none.
+        conn.execute("ALTER TABLE world_encounters DROP COLUMN by_map")
         conn.execute("PRAGMA user_version = 4")
     finally:
         conn.close()
@@ -81,6 +85,6 @@ def test_constructed_schema_5_step_keeps_a_former_book_player(
 
     result = _scan(env, "--json")  # opens the database: the 4 -> 5 step runs
     assert result.exit_code == 0, result.output
-    assert _count(env, "PRAGMA user_version") == 5
+    assert _count(env, "PRAGMA user_version") == crewdb.SCHEMA
     held = _count(env, f"SELECT count(*) FROM players WHERE player_key = '{FORMER}'")
     assert held == 1, "the schema-5 step deleted a player no requeued log held"

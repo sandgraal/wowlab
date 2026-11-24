@@ -107,6 +107,8 @@ def _as_schema_4_with_old_keys(env: Env) -> None:
         conn.execute("PRAGMA secure_delete = ON")
         conn.execute("BEGIN")
         conn.execute("DROP TABLE log_names")
+        # M22-22 added `by_map` at schema 6; schema 4 had none.
+        conn.execute("ALTER TABLE world_encounters DROP COLUMN by_map")
         conn.execute(
             "UPDATE players SET player_key = ?, realm = ? WHERE player_key = ?",
             (OLD_TAY, "SoulrendRoleplayPvP", TAY),
