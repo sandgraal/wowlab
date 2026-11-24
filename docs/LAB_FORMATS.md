@@ -1676,7 +1676,8 @@ Dated entries, newest last. Each names the fixture that prompted it.
   documentation **[verify]**: no map of this build has it, and the one map
   named for an arena, 2999 "Ruins of Lordaeron", is type 1), and by the
   difficulty only when the table is not cached. With the table read, a map
-  it does not hold is not taken for the open world. A city on a continent
+  it does not hold is not taken for the open world: its fights are kept set
+  aside, counted nowhere, until a later table names the map. A city on a continent
   map is the open world by its zone line: the fixture's
   `ZONE_CHANGE,1,"Orgrimmar",0` (Orgrimmar on Kalimdor, map 1, type 0).
   Map 2996, "Warsong Gulch (Winter)", is type 0 in the table although it

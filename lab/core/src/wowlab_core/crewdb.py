@@ -242,7 +242,7 @@ _SQL_CREATE: tuple[str, ...] = (
     " zone TEXT,"
     " instance_id INTEGER,"
     " died INTEGER NOT NULL CHECK (died IN (0, 1)),"
-    " by_map INTEGER NOT NULL DEFAULT 0 CHECK (by_map IN (0, 1))"
+    " by_map INTEGER NOT NULL DEFAULT 0 CHECK (by_map IN (0, 1, 2))"
     ") STRICT",
     "CREATE INDEX world_encounters_start ON world_encounters (start_at)",
     "CREATE TABLE world_encounter_players ("
@@ -296,16 +296,18 @@ _SQL_CREATE: tuple[str, ...] = (
 # log named so, in a table of its own (`log_names`). A row of the beta's
 # three-part names has none, so its key's second part stays a realm.
 #
-# 5 -> 6 (M22-22): whether an open-world encounter's place was found to be
-# the open world by the game's map table (`by_map`), not by the zone line's
-# difficulty, which a dungeon's line can share (`worldpvp.in_open_world`).
-# Every stored encounter starts as not (0): the database cannot read the
-# table, which is build-keyed and fetched by the caller, so the step only
-# marks them, after the `.before-schema-5` copy. `recheck_world`, run by
-# `crew scan-log` once the table is cached, then removes each marked
-# encounter that the rule with the table says is not the open world (its
-# map an instance, or a map the table does not hold) and marks the rest as
-# checked. Running it again changes nothing. An encounter a read keeps while the table is missing is
+# 5 -> 6 (M22-22): how an open-world encounter's place was judged
+# (`by_map`): 0 by the zone line's difficulty, which a dungeon's line can
+# share (no map table yet); 1 the open world by the game's map table; 2 set
+# aside: its map is not in the table that was read, so it is kept but
+# counted nowhere (likely a map a hotfix added, which the published table
+# lacks: once its log is gone nothing could rebuild it). Every stored
+# encounter starts as 0: the database cannot read the table, which is
+# build-keyed and fetched by the caller, so the step only adds the column,
+# after the `.before-schema-5` copy. `recheck_world`, run by `crew
+# scan-log` once the table is read, judges each 0 and 2 again: the open
+# world is marked 1, a map the table does not hold 2, and only a map the
+# table names as an instance is deleted. Running it again changes nothing. An encounter a read keeps while the table is missing is
 # marked the same way, so it is checked once the table is there.
 #
 # Keyed by (schema it starts from, order within the step); each value one
@@ -368,7 +370,7 @@ _MIGRATIONS: dict[tuple[int, int], str] = {
     " region TEXT"
     ") STRICT",
     (5, 1): "ALTER TABLE world_encounters ADD COLUMN by_map INTEGER NOT NULL DEFAULT 0"
-    " CHECK (by_map IN (0, 1))",
+    " CHECK (by_map IN (0, 1, 2))",
 }
 
 _SQL_META_ALL = "SELECT name, value FROM meta"
@@ -2485,7 +2487,8 @@ def _counts(path: Path) -> tuple[int, int, int, tuple[int, int, int] | None] | s
         (matches,) = conn.execute(_SQL_COUNT_MATCHES).fetchone()
         world: tuple[int, int, int] | None = None
         if _has_world(conn):
-            encounters, opponents, logs = conn.execute(_SQL_COUNT_WORLD).fetchone()
+            counting = _SQL_COUNT_WORLD_6 if version >= 6 else _SQL_COUNT_WORLD
+            encounters, opponents, logs = conn.execute(counting).fetchone()
             world = (int(encounters), int(opponents), int(logs))
     except sqlite3.Error:
         return "wowlab could not read it now"
@@ -3025,7 +3028,8 @@ _SQL_WORLD_PARTS = (
     "SELECT p.player_key, p.side, p.killed_by_you, p.killed_you, e.start_at, e.end_at, e.zone"
     " FROM world_encounter_players AS p"
     " JOIN world_encounters AS e ON e.encounter_id = p.encounter_id"
-    " WHERE e.instance_id IS NULL OR e.instance_id NOT IN (SELECT map_id FROM matches)"
+    " WHERE (e.instance_id IS NULL OR e.instance_id NOT IN (SELECT map_id FROM matches))"
+    " AND e.by_map != 2"
     " ORDER BY e.end_at, e.encounter_id"
 )
 _SQL_WORLD_LOG_BY_PATH = (
@@ -3053,7 +3057,8 @@ _SQL_WORLD_INSERT = (
 # The 5 -> 6 re-check of stored encounters against the map table
 # (`recheck_world`, M22-22).
 _SQL_RECHECK_PENDING = (
-    "SELECT encounter_id, instance_id FROM world_encounters WHERE by_map = 0 ORDER BY encounter_id"
+    "SELECT encounter_id, instance_id, by_map FROM world_encounters"
+    " WHERE by_map IN (0, 2) ORDER BY encounter_id"
 )
 _SQL_RECHECK_PART_KEYS = (
     "SELECT DISTINCT player_key FROM world_encounter_players WHERE encounter_id = ?"
@@ -3061,6 +3066,7 @@ _SQL_RECHECK_PART_KEYS = (
 _SQL_RECHECK_DROP_PARTS = "DELETE FROM world_encounter_players WHERE encounter_id = ?"
 _SQL_RECHECK_DROP_ENCOUNTER = "DELETE FROM world_encounters WHERE encounter_id = ?"
 _SQL_RECHECK_MARK = "UPDATE world_encounters SET by_map = 1 WHERE encounter_id = ?"
+_SQL_RECHECK_SET_ASIDE = "UPDATE world_encounters SET by_map = 2 WHERE encounter_id = ?"
 _SQL_RECHECK_DROP_ORPHAN_NAMES = (
     "DELETE FROM log_names WHERE player_key = ?"
     " AND player_key NOT IN (SELECT player_key FROM players)"
@@ -3074,14 +3080,15 @@ _SQL_SET_GUID_IF_NONE = "UPDATE players SET guid = ? WHERE player_key = ? AND gu
 _SQL_WORLD_ENCOUNTERS_ALL = (
     "SELECT encounter_id, owner_guid, start_at, end_at, zone, instance_id, died"
     " FROM world_encounters"
-    " WHERE instance_id IS NULL OR instance_id NOT IN (SELECT map_id FROM matches)"
+    " WHERE (instance_id IS NULL OR instance_id NOT IN (SELECT map_id FROM matches))"
+    " AND by_map != 2"
     " ORDER BY start_at DESC, encounter_id DESC"
 )
 _SQL_WORLD_ENCOUNTERS_OF = (
     "SELECT encounter_id, owner_guid, start_at, end_at, zone, instance_id, died"
     " FROM world_encounters"
     " WHERE (instance_id IS NULL OR instance_id NOT IN (SELECT map_id FROM matches))"
-    " AND encounter_id IN"
+    " AND by_map != 2 AND encounter_id IN"
     " (SELECT encounter_id FROM world_encounter_players WHERE player_key = ?)"
     " ORDER BY start_at DESC, encounter_id DESC"
 )
@@ -3100,6 +3107,18 @@ _SQL_COUNT_WORLD = (
     " (SELECT count(DISTINCT p.player_key) FROM world_encounter_players AS p"
     " JOIN world_encounters AS e ON e.encounter_id = p.encounter_id"
     " WHERE p.side = 'foe'"
+    " AND (e.instance_id IS NULL OR e.instance_id NOT IN (SELECT map_id FROM matches))),"
+    " (SELECT count(*) FROM world_logs)"
+)
+# The same from schema 6 on (M22-22): an encounter set aside (`by_map` 2,
+# its map not in the game's map table) counts nowhere.
+_SQL_COUNT_WORLD_6 = (
+    "SELECT"
+    " (SELECT count(*) FROM world_encounters WHERE by_map != 2"
+    " AND (instance_id IS NULL OR instance_id NOT IN (SELECT map_id FROM matches))),"
+    " (SELECT count(DISTINCT p.player_key) FROM world_encounter_players AS p"
+    " JOIN world_encounters AS e ON e.encounter_id = p.encounter_id"
+    " WHERE p.side = 'foe' AND e.by_map != 2"
     " AND (e.instance_id IS NULL OR e.instance_id NOT IN (SELECT map_id FROM matches))),"
     " (SELECT count(*) FROM world_logs)"
 )
@@ -3249,6 +3268,9 @@ class WorldOutcome(_Model):
     pet_hits_no_owner: int = 0
     parts: int = 1
     encounters_added: int = 0
+    # M22-22: encounters kept but set aside: on a map the game's map table
+    # does not hold (`by_map` 2), counted nowhere until a later table names it.
+    encounters_set_aside: int = 0
     encounters_left_out: int = 0
     opponents: int = 0
     allies: int = 0
@@ -3514,7 +3536,7 @@ def _record_open(
     log, size, head = seen
     ident = _ident(path)
     now_ns = time.time_ns()
-    added = left_out = players_added = players_left_out = 0
+    added = left_out = players_added = players_left_out = set_aside = 0
     foes: set[str] = set()
     allies: set[str] = set()
     with _transaction(conn):
@@ -3556,11 +3578,14 @@ def _record_open(
                 e.zone,
                 e.instance_id,
                 int(e.died),
-                int(e.by_map),
+                2 if e.unknown_map else int(e.by_map),
             )
             encounter_id = conn.execute(_SQL_WORLD_INSERT, values).lastrowid
             kept += 1
-            added += 1
+            if e.unknown_map:
+                set_aside += 1
+            else:
+                added += 1
             for p in players:
                 if p.key not in rows and len(rows) >= MAX_PLAYERS:
                     # A player only the log names counts against the
@@ -3580,7 +3605,8 @@ def _record_open(
                         int(p.killed_you),
                     ),
                 )
-                (foes if p.side == "foe" else allies).add(p.key)
+                if not e.unknown_map:
+                    (foes if p.side == "foe" else allies).add(p.key)
                 logged = _log_name_values(p)
                 if logged is not None:  # M21-02: a four-part unit name
                     conn.execute(_SQL_LOG_NAMES_SET, (p.key, *logged))
@@ -3603,6 +3629,7 @@ def _record_open(
     outcome = _world_outcome("scanned", "", base).model_copy(
         update={
             "encounters_added": added,
+            "encounters_set_aside": set_aside,
             "encounters_left_out": left_out + scan.left_out,
             "opponents": len(foes),
             "allies": len(allies - foes),
@@ -3619,37 +3646,55 @@ def _record_open(
 
 class WorldRecheck(_Model):
     """What `recheck_world` did (M22-22): how many stored encounters it
-    checked against the game's map table (`checked`), how many of them it
-    removed because their map is a dungeon, raid or battleground there
-    (`removed`; any type but the open world's: that 4 is an arena is not
-    yet confirmed), how many because the table does not hold their map
-    (`removed_unknown`: not taken for the open world either), and how many
-    players it removed with them (`players_removed`: held by nothing
-    else). `skipped`: another wowlab was writing the database, so nothing
-    was checked (the next read does it)."""
+    judged against the game's map table (`checked`), how many of them it
+    removed because the table names their map as an instance (`removed`:
+    a dungeon, raid or battleground, or another type that is not the open
+    world; that 4 is an arena is not yet confirmed), how many it set aside
+    because the table does not hold their map (`set_aside`: kept, counted
+    nowhere, judged again by a later table), how many set aside before it
+    brought back because a later table names their map as the open world
+    (`brought_back`), and how many players it removed with the removed ones
+    (`players_removed`: held by nothing else). `skipped`: another wowlab
+    was writing the database, so nothing was judged (the next read does
+    it)."""
 
     checked: int = 0
     removed: int = 0
-    removed_unknown: int = 0
+    set_aside: int = 0
+    brought_back: int = 0
     players_removed: int = 0
     skipped: bool = False
 
 
+def _rejudged(maps: Mapping[int, int], instance_id: object, by_map: object) -> str | None:
+    """What the re-check does with one stored encounter: `world`, `aside`
+    or `remove`, or None when nothing would change (one already set aside
+    whose map this table does not hold either)."""
+    state = worldpvp.ZoneState(instance_id=instance_id if isinstance(instance_id, int) else None)
+    if worldpvp.in_open_world(state, maps=maps):
+        return "world"
+    if worldpvp.unknown_map(state, maps):
+        return None if by_map == 2 else "aside"
+    return "remove"
+
+
 def recheck_world(target: Target, maps: Mapping[int, int]) -> WorldRecheck:
-    """The 5 -> 6 step's re-check (M22-22): each stored open-world
-    encounter not yet checked against the game's map table (`by_map` 0) is
-    checked by `worldpvp.in_open_world`'s rule with the table (`maps`,
-    `worldpvp.map_types`). One that is not the open world (its map an
-    instance there, or a map the table does not hold) is removed with its
-    players' parts, and so is each of those players' rows that nothing else
-    holds (never in the game's list, no group, no match, no rating or note,
-    no other encounter) and its `log_names` row; no other row is touched,
-    so a player in the crew book, rated or noted is never removed. Every
-    other one is marked checked. One transaction under the write lock,
-    after today's copy; the `.before-schema-5` copy the migration kept
-    holds every encounter as it was. Running it again changes nothing. No
-    database, a database for another install root, or nothing to check:
-    nothing is written."""
+    """The 5 -> 6 step's re-check (M22-22): each stored encounter not yet
+    judged by the game's map table (`by_map` 0) or set aside before
+    (`by_map` 2) is judged by `worldpvp.in_open_world`'s rule with the table
+    (`maps`, `worldpvp.map_types`). The open world is marked 1. A map the
+    table does not hold is set aside (2): kept, but counted nowhere, since
+    it is likely a map a hotfix added that the published table lacks, and
+    once its log is gone nothing could rebuild it. Only a map the table
+    names as an instance is removed, with its players' parts, and so is
+    each of those players' rows that nothing else holds (never in the
+    game's list, no group, no match, no rating or note, no other encounter)
+    and its `log_names` row; no other row is touched, so a player in the
+    crew book, rated or noted is never removed. One transaction under the
+    write lock, after today's copy, and only when something would change;
+    the `.before-schema-5` copy the migration kept holds every encounter as
+    it was. Running it again changes nothing. No database, a database for
+    another install root, or nothing to change: nothing is written."""
     path = database_path(target.flavor_folder, target.account)
     if not os.path.lexists(path):
         return WorldRecheck()
@@ -3665,32 +3710,37 @@ def recheck_world(target: Target, maps: Mapping[int, int]) -> WorldRecheck:
         meta = _meta(conn)
         if "install_root" in meta and meta.get("install_root") != target.install_root:
             return WorldRecheck()
-        if not conn.execute(_SQL_RECHECK_PENDING).fetchone():
+        if not any(
+            _rejudged(maps, i, b) is not None for _, i, b in conn.execute(_SQL_RECHECK_PENDING)
+        ):
             return WorldRecheck()
         ident = _ident(path)
-        checked = removed = unknown = players_removed = 0
+        checked = removed = aside = back = players_removed = 0
         with _transaction(conn):
             _still(path, ident)
-            pending = conn.execute(_SQL_RECHECK_PENDING).fetchall()
-            if pending:
+            pending = [
+                (e, i, b, _rejudged(maps, i, b))
+                for e, i, b in conn.execute(_SQL_RECHECK_PENDING).fetchall()
+            ]
+            if any(what is not None for *_, what in pending):
                 _daily_copy(conn, path)
             held: set[str] = set()
-            for encounter_id, instance_id in pending:
-                checked += 1
-                state = worldpvp.ZoneState(
-                    instance_id=None if instance_id is None else int(instance_id)
-                )
-                if worldpvp.in_open_world(state, maps=maps):
-                    conn.execute(_SQL_RECHECK_MARK, (encounter_id,))
+            for encounter_id, _instance, was, what in pending:
+                if what is None:
                     continue
-                held.update(
-                    str(k) for (k,) in conn.execute(_SQL_RECHECK_PART_KEYS, (encounter_id,))
-                )
-                conn.execute(_SQL_RECHECK_DROP_PARTS, (encounter_id,))
-                conn.execute(_SQL_RECHECK_DROP_ENCOUNTER, (encounter_id,))
-                if worldpvp.unknown_map(state, maps):
-                    unknown += 1
+                checked += 1
+                if what == "world":
+                    conn.execute(_SQL_RECHECK_MARK, (encounter_id,))
+                    back += was == 2
+                elif what == "aside":
+                    conn.execute(_SQL_RECHECK_SET_ASIDE, (encounter_id,))
+                    aside += 1
                 else:
+                    held.update(
+                        str(k) for (k,) in conn.execute(_SQL_RECHECK_PART_KEYS, (encounter_id,))
+                    )
+                    conn.execute(_SQL_RECHECK_DROP_PARTS, (encounter_id,))
+                    conn.execute(_SQL_RECHECK_DROP_ENCOUNTER, (encounter_id,))
                     removed += 1
             for key in sorted(held):
                 players_removed += conn.execute(_SQL_REQUEUE_DROP_LOG_ONLY_PLAYER, (key,)).rowcount
@@ -3698,7 +3748,8 @@ def recheck_world(target: Target, maps: Mapping[int, int]) -> WorldRecheck:
         return WorldRecheck(
             checked=checked,
             removed=removed,
-            removed_unknown=unknown,
+            set_aside=aside,
+            brought_back=back,
             players_removed=players_removed,
         )
     except _Replaced:
@@ -3795,6 +3846,7 @@ _SQL_FIGHTS_WORLD_ALL = (
     " JOIN world_encounters AS e ON e.encounter_id = p.encounter_id"
     " WHERE p.side = 'foe'"
     " AND (e.instance_id IS NULL OR e.instance_id NOT IN (SELECT map_id FROM matches))"
+    " AND e.by_map != 2"
     " ORDER BY e.start_at, e.encounter_id, p.player_key"
 )
 _SQL_FIGHTS_WORLD_OF = (
@@ -3803,6 +3855,7 @@ _SQL_FIGHTS_WORLD_OF = (
     " JOIN world_encounters AS e ON e.encounter_id = p.encounter_id"
     " WHERE p.side = 'foe' AND p.player_key = ?"
     " AND (e.instance_id IS NULL OR e.instance_id NOT IN (SELECT map_id FROM matches))"
+    " AND e.by_map != 2"
     " ORDER BY e.start_at, e.encounter_id"
 )
 

@@ -53,8 +53,11 @@ The difficulty cannot decide it: the launch client writes
 `ZONE_CHANGE,33,"Shadowfang Keep",0`, a dungeon with difficulty 0, as it
 writes `ZONE_CHANGE,0,"Tirisfal Glades",0` for the open world. With the
 table read, a map it does not hold is not the open world either: its
-fights are counted apart (`unknown_map`, the ids in `unknown_maps`), not
-taken for the open world. With no table (`maps` None), the rule falls
+fights are counted apart (`unknown_map`, the ids in `unknown_maps`) and
+their encounters kept apart (`WorldEncounter.unknown_map`), never counted
+and never joined with an open-world one, so a later table that names the
+map can still judge them (likely maps a hotfix added, which the
+published table lacks). With no table (`maps` None), the rule falls
 back to the difficulty: 0 is taken for the open world, which counts a
 dungeon, raid or battleground whose zone line says 0 too, and the caller
 says so. Either way a fight is never the open world inside an
@@ -298,7 +301,11 @@ class WorldEncounter(_Model):
     started and ended (seconds since the epoch, UTC), the zone and instance
     id, whether you died in it, and its players. `by_map`: its place was
     found to be the open world by the game's map table (M22-22); else by the
-    zone line's difficulty, which a dungeon's line can share."""
+    zone line's difficulty, which a dungeon's line can share. `unknown_map`:
+    its map is not in the table that was read, so it is not the open world
+    as far as wowlab can tell: kept apart (a crew database stores it set
+    aside), never counted, and judged again by a later table that names
+    the map."""
 
     owner_guid: str
     start: int
@@ -309,6 +316,7 @@ class WorldEncounter(_Model):
     players: list[WorldPlayer]
     players_left_out: int = 0
     by_map: bool = False
+    unknown_map: bool = False
 
 
 class WorldScan(_Model):
@@ -565,6 +573,7 @@ class _Open:
     zone: str | None
     instance_id: int | None
     by_map: bool = False
+    unknown_map: bool = False
     players: dict[str, _Player] = dataclasses.field(default_factory=dict)  # by GUID
     sides: dict[str, int] = dataclasses.field(default_factory=lambda: {"foe": 0, "ally": 0})
     left_out: int = 0
@@ -598,6 +607,7 @@ class _Open:
             ],
             players_left_out=self.left_out,
             by_map=self.by_map,
+            unknown_map=self.unknown_map,
         )
 
 
@@ -806,8 +816,10 @@ class _Reader:
             return
         self.out.append(e.done(self.spelled.get(e.owner, e.owner)))
 
-    def encounter(self, owner: str, foe: str, now: int) -> _Open:
-        mine = [e for e in self.open if e.owner == owner]
+    def encounter(self, owner: str, foe: str, now: int, aside: bool = False) -> _Open:
+        # An encounter set aside (on a map the table does not hold) and an
+        # open-world one are never joined.
+        mine = [e for e in self.open if e.owner == owner and e.unknown_map == aside]
         for e in mine:
             if foe in e.players and e.players[foe].side == "foe":
                 return e
@@ -827,6 +839,7 @@ class _Reader:
             zone=self.state.zone,
             instance_id=self.state.instance_id,
             by_map=decided_by_map(self.state, self.maps),
+            unknown_map=aside,
         )
         self.open.append(e)
         return e
@@ -905,28 +918,31 @@ class _Reader:
         if world is None:
             self.no_zone += 1
             return
+        aside = False
         if not world:
             s = self.state
-            if (
+            if not (
                 self.place is None
                 and not s.arena
                 and (s.instance_id is None or s.instance_id not in self.pvp_maps)
                 and unknown_map(s, self.maps)
             ):
-                self.unknown += 1
-                held = s.instance_id
-                if (
-                    held is not None
-                    and held not in self.unknown_ids
-                    and len(self.unknown_ids) < MAX_UNKNOWN_MAPS
-                ):
-                    self.unknown_ids.append(held)
-            else:
                 self.outside += 1
-            return
+                return
+            aside = True  # on a map the table does not hold: kept apart, not counted
         self.close_before(now)
-        e = self.encounter(owner, foe, now)  # may stop the part: count after it
-        self.fights += 1
+        e = self.encounter(owner, foe, now, aside)  # may stop the part: count after it
+        if aside:
+            self.unknown += 1
+            held = self.state.instance_id
+            if (
+                held is not None
+                and held not in self.unknown_ids
+                and len(self.unknown_ids) < MAX_UNKNOWN_MAPS
+            ):
+                self.unknown_ids.append(held)
+        else:
+            self.fights += 1
         e.last = max(e.last, now)
         p = self.add(e, foe, who, "foe")
         if p is not None:

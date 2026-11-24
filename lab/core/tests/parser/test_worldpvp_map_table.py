@@ -221,9 +221,24 @@ def test_constructed_fights_on_a_map_the_table_does_not_hold_are_counted_apart()
     scan = _scan(data, maps=_maps())
     assert (scan.fights, scan.outside_world, scan.unknown_map) == (0, 1, 2)
     assert scan.unknown_maps == [4242]
-    assert scan.encounters == []
+    # Kept apart, never counted: a later table can still judge it.
+    [aside] = scan.encounters
+    assert (aside.instance_id, aside.unknown_map, aside.by_map) == (4242, True, False)
     plain = _scan(data)
     assert (plain.fights, plain.unknown_map, plain.unknown_maps) == (3, 0, [])
+
+
+@pytest.mark.parser
+def test_constructed_a_set_aside_fight_never_joins_an_open_world_encounter() -> None:
+    data = log(
+        zone(5, instance=0, name="Silverpine Forest", difficulty=0),
+        you_hit(FOE_A, 10),
+        zone(20, instance=4242, name="Invented Hold", difficulty=0),
+        you_hit(FOE_A, 30),  # within the join window, same opponent
+    )
+    scan = _scan(data, maps=_maps())
+    assert [(e.instance_id, e.unknown_map) for e in scan.encounters] == [(0, False), (4242, True)]
+    assert (scan.fights, scan.unknown_map) == (1, 1)
 
 
 @pytest.mark.parser

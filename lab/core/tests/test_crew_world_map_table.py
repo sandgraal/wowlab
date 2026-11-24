@@ -30,7 +30,7 @@ from wowlab_core import crewdb, gamedata, install, worldpvp
 sys.path.insert(0, str(Path(__file__).resolve().parent / "parser"))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from _crew_build import FLAVOR, KEY_A, KEY_D
+from _crew_build import ACCOUNT, FLAVOR, KEY_A, KEY_D
 from _world_lines import FOE_A, FOE_D, hits_you, log, you_hit, zone
 from test_crew_world import _book, _json, _scan, _write_log, owner  # noqa: F401 - fixture
 from test_crewdb import Env, make  # noqa: F401 - the fixture
@@ -124,7 +124,8 @@ def test_constructed_without_the_table_the_old_rule_holds_and_says_so(
     assert again["recheck"] == {
         "checked": 2,
         "removed": 1,
-        "removed_unknown": 0,
+        "set_aside": 0,
+        "brought_back": 0,
         "players_removed": 1,
         "skipped": False,
     }
@@ -150,8 +151,8 @@ def test_constructed_a_schema_5_database_is_copied_then_rechecked(make: Any, own
     assert (
         "Checked 2 open-world encounters an earlier read kept against the game's map table: "
         "removed 1 that was in a dungeon, raid, battleground or arena, and 1 player only those "
-        "fights held. They no longer count in the open-world record or toward Nemesis; the "
-        "copies wowlab keeps beside its crew database still hold them."
+        "fights held. The ones removed no longer count in the open-world record or toward "
+        "Nemesis; the copies wowlab keeps beside its crew database still hold them."
         in " ".join(result.stdout.split())
     )
     copy = env.db().with_name(env.db().name + ".before-schema-5")
@@ -227,16 +228,59 @@ def test_constructed_the_recheck_never_removes_a_crew_book_player(make: Any, own
     assert _encounters(env) == []
 
 
-def test_constructed_a_map_the_table_does_not_name_is_removed_and_said_apart(
+def _by_map(env: Env) -> list[tuple[Any, ...]]:
+    return _rows(env, "SELECT instance_id, by_map FROM world_encounters ORDER BY start_at")
+
+
+def test_constructed_an_unknown_map_encounter_is_set_aside_not_deleted(
+    make: Any, owner: Any
+) -> None:
+    env = make(_book())
+    env.sync()
+    _write_log(env, _dungeon_then_world())
+    _scan(env)  # no table: both kept
+    got = crewdb.recheck_world(env.target(), {0: 0})  # map 33 not in this table
+    assert (got.checked, got.removed, got.set_aside, got.brought_back) == (2, 0, 1, 0)
+    assert _by_map(env) == [(33, 2), (0, 1)]
+    keys = {k for (k,) in _rows(env, "SELECT player_key FROM players")}
+    assert KEY_D in keys  # its players are kept with it
+    # Counted nowhere: not in `crew matches --world`, the record or doctor.
+    assert [e.zone for e in crewdb.world_encounters(FLAVOR, ACCOUNT)] == ["Silverpine Forest"]
+    assert KEY_D not in {r.key for r in crewdb.read(FLAVOR, ACCOUNT) if r.world_faced}
+    (summary,) = crewdb.summaries(FLAVOR)
+    assert summary.world_encounters == 1
+    # The same table again changes nothing and writes nothing.
+    before = env.db().read_bytes()
+    assert crewdb.recheck_world(env.target(), {0: 0}) == crewdb.WorldRecheck()
+    assert env.db().read_bytes() == before
+
+
+def test_constructed_a_later_table_naming_the_map_the_open_world_brings_it_back(
     make: Any, owner: Any
 ) -> None:
     env = make(_book())
     env.sync()
     _write_log(env, _dungeon_then_world())
     _scan(env)
-    got = crewdb.recheck_world(env.target(), {0: 0})  # map 33 not in this table
-    assert (got.checked, got.removed, got.removed_unknown) == (2, 0, 1)
-    assert _encounters(env) == [("Silverpine Forest", 0, 1)]
+    crewdb.recheck_world(env.target(), {0: 0})
+    got = crewdb.recheck_world(env.target(), {0: 0, 33: 0})  # a later table: map 33 is world
+    assert (got.checked, got.removed, got.set_aside, got.brought_back) == (1, 0, 0, 1)
+    assert _by_map(env) == [(33, 1), (0, 1)]
+    assert len(crewdb.world_encounters(FLAVOR, ACCOUNT)) == 2
+
+
+def test_constructed_a_later_table_naming_the_map_a_dungeon_removes_it(
+    make: Any, owner: Any
+) -> None:
+    env = make(_book())
+    env.sync()
+    _write_log(env, _dungeon_then_world())
+    _scan(env)
+    crewdb.recheck_world(env.target(), {0: 0})
+    got = crewdb.recheck_world(env.target(), {0: 0, 33: 1})  # a later table: a dungeon
+    assert (got.checked, got.removed, got.set_aside, got.players_removed) == (1, 1, 0, 1)
+    assert _by_map(env) == [(0, 1)]
+    assert KEY_D not in {k for (k,) in _rows(env, "SELECT player_key FROM players")}
 
 
 def test_constructed_an_unknown_map_is_said_in_the_text(make: Any, owner: Any) -> None:
@@ -255,11 +299,16 @@ def test_constructed_an_unknown_map_is_said_in_the_text(make: Any, owner: Any) -
     result = _scan(env)
     assert result.exit_code == 0, result.output
     assert (
-        "Not counted: 1 fight on a map the game's map table does not hold (id 4242), so wowlab "
-        "cannot tell whether it was in the open world." in " ".join(result.stdout.split())
+        "Set aside: 1 fight on a map the game's map table does not hold (id 4242), so wowlab "
+        "cannot tell whether it was in the open world: kept, but counted nowhere until a later "
+        "table names the map." in " ".join(result.stdout.split())
     )
+    # Kept set aside, out of the open-world encounters.
+    assert _by_map(env) == [(4242, 2), (0, 1)]
+    assert [e.zone for e in crewdb.world_encounters(FLAVOR, ACCOUNT)] == ["Silverpine Forest"]
     report = _json(_scan(env, "--json"))  # nothing new: the counts of this read are 0
     assert report["scan"]["unknown_map"] == 0
+    assert report["recheck"]["checked"] == 0  # the same table: nothing judged again
 
 
 def test_constructed_a_read_that_fails_after_a_recheck_says_what_it_removed(

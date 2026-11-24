@@ -1165,9 +1165,11 @@ def world_since(
     for log in reversed(picked):
         try:
             found.extend(
-                worldpvp.read_world(
+                e  # one set aside (its map not in the table) is not the open world
+                for e in worldpvp.read_world(
                     log, owners, pvp_maps=pvp, second_names=second_names, maps=maps
                 ).encounters
+                if not e.unknown_map
             )
         except OSError:
             unreadable += 1

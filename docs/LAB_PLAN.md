@@ -7615,7 +7615,11 @@ and any other type are not (4 is an arena by community documentation, not
 yet confirmed: no map of build 71037 has it, and 2999 "Ruins of
 Lordaeron" is type 1). With the table read, a map it does not hold is not
 the open world either: its fights are counted apart (`unknown_map`, with
-the first 20 ids in `unknown_maps`) and one text line names the ids. Map
+the first 20 ids in `unknown_maps`), their encounters are kept but set
+aside, never joined with an open-world one and counted nowhere (conductor
+decision of 2026-11-24: such a map is likely one a hotfix added, which the
+published table lacks, and once its log is gone nothing could rebuild the
+fights), and one text line names the ids. Map
 2996 "Warsong Gulch (Winter)" is type 0 and is not special-cased. The rule
 lives in one function, `worldpvp.in_open_world(state, pvp_maps=(), *,
 maps=None)`; `worldpvp.map_types` reads `ID` and `InstanceType` from the
@@ -7638,23 +7642,29 @@ recap` say, in one shared line, why the table was not used: not downloaded
 unreadable (with the file, and that downloading again does not replace
 it), or the version unknown. `crew scan-log --json` gains `map_table`
 (the table was read), `map_table_state`, `map_version`, `map_lines` and
-`recheck` (`checked`, `removed`, `removed_unknown`, `players_removed`,
-`skipped`); `scan` gains `unknown_map` and `unknown_maps`; `live recap
+`recheck` (`checked`, `removed`, `set_aside`, `brought_back`,
+`players_removed`, `skipped`); `scan` gains `unknown_map`, `unknown_maps`
+and `encounters_set_aside`; `live recap
 --json` gains `map_table`, `map_version` and `map_words`; the Live view's
 watch gains `map_table` and `map_words`. **Store:** schema 6, after the
-`.before-schema-5` copy: `world_encounters.by_map` (0 or 1). Every
-encounter of an older database, and every one kept while the table is
-not read, is 0. Once the table is read, `crew scan-log` runs
-`crewdb.recheck_world` after it has found a log to read: each stored
-encounter with `by_map` 0 is judged by the same rule with the table; one
-that is not the open world (an instance there, or a map the table does
-not hold) is deleted with its players' parts, and each of those players'
-rows held by nothing else (never in the game's list, no group, no match,
-no rating or note, no other encounter) with its `log_names` row, as
-M21-02's re-read deletes them; the others are marked 1. One transaction
-after today's copy; running it again changes nothing. One line says how
-many it checked and removed, in an instance and on unknown maps, how many
-players went with them, that they no longer count in the open-world record
+`.before-schema-5` copy: `world_encounters.by_map`: 0 judged by the
+difficulty (no table), 1 the open world by the table, 2 set aside (a map
+the table does not hold). Every encounter of an older database, and every
+one kept while the table is not read, is 0; a read with the table stores
+a set-aside encounter as 2. Every open-world read (the record and
+Nemesis, `crew list --world`, `crew show`, `crew matches --world`,
+`doctor`'s counts, `live`) leaves 2 out. Once the table is read, `crew
+scan-log` runs `crewdb.recheck_world` after it has found a log to read:
+each stored encounter with `by_map` 0 or 2 is judged by the same rule with
+the table. The open world is marked 1 (one set aside before is brought
+back); a map the table does not hold is set aside (2); only a map the
+table names as an instance is deleted, with its players' parts, and each
+of those players' rows held by nothing else (never in the game's list, no
+group, no match, no rating or note, no other encounter) with its
+`log_names` row, as M21-02's re-read deletes them. One transaction after
+today's copy, written only when something changes; running it again
+changes nothing. One line says how many it checked, removed, set aside
+and brought back, how many players went with the removed ones, that they no longer count in the open-world record
 or toward Nemesis (M22-03 reads the kept encounters), and that wowlab's
 copies beside the database still hold them; a read that then fails, or is
 skipped, says that line all the same. **UI:** the Crew tab shows a read's

@@ -112,3 +112,26 @@ def test_maptable_tells_missing_unreadable_and_no_version_apart(make: Any) -> No
     shutil.copyfile(MAP_TABLE, dest)
     good = maptable.load(version)
     assert good.state == "read" and good.usable() == good.maps and good.maps[33] == 1
+
+
+def test_constructed_a_set_aside_map_is_left_out_by_live_and_crew_scan_log_alike(
+    make: Any, crew_owner: Any
+) -> None:
+    env = make(_crew_book())
+    env.sync()
+    path = _write_log(
+        env,
+        log(
+            zone(5, instance=4242, name="Invented Hold", difficulty=0),  # not in the table
+            you_hit(FOE_D, 10),
+            zone(400, instance=0, name="Silverpine Forest", difficulty=0),
+            you_hit(FOE_A, 1000),
+        ),
+    )
+    _cache(env)
+    assert _scan(env).exit_code == 0
+    kept = crewdb.world_encounters(FLAVOR, ACCOUNT)
+    table = maptable.load(_version(env))
+    seen, _ = live.world_since([path], {OWNER_GUID: None}, 0, maps=table.usable())
+    assert _shape(seen) == _shape(kept)
+    assert [e.zone for e in seen] == ["Silverpine Forest"]
