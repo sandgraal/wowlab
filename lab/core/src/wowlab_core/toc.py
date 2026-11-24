@@ -39,6 +39,28 @@ not an ASCII decimal is kept as text in `Interface.unparsed` and never
 raises. An addon's list is what its author claims, not client evidence.
 Which of two duplicate directives the client honours is **[verify]**; `get`
 returns the first and `get_all` all of them.
+
+A TOC larger than the read limit (`MAX_TOC_BYTES`) is refused by
+`read_toc`, or, when the caller asks for it (`oversized="header"`), read in
+part (M22-21): only the limit's worth of bytes is read, and
+`parse_toc_header` keeps the file's header, its leading directives, comments
+and blanks up to its first file line. A line the limit cuts is dropped
+whole, never kept in part. The result is a read-only summary marked
+`partial`, never a document of the file: `to_bytes` and `serialize_toc`
+refuse it (`PartialTocError`), so nothing can write it back in the file's
+place (L4). A whole file is parsed and kept as above; nothing about it
+changes.
+
+Directives after the first file line are not seen in a partial read, and
+the client very likely reads them: QuestieDB's Forever TOC (18,902,713
+bytes in the owner's install, 2026-11-23) keeps its `## Interface:`,
+`## Title:` and `## Version:` lines in its first 1,257 bytes, before its
+file lines, and 133,929 `## X-` lines of base64 data after them, which the
+addon reads at run time through `C_AddOns.GetAddOnMetadata`. So an absence
+in a partial read means "not before the file list", never "not declared".
+An `## X-` line is a directive wherever it stands, so it never ends a
+header, and it is never read as `## Dependencies:`, whose key is matched
+whole.
 """
 
 from __future__ import annotations
@@ -62,11 +84,13 @@ __all__ = [
     "Directive",
     "FileLine",
     "Interface",
+    "PartialTocError",
     "TocDocument",
     "TocLine",
     "TocTooLargeError",
     "parse_interface",
     "parse_toc",
+    "parse_toc_header",
     "read_toc",
     "serialize_toc",
 ]
@@ -125,6 +149,11 @@ Ending = Literal["", "\n", "\r\n"]
 
 class TocTooLargeError(ValueError):
     """A TOC file is larger than the read limit."""
+
+
+class PartialTocError(ValueError):
+    """A partial read (`parse_toc_header`) was asked for its bytes: it holds
+    the file's header only, and is never written in the file's place."""
 
 
 def _text(raw: bytes) -> str:
@@ -250,9 +279,16 @@ class TocDocument(_Model):
     bom: bool
     lines: tuple[TocLine, ...]
     decode_errors: bool
+    # True when the file was larger than the read limit and `lines` hold
+    # only its header (`parse_toc_header`): a read-only summary, which
+    # `to_bytes` refuses. False for a file read whole.
+    partial: bool = False
 
     def to_bytes(self) -> bytes:
-        """The file, byte for byte."""
+        """The file, byte for byte. Raises `PartialTocError` for a `partial`
+        read, which is not the file."""
+        if self.partial:
+            raise PartialTocError("a partial TOC read holds the header only; it has no file bytes")
         body = b"".join(line.raw + line.ending.encode("ascii") for line in self.lines)
         return (_BOM if self.bom else b"") + body
 
@@ -389,20 +425,57 @@ def parse_toc(data: bytes) -> TocDocument:
     return TocDocument(bom=bom, lines=lines, decode_errors=errors)
 
 
+def parse_toc_header(data: bytes) -> TocDocument:
+    """The header of a TOC whose first bytes are `data` and which goes on
+    past them: every line up to the first file line, as `parse_toc` reads
+    it, and the document marked `partial`. The last line of `data` has no
+    line break, because the limit cut it, and is not kept. Never raises on
+    content."""
+    bom = data.startswith(_BOM)
+    body = data[len(_BOM) :] if bom else data
+    lines: list[TocLine] = []
+    kept = 0
+    for raw, ending in _split_lines(body):
+        if not ending:
+            break  # cut by the read limit: the rest of this line was not read
+        line = _line(raw, ending)
+        if isinstance(line, FileLine):
+            break
+        lines.append(line)
+        kept += len(raw) + len(ending)
+    try:
+        body[:kept].decode("utf-8")
+        errors = False
+    except UnicodeDecodeError:
+        errors = True
+    return TocDocument(bom=bom, lines=tuple(lines), decode_errors=errors, partial=True)
+
+
 def serialize_toc(document: TocDocument) -> bytes:
-    """The bytes of `document`; `serialize_toc(parse_toc(x)) == x`."""
+    """The bytes of `document`; `serialize_toc(parse_toc(x)) == x`. Raises
+    `PartialTocError` for a partial read."""
     return document.to_bytes()
 
 
-def read_toc(path: Path | str, *, max_bytes: int = MAX_TOC_BYTES) -> TocDocument:
+def read_toc(
+    path: Path | str,
+    *,
+    max_bytes: int = MAX_TOC_BYTES,
+    oversized: Literal["raise", "header"] = "raise",
+) -> TocDocument:
     """Read and parse one TOC file, opened read-only (L1).
 
-    Raises `TocTooLargeError` for a file over `max_bytes` and `OSError` when
-    it cannot be read; the caller reports either. A path past Windows' plain
-    limit is opened by its extended-length spelling (`longpath`, M13-15).
+    A file over `max_bytes` raises `TocTooLargeError`, or with
+    `oversized="header"` gives its header as a `partial` document
+    (`parse_toc_header`), read from its first `max_bytes` bytes and no more.
+    `OSError` when it cannot be read; the caller reports either. A path past
+    Windows' plain limit is opened by its extended-length spelling
+    (`longpath`, M13-15).
     """
     with longpath.open_read(path) as handle:
         data = handle.read(max_bytes + 1)
     if len(data) > max_bytes:
+        if oversized == "header":
+            return parse_toc_header(data[:max_bytes])
         raise TocTooLargeError(f"{path}: larger than {max_bytes} bytes")
     return parse_toc(data)
