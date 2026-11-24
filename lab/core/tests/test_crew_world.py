@@ -138,7 +138,8 @@ def _as_schema_3(env: Env) -> None:
     try:
         conn.execute("PRAGMA secure_delete = ON")
         conn.execute("BEGIN")
-        for table in ("world_encounter_players", "world_encounters", "world_logs"):
+        # M21-02 added log_names at schema 5; schema 3 had none.
+        for table in ("world_encounter_players", "world_encounters", "world_logs", "log_names"):
             conn.execute(f"DROP TABLE {table}")
         conn.execute("PRAGMA user_version = 3")
         conn.execute("COMMIT")
@@ -166,7 +167,7 @@ def test_a_schema_3_database_is_copied_then_migrated_and_scanned_constructed(
         conn.close()
     conn = sqlite3.connect(env.db())
     try:
-        assert conn.execute("PRAGMA user_version").fetchone()[0] == crewdb.SCHEMA == 4
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == crewdb.SCHEMA == 5
         assert conn.execute("SELECT count(*) FROM world_encounters").fetchone()[0] == 1
     finally:
         conn.close()
