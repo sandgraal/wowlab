@@ -88,7 +88,7 @@ from wowlab_core.filemap import FileMapEntry
 # `is_link`: the one link test, defined in `install` so discovery uses it
 # too (M13-37) and exported here: `layout.is_link is install.is_link`.
 from wowlab_core.install import Flavor, Install, is_link
-from wowlab_core.toc import MAX_TOC_BYTES, TocDocument, TocTooLargeError, read_toc
+from wowlab_core.toc import MAX_TOC_BYTES, TocDocument, read_toc
 from wowlab_core.verdict import gate_refuses_stat
 
 __all__ = [
@@ -319,7 +319,9 @@ class AddonToc(_Model):
     # client loads only TOCs named after the folder.
     matches_folder: bool
     size: int
-    document: TocDocument | None  # None when it could not be read
+    # None when it could not be read. A TOC over `Limits.max_toc_bytes` is
+    # read in part: its header only, `document.partial` (M22-21).
+    document: TocDocument | None
     error: str | None
 
 
@@ -1066,9 +1068,11 @@ class Layout:
             document: TocDocument | None = None
             error: str | None = None
             try:
-                document = read_toc(self._abs(e.rel), max_bytes=self.limits.max_toc_bytes)
-            except TocTooLargeError:
-                error = f"larger than {self.limits.max_toc_bytes} bytes; not read"
+                # A TOC over the limit gives its header only, marked
+                # `partial` (M22-21); the limit is never raised for it.
+                document = read_toc(
+                    self._abs(e.rel), max_bytes=self.limits.max_toc_bytes, oversized="header"
+                )
             except OSError as exc:
                 error = exc.strerror or str(exc)
             tocs.append(

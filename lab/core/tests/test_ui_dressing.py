@@ -156,24 +156,34 @@ def test_the_link_is_static_markup_with_no_href(server: Any) -> None:
     anchors = re.findall(r"<a\b[^>]*>", page)
     # M21-03 added the three links of the addresses the player saved, graded
     # in test_ui_links.py, and M22-06 the Twink panel's two, graded in
-    # test_ui_twink.py.
-    saved = [
-        "char-saved-ft-profile",
-        "char-saved-ft-build",
-        "char-saved-wcl-report",
-        "char-twink-planner",
-        "char-twink-wowhead",
+    # test_ui_twink.py. M21-04 added the Profiles row's four and the guild's
+    # before it, and the gear rows' twenty after the saved ones, graded in
+    # test_ui_char_links.py.
+    profiles = [
+        "char-profile-armory",
+        "char-profile-ft",
+        "char-profile-journey",
+        "char-profile-raiderio",
+        "char-guild-link",
     ]
+    # M21-06 added See my look beside the dressing-room link, graded in
+    # test_ui_purist.py.
+    saved = ["char-saved-ft-profile", "char-saved-ft-build", "char-saved-wcl-report"]
+    twink = ["char-twink-planner", "char-twink-wowhead"]
+
+    def static(i: str, cls: str = "dressing-link") -> str:
+        return f'<a id="{i}" class="{cls}" target="_blank" rel="noopener noreferrer" hidden>'
+
     assert anchors == [
-        '<a id="char-dressing-link" class="dressing-link" target="_blank" '
-        'rel="noopener noreferrer" hidden>',
-        *(
-            f'<a id="{i}" class="dressing-link" target="_blank" rel="noopener noreferrer" hidden>'
-            for i in saved
-        ),
+        *(static(i) for i in profiles),
+        static("char-dressing-link"),
+        static("char-purist-link"),
+        *(static(i) for i in saved),
+        *(static(f"char-gear-wowhead-{n}", "gear-name gear-wowhead") for n in range(20)),
+        *(static(i) for i in twink),
     ]
     body = _page(server).body.decode("utf-8")
-    assert body.count('target="_blank" rel="noopener noreferrer"') == 6
+    assert body.count('target="_blank" rel="noopener noreferrer"') == 32
     assert "See it dressed</a>" in body
 
 

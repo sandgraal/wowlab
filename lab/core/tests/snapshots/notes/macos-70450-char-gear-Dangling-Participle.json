@@ -282,6 +282,129 @@
   "region": null,
   "region_absent": "the portal setting in WTF/Config.wtf is \"test\", not one of us, eu, kr, tw, cn",
   "saved_links": [],
+  "links": {
+    "profiles": [
+      {
+        "link": "armory_character",
+        "site": "blizzard",
+        "site_name": "Armory",
+        "label": "Armory",
+        "why": "the character's region is not known"
+      },
+      {
+        "link": "journey",
+        "site": "journey",
+        "site_name": "Journey Companion",
+        "label": "Journey Companion",
+        "why": "the character's region is not known"
+      }
+    ],
+    "guild": null,
+    "guild_absent": "this record does not hold the guild; log in and out on this character with a current lab-addon (wowlab addon install lab updates it)",
+    "guild_link": null
+  },
+  "item_links": [
+    {
+      "slot": 4,
+      "link": {
+        "link": "wowhead_item",
+        "site": "wowhead",
+        "site_name": "Wowhead",
+        "label": "Wowhead",
+        "url": "https://www.wowhead.com/forever/item=6096"
+      }
+    },
+    {
+      "slot": 5,
+      "link": {
+        "link": "wowhead_item",
+        "site": "wowhead",
+        "site_name": "Wowhead",
+        "label": "Wowhead",
+        "url": "https://www.wowhead.com/forever/item=4916"
+      }
+    },
+    {
+      "slot": 6,
+      "link": {
+        "link": "wowhead_item",
+        "site": "wowhead",
+        "site_name": "Wowhead",
+        "label": "Wowhead",
+        "url": "https://www.wowhead.com/forever/item=3363"
+      }
+    },
+    {
+      "slot": 7,
+      "link": {
+        "link": "wowhead_item",
+        "site": "wowhead",
+        "site_name": "Wowhead",
+        "label": "Wowhead",
+        "url": "https://www.wowhead.com/forever/item=3291"
+      }
+    },
+    {
+      "slot": 8,
+      "link": {
+        "link": "wowhead_item",
+        "site": "wowhead",
+        "site_name": "Wowhead",
+        "label": "Wowhead",
+        "url": "https://www.wowhead.com/forever/item=1427"
+      }
+    },
+    {
+      "slot": 9,
+      "link": {
+        "link": "wowhead_item",
+        "site": "wowhead",
+        "site_name": "Wowhead",
+        "label": "Wowhead",
+        "url": "https://www.wowhead.com/forever/item=281269"
+      }
+    },
+    {
+      "slot": 10,
+      "link": {
+        "link": "wowhead_item",
+        "site": "wowhead",
+        "site_name": "Wowhead",
+        "label": "Wowhead",
+        "url": "https://www.wowhead.com/forever/item=1377"
+      }
+    },
+    {
+      "slot": 15,
+      "link": {
+        "link": "wowhead_item",
+        "site": "wowhead",
+        "site_name": "Wowhead",
+        "label": "Wowhead",
+        "url": "https://www.wowhead.com/forever/item=6520"
+      }
+    },
+    {
+      "slot": 16,
+      "link": {
+        "link": "wowhead_item",
+        "site": "wowhead",
+        "site_name": "Wowhead",
+        "label": "Wowhead",
+        "url": "https://www.wowhead.com/forever/item=5778"
+      }
+    }
+  ],
+  "purist": {
+    "link": "purist_look",
+    "site": "purist",
+    "site_name": "Purist",
+    "label": "Purist",
+    "url": "https://purist.pages.dev/#2|Dangling%20Participle|2.0.1.1.8.forever|0.0.0||6096,4916,3363,3291,1427,281269,1377,6520,5778",
+    "left_out": [
+      "the face and hair: the record holds no barber-shop visit"
+    ]
+  },
   "flavor_folder": "_classic_beta_",
   "dressing": {
     "url": "https://www.wowhead.com/forever/dressing-room#fM80R0a89c877Qz2L808zTO808zSo87czpEj808AK808558084K808LE808zHl87s",

@@ -69,6 +69,29 @@ Line-oriented, UTF-8, optional BOM.
   `_`. Which suffix (if any) the Forever client prefers is **[verify]**; do
   not encode a guess.
 
+*Amended 2026-11-23 (M22-21; the owner's install, no fixture):* a TOC can be
+very large. QuestieDB 1.1.5's `QuestieDB_Forever.toc` is 18,902,713 bytes:
+its directives and comments come first, then a blank (1,257 bytes
+together), its 52 file lines and a blank, then 133,929 `## X-` lines of
+base64 data to the end (the store §14 reads). The data is CBOR rows, as the addon's
+`src/read/baked.lua` (line 3) says, split into values of at most 1000
+bytes (`src/config.lua`, `maxValueLength`); the longest line is 1,023
+bytes, which points to a client limit per line near 1024 bytes
+**[verify]**. The table above does not restrict where directives stand,
+and an `## X-` line is a directive wherever it stands. The addon reads its
+trailing `## X-` lines while the game runs, through
+`C_AddOns.GetAddOnMetadata` (`src/read/baked.lua`): its author relies on
+the client reading directives that come after the file list, so the client
+very likely does; this is the addon's design, not a client capture
+**[verify]**. Whether the client has a limit on a TOC's whole size is
+**[verify]**; QuestieDB working at 18.9 MB is evidence against a small one.
+wowlab reads at most 1 MiB of a TOC. A larger one is read in part, its
+header only (every line before its first file line, within the 1 MiB; a
+line the limit cuts is dropped whole): a read-only summary marked
+`partial`, never a document of the file, which wowlab never serializes or
+writes back. Its absences mean "not before the file list", never "not
+declared", and are said that way.
+
 ## 4. SavedVariables (`WTF/Account/…/SavedVariables/*.lua`, `SavedVariables.lua`)
 
 Written by the client's own serializer on logout and `/reload`, so the
