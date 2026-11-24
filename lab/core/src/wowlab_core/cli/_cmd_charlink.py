@@ -299,7 +299,9 @@ def char_link_list(
         # with none found, nothing is said about them.
         try:
             inst, _ = _discover(root)
-        except CliError:
+        except (CliError, install.InstallError, OSError):
+            # No game folder found, a --root or WOWLAB_WOW_ROOT that is not
+            # one, or one that cannot be read: the listing still prints.
             inst = None
         if inst is not None:
             keys = {(r.flavor_folder, r.account, r.character) for r in rows}
