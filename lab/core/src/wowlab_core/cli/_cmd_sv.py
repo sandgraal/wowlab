@@ -186,7 +186,7 @@ def _no_toc_caveat(folders: Sequence[str]) -> str:
 
 def _not_judged_caveat(folders: Sequence[str]) -> str:
     return (
-        f"Not judged: the saved data of {', '.join(folders)}, whose TOC could not be read; "
+        f"Not judged: the saved data of {', '.join(folders)}, whose TOC could not be read whole; "
         "`wowlab addons check` says why."
     )
 
