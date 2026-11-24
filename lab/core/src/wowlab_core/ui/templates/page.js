@@ -2527,7 +2527,7 @@
     return objects(report.keys).filter((row) => {
       if (onlyDisagreeing && row.disagrees !== true) return false;
       if (!needle) return true;
-      const hay = [row.key, row.command, row.does, ...texts(row.sources)]
+      const hay = [row.key, row.command, row.command_label, row.does, ...texts(row.sources)]
         .filter((s) => typeof s === "string")
         .join("\n")
         .toLowerCase();
@@ -2584,6 +2584,11 @@
     key.className = "key-key";
     const command = make("td", visible(String(row.command)));
     command.className = "key-command";
+    // The game's own name for the command (M22-18), from the report; a
+    // command the game's interface does not have (an addon's) is marked by
+    // its class, and its `does` says so in the report's words.
+    if (typeof row.command_label === "string") command.appendChild(make("small", visible(row.command_label)));
+    if (row.client_command === false) tr.classList.add("key-not-client");
     const slot = make("td", typeof row.slot === "number" ? String(row.slot) : "-");
     slot.className = "key-slot";
     if (typeof row.page_note === "string") slot.title = visible(row.page_note);
@@ -2695,15 +2700,29 @@
       plural(m.bytes, "byte", "bytes");
     if (m.complete === false) facts += " (the file ends before this macro's END)";
     card.appendChild(charLine(facts, "macro-facts"));
-    // The body, one element a line, as text.
+    // The body, one element a line, as text. A line a finding is about is
+    // marked, with the finding's words as its tooltip (M22-18): body line k
+    // is line `m.line + 1 + k` of the file.
     const lines = texts(m.body_lines);
+    const flagged = new Map();
+    for (const f of objects(m.findings)) {
+      if (typeof f.line !== "number" || typeof m.line !== "number") continue;
+      const at = f.line - m.line - 1;
+      if (at < 0) continue;
+      const said = visible(String(f.detail));
+      flagged.set(at, flagged.has(at) ? flagged.get(at) + "\n" + said : said);
+    }
     const body = make("div");
     body.className = "macro-body";
-    for (const text of lines) {
+    lines.forEach((text, at) => {
       const one = make("code", visible(text));
       one.className = "macro-line";
+      if (flagged.has(at)) {
+        one.classList.add("macro-line-finding");
+        one.title = flagged.get(at);
+      }
       body.appendChild(one);
-    }
+    });
     if (!lines.length) body.appendChild(charLine("no body lines", "char-none"));
     card.append(body, placementBox(m.placement, keysIncomplete));
     const found = objects(m.findings);
@@ -3790,6 +3809,7 @@
     backups: ["backups"],
     addons: ["addons"],
     keybinds: ["keybinds"],
+    live: ["live"],
     advanced: ["explorer", "gaps", "commands", "looks"],
   };
   // The views with a tab, in their order; the first is shown when the page opens.
@@ -3797,7 +3817,7 @@
   // Every view's element. Keybinds shows the character page's own element
   // with its keys and macros panels alone, so the picker and the keys are
   // one; the character page shows the rest.
-  const VIEWS = ["account", "character", "crew", "backups", "addons", "explorer", "gaps", "commands", "looks"];
+  const VIEWS = ["account", "character", "crew", "backups", "addons", "live", "explorer", "gaps", "commands", "looks"];
   const CHARACTER_PANELS = ["char-page", "char-about"];
   const KEYBIND_PANELS = ["char-keys-panel", "char-macros-panel"];
   // The view each section showed last, so going back to it lands there.
@@ -3842,6 +3862,8 @@
     }
     if (name === "gaps") loadGaps();
     if (name === "crew") loadCrew();
+    if (name === "live") startLive();
+    else stopLive();
     if (name === "character" || keys) {
       const listed = loadCharacters();
       if (keys && character.kept) {
@@ -3860,6 +3882,312 @@
     showTab("account");
     byId("tab-account").focus();
   });
+
+  // ─── Seen by Spy (M22-01) ───
+
+  // What the Spy addon saved, from `spy list --json`: its search, filters
+  // and order are the command's own options, so the matching and the order
+  // are Python's. A row opens what `spy show --json` prints (its `lines`),
+  // sent the row's key as an argument. Read only: nothing here writes.
+  // Every name, guild and place is other people's text: it reaches the page
+  // only as text, through `visible()`, never in an attribute, a class or an
+  // id, and no link or address is built from it.
+  const spySeen = { listSeq: 0, showSeq: 0, searchTimer: null, read: false };
+  const SPY_FILTER = [["", "Everyone"], ["enemies", "Enemies"], ["kos", "Kill on sight"]];
+  const SPY_SORT = [["last", "Last seen, newest first"], ["name", "By name"], ["level", "Highest level first"]];
+  const SPY_COLUMNS = ["Player", "Who", "Guild", "Last seen", "Place Spy last recorded", "Seen by"];
+  fillSelect(byId("spy-filter"), SPY_FILTER);
+  fillSelect(byId("spy-sort"), SPY_SORT);
+
+  function spySay(text, isError) {
+    const node = byId("spy-status");
+    announce(node, text, Boolean(isError));
+    node.classList.toggle("error", Boolean(isError));
+  }
+
+  function spyParams() {
+    const params = {};
+    const search = byId("spy-search").value;
+    if (search.trim() !== "") params.search = search;
+    const filter = byId("spy-filter").value;
+    if (filter === "enemies") params.enemies = true;
+    if (filter === "kos") params.kos_only = true;
+    params.sort = byId("spy-sort").value || "last";
+    return params;
+  }
+
+  function spyWho(p) {
+    const level = hubNum(p.level);
+    const parts = [
+      level === null ? null : "level " + level + (p.is_guess === true ? "?" : ""),
+      hubStr(p.race) ? visible(p.race) : null,
+      crewClass(p.class_token),
+    ].filter(Boolean);
+    const side = hubStr(p.faction) ? visible(p.faction) : null;
+    const enemy = p.is_enemy === true ? "hostile when Spy last looked" : null;
+    const marks = [p.kos === true ? "kill on sight" : null, p.ignored === true ? "ignored" : null];
+    return [parts.join(" "), side, enemy, ...marks].filter(Boolean).join(", ") || NOT_RECORDED;
+  }
+
+  function spyWhere(p) {
+    const zone = hubStr(p.zone) ? visible(p.zone) : "";
+    const sub = hubStr(p.sub_zone) ? visible(p.sub_zone) : "";
+    return [zone, sub].filter(Boolean).join(": ") || NOT_RECORDED;
+  }
+
+  function spySeenBy(p) {
+    const source = p.source && typeof p.source === "object" ? p.source : {};
+    const character = hubStr(source.character) ? source.character : "";
+    return character ? visible(character.split("/").pop()) : NOT_RECORDED;
+  }
+
+  function spyRow(p) {
+    const tr = make("tr");
+    tr.className = "hub-row";
+    const name = make("td");
+    const open = make("button", visible(p.key));
+    open.type = "button";
+    open.className = "hub-open";
+    open.title = "Show everything Spy saved about this player";
+    name.appendChild(open);
+    tr.appendChild(name);
+    const cells = [
+      spyWho(p),
+      hubStr(p.guild) ? visible(p.guild) : "none",
+      crewDay(p.time) || NOT_RECORDED,
+      spyWhere(p),
+      spySeenBy(p),
+    ];
+    for (const text of cells) tr.appendChild(make("td", text));
+    tr.addEventListener("click", () => openSpyPlayer(p.key));
+    return tr;
+  }
+
+  async function loadSpy() {
+    const seq = ++spySeen.listSeq;
+    spySay("Reading Spy's saved data…", false);
+    const reply = await runJson(["spy", "list"], spyParams(), true);
+    if (seq !== spySeen.listSeq) return;
+    const report = reply.data;
+    const box = byId("spy-table");
+    const warnings = byId("spy-warnings");
+    if (!report || typeof report !== "object" || !Array.isArray(report.players) || typeof report.words !== "string") {
+      box.replaceChildren();
+      box.hidden = true;
+      warnings.replaceChildren();
+      warnings.hidden = true;
+      spySay(reply.error ? shown(reply.error) : "Spy's list came back in a shape this page does not know.", true);
+      return;
+    }
+    spySeen.read = true;
+    // The version warnings and the caveat on shared rows, then the standing
+    // notes under the panel, as the command gives them.
+    const said = [...(Array.isArray(report.warnings) ? report.warnings : []), report.caveat]
+      .filter((w) => typeof w === "string");
+    warnings.replaceChildren(...said.map((w) => make("li", visible(w))));
+    warnings.hidden = said.length === 0;
+    byId("spy-notes").replaceChildren(...(Array.isArray(report.notes) ? report.notes : [])
+      .filter((n) => typeof n === "string").map((n) => make("li", visible(n))));
+    const players = report.players.filter((p) => p && typeof p.key === "string");
+    const total = hubNum(report.total);
+    if (players.length === 0) {
+      box.replaceChildren();
+      box.hidden = true;
+      if (reply.error) spySay(shown(reply.error), true);
+      else spySay(total ? "No row matches." : visible(report.words), false);
+      return;
+    }
+    const table = make("table");
+    table.className = "char-table hub crew";
+    const caption = make("caption", "Players Spy saw");
+    caption.className = "unseen";
+    table.appendChild(caption);
+    const head = make("thead");
+    const tr = make("tr");
+    for (const label of SPY_COLUMNS) {
+      const th = make("th", label);
+      th.scope = "col";
+      tr.appendChild(th);
+    }
+    head.appendChild(tr);
+    table.appendChild(head);
+    const body = make("tbody");
+    for (const p of players) body.appendChild(spyRow(p));
+    table.appendChild(body);
+    box.replaceChildren(table);
+    box.hidden = false;
+    const n = players.length;
+    const all = total === null ? n : total;
+    if (reply.error) {
+      spySay(shown(reply.error), true);
+    } else {
+      // `total` counts rows, one per character that saw a player, as the
+      // command's own match line does.
+      spySay(n === all ? visible(report.words) : "Showing " + n + " of " + pluralWord(all, " row") + ".", false);
+    }
+  }
+
+  async function openSpyPlayer(key) {
+    const seq = ++spySeen.showSeq;
+    byId("spy-player").hidden = false;
+    byId("spy-player-title").textContent = visible(key);
+    const lines = byId("spy-player-lines");
+    lines.replaceChildren(make("li", "Reading…"));
+    const reply = await runJson(["spy", "show"], { name: key }, true);
+    if (seq !== spySeen.showSeq) return;
+    const report = reply.data;
+    const said = report && Array.isArray(report.lines) ? report.lines.filter((l) => typeof l === "string") : null;
+    if (!said) {
+      lines.replaceChildren(make("li", reply.error ? shown(reply.error) : "This player's entry came back in a shape this page does not know."));
+      return;
+    }
+    lines.replaceChildren(...said.map((line) => make("li", visible(line.trim()))));
+    byId("spy-player-title").focus();
+  }
+
+  function spyAgain() {
+    if (spySeen.read) loadSpy();
+  }
+
+  byId("spy-show").addEventListener("click", () => loadSpy());
+  byId("spy-filter").addEventListener("change", () => spyAgain());
+  byId("spy-sort").addEventListener("change", () => spyAgain());
+  byId("spy-search").addEventListener("input", () => {
+    if (spySeen.searchTimer !== null) clearTimeout(spySeen.searchTimer);
+    spySeen.searchTimer = setTimeout(() => {
+      spySeen.searchTimer = null;
+      spyAgain();
+    }, 300);
+  });
+
+  // ─── the Live view (M22-05) ───
+  // For a second screen while the game runs. While the view is shown (and
+  // the browser tab is not hidden) it asks the server every few seconds
+  // (`GET /api/live`, the interval the server gives): the newest time of
+  // the SavedVariables, which the game writes at /reload and logout, and
+  // the newest combat log with its count of zone lines and arena end lines.
+  // When one of those changed, it runs `live recap --json` and draws its
+  // `lines`: the match's, up to the first empty line, then the session's.
+  // The server reads the files; the page reads only the server. Zone,
+  // file and player names are text from the machine: textContent only.
+  const liveState = {
+    timer: null, // the next poll
+    seq: 0, // bumped when the view closes, so a late reply draws nothing
+    seen: null, // what the last poll saw, as one string
+    running: false, // a recap run in progress
+    again: false, // something changed while it ran: run it once more
+    seconds: 3,
+    started: false, // whether the view is polling
+  };
+
+  function liveKey(watch) {
+    const saved = watch.saved || {};
+    const log = watch.log || {};
+    return [watch.flavor_folder, saved.newest_ns, log.name, log.zone_changes, log.match_ends].join("|");
+  }
+
+  function liveWatchWords(watch) {
+    const parts = [];
+    const log = watch.log;
+    if (log) {
+      let where = "the log has not named a place yet";
+      if (typeof log.zone === "string" && log.zone) {
+        where = "the log last showed " + visible(log.zone);
+        if (typeof log.zone_at === "number") where += " (at " + new Date(log.zone_at * 1000).toLocaleTimeString() + ")";
+      }
+      parts.push("Combat log: " + visible(String(log.name)) + "; " + where);
+    } else {
+      parts.push("No combat log yet: type /combatlog in game to start one");
+    }
+    const saved = watch.saved || {};
+    if (typeof saved.newest_ns === "number") {
+      parts.push("last save " + new Date(saved.newest_ns / 1e6).toLocaleString());
+    }
+    parts.push("checked " + new Date().toLocaleTimeString() + " in " + Math.max(1, Math.round(watch.cost_us / 1000)) + " ms");
+    return parts.join(" · ") + ".";
+  }
+
+  async function liveRecap() {
+    if (liveState.running) {
+      liveState.again = true;
+      return;
+    }
+    liveState.running = true;
+    const seq = liveState.seq;
+    announce(byId("live-status"), "Reading the latest match and your last save…", false);
+    try {
+      const got = await runJson(["live", "recap"], {});
+      if (seq !== liveState.seq) return;
+      if (got.error && !got.data) {
+        announce(byId("live-status"), got.error, true);
+        return;
+      }
+      const lines = Array.isArray(got.data.lines) ? got.data.lines.map((l) => String(l)) : [];
+      const cut = lines.indexOf("");
+      const match = cut < 0 ? lines : lines.slice(0, cut);
+      const session = cut < 0 ? [] : lines.slice(cut + 1);
+      byId("live-match-lines").replaceChildren(...match.map((l) => make("li", visible(l))));
+      byId("live-session-lines").replaceChildren(...session.map((l) => make("li", visible(l))));
+      announce(byId("live-status"), "Read at " + new Date().toLocaleTimeString() + ".", false);
+    } finally {
+      liveState.running = false;
+      // Asked again while it ran, or the view was left and opened again
+      // meanwhile (this run's reply was dropped): read once more while the
+      // view is open, so what it shows is never left behind.
+      if (liveState.started && (liveState.again || seq !== liveState.seq)) {
+        liveState.again = false;
+        liveRecap();
+      }
+    }
+  }
+
+  async function livePoll() {
+    const seq = liveState.seq;
+    liveState.timer = null;
+    if (!document.hidden) {
+      let reply;
+      let body;
+      try {
+        await runFlavor.ready;
+        const query = runFlavor.picked ? "?flavor=" + encodeURIComponent(runFlavor.picked) : "";
+        reply = await fetch(api("/api/live") + query, { cache: "no-store", credentials: "omit", headers: keyed() });
+        body = await reply.json();
+      } catch (error) {
+        body = null;
+      }
+      if (seq !== liveState.seq) return;
+      if (!reply || !reply.ok || !body) {
+        announce(byId("live-watch"), "wowlab could not check your game folder: " + ((body && body.error) || "no answer") + ".", true);
+      } else if (!body.found) {
+        announce(byId("live-watch"), String(body.words || "wowlab found no game folder to watch."), true);
+      } else {
+        if (typeof body.poll_seconds === "number" && body.poll_seconds >= 1) liveState.seconds = body.poll_seconds;
+        announce(byId("live-watch"), liveWatchWords(body.watch), false);
+        const key = liveKey(body.watch);
+        if (key !== liveState.seen) {
+          liveState.seen = key;
+          liveRecap();
+        }
+      }
+    }
+    if (seq === liveState.seq) liveState.timer = setTimeout(livePoll, liveState.seconds * 1000);
+  }
+
+  function startLive() {
+    if (liveState.timer !== null || liveState.started) return;
+    liveState.started = true;
+    livePoll();
+  }
+
+  function stopLive() {
+    if (!liveState.started) return;
+    liveState.started = false;
+    liveState.seq += 1;
+    liveState.seen = null;
+    liveState.again = false;
+    if (liveState.timer !== null) clearTimeout(liveState.timer);
+    liveState.timer = null;
+  }
 
   // ─── the crew book (M19-06, docs/LAB_PLAN.md §20.4) ───
   // The players the lab-addon's crew book keeps, from `crew list --json`:
