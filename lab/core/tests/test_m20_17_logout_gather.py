@@ -78,7 +78,9 @@ def test_constructed_realm_tried_is_kept_and_shown() -> None:
     assert isinstance(char.identity, labaddon.IdentityV5)
     assert char.identity.realm_tried == tried
     line = next(x for x in labaddon.describe(char) if x.startswith("Character:"))
-    assert "realm InventedRealm (written without spaces: taken from the character's" in line
+    # M21-11 fix round 1: an older addon's full-name value is shown as a
+    # realm or second name, with what the realm calls gave.
+    assert "realm or second name InventedRealm (from the character's full name;" in line
     assert tried in line
 
 

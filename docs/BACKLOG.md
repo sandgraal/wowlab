@@ -3975,6 +3975,8 @@ forevertwinking.com's terms forbid an AI agent from reading it, so this one is y
 
 Click each new link on one of your characters and on one opponent; copy one wowforeverbuilds build URL into the session (M21-07's oracle); import one `sim-export` into WoWSims; and say whether a Wowhead `/forever/item=` page with `?bonus=` shows the bonused item.
 
+
+*Owner, 2026-11-24:* done in one session with M22-O1's batched check, once v0.4 is ready.
 ---
 
 ## [ ] M21-11 — Addon fixes from the launch-build API list
@@ -4239,6 +4241,8 @@ The panel works like this:
 
 *Amended 2026-11-23 (bookmark review):* replies must cite every spell, item or NPC as `[Label](spell:id)` / `(item:id)` / `(npc:id)`; the validator checks each id against the player's spellbook, gear, `gamedata` or the lookup index and marks or refuses unknown ids (wow-ai-log-analyzer's pattern), and the panel renders cited ids as Wowhead links (M21-03). The engine gets a short set of question-to-read routes (gear, binds, crew, twink gaps, combat-log summary) with reference notes shipped in the package.
 
+*Amended 2026-11-24 (owner):* the engine is the player's own locally installed Claude Code CLI only ("My Claude Code"), run headless as a child process on the player's subscription; no API-key provider is built.
+
 **Acceptance:** tests with a stub engine; the packet is shown before the send; a malformed reply plans nothing; the child process gets no inherited secrets beyond its own config. Reviewed by `code-reviewer` and `security-reviewer`. User-facing: yes.
 
 ---
@@ -4263,6 +4267,8 @@ One session, from a checklist the conductor writes. It covers:
 Read, read-only, the WowUp app's `addons.json` under its user-data folder (on macOS `~/Library/Application Support/WowUp/`; on Windows its AppData folder [verify]; never `sensitive.json`): per addon `providerName`, `externalId`, `externalUrl`, `installedVersion`, `latestVersion`, `installedFolders`, `clientType`, `installedAt`. Join it to the installed `Interface/AddOns` folders: each addon shows its source (Wago, CurseForge, GitHub, …), version and an update-available mark; a folder no manager claims is flagged. The owner's file (6 Wago addons, last written 2026-09-26) is older than the install, so stale records must show as stale. CurseForge's own records are [verify] (format unknown) and come later. The Addons view in the UI shows it (UI-first); `wowlab addons list --json` carries it.
 
 **Acceptance:** a real capture of `addons.json` (scrubbed by the capture tool; no secrets live in it) with a provenance row; tests for a missing file, a stale record and a folder no one claims. Reviewed by `code-reviewer` and `domain-reviewer`. User-facing: yes.
+
+*Amendment 2026-11-24 (conductor, from the code review):* `scripts/lab_capture.py` reads install trees only, so the `addons.json` fixture was made by hand: a byte copy of the owner's file with its six `?link=` values blanked to `REDACTED`, nothing else changed, the source sha256 in the provenance row. It is accepted as a one-off. The next file from outside an install (CurseForge's records, a Windows WowUp list) goes through the capture tool's single-file mode (M22-25). CurseForge moved to M22-25. Records join only to the installation WowUp's `preferences.json` names for them (domain review).
 
 ---
 
@@ -4329,8 +4335,28 @@ The owner's `_forever_/Cache/ADB/enUS/DBCache.bin` (header `XFTH`, version 9, bu
 
 ---
 
+## [ ] M22-24 — Pause Windows: no Windows build, no Windows suite
+**Size:** S · **Sources:** ADR-0031 amendment of 2026-11-24 (owner decision)
+
+Turn off the Windows workflows (`windows.yml` nightly, `windows-app.yml`) and the Windows jobs of `release.yml` (`windows_app`, `windows_app_smoke`, `windows_app_release`), keeping the files' history clear about why (a comment naming the ADR amendment), and update every test that pins those workflows or jobs (`tests/packaging/test_windows_app.py`, `tests/repo/*`, the release tests) so they pin the paused state instead. README (at the next release), INSTALL.md and the release notes say Windows is not supported for now. Nothing Windows-specific is deleted from the library. Record the paused suite's last failures (crew-database WinError 32 since 2026-11-20) in DATA_SOURCES for when it resumes.
+
+**Acceptance:** CI green with the Windows jobs off; `tests/repo` green; a release dry run builds no Windows asset. Reviewed by `code-reviewer` and `security-reviewer` (`.github`). User-facing: yes (install docs).
+
+---
+
+## [ ] M22-25 — CurseForge app records, and a single-file mode for the capture tool
+**Size:** M · **Depends on:** M22-16 · **Sources:** owner request 2026-11-23 ("add curseforge app records too"); M22-16's code review (fixture route)
+
+1. **Capture tool, single-file mode.** Give `scripts/lab_capture.py` a mode for one file from outside an install, such as an addon manager's records. It runs the same identifier detectors with the same refusal on a leftover, does byte-level targeted replacements only (never parse and re-serialize), and owns the blanking of per-user link tokens like WowUp's `?link=`. Its provenance row says it came from outside an install. Graded like the rest of `lab_capture` (`security-reviewer`).
+2. **CurseForge's records.** Find where the CurseForge app keeps its installed-addon records on macOS (under `~/Library/Application Support/CurseForge` [verify]; on Windows its AppData folder [verify]). Read them read-only, with the same open rules as M22-16's reader (no follow, non-blocking, regular files only, size cap), and never a token, cookie or login file. Join each record to the installed `Interface/AddOns` folders of the installation the app names, as M22-16 does for WowUp. Each addon then shows its source, version and update mark, and a folder claimed by both managers says so. The format is unknown: record it in `docs/LAB_FORMATS.md` from a real capture made through step 1, with a provenance row. If the app keeps no readable per-install record, stop and report.
+3. The Addons view in the UI shows CurseForge beside WowUp, and `wowlab addons list --json` carries it.
+
+**Acceptance:** a real capture through the single-file mode; tests for a missing app folder, a stale record, a folder both managers claim and a hostile path (FIFO, symlink, oversized file); an owner `@live` test. Reviewed by `code-reviewer`, `domain-reviewer` and `security-reviewer`. User-facing: yes.
+
+---
+
 ## [ ] M22-14 — Wave review
-**Size:** S · **Depends on:** M22-01 to M22-13, M22-15 to M22-23, M22-O1
+**Size:** S · **Depends on:** M22-01 to M22-13, M22-15 to M22-25, M22-O1
 
 `docs/handoffs/M22-review.md`; dispatch stops until the owner's next pick.
 

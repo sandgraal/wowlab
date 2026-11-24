@@ -33,7 +33,7 @@ from collections.abc import Sequence
 
 from pydantic import BaseModel, ConfigDict
 
-from wowlab_core import macrocheck, wtfconfig
+from wowlab_core import clientlists, macrocheck, wtfconfig
 
 __all__ = ["FixPlan", "MacroFix", "plan"]
 
@@ -75,11 +75,18 @@ def _moved(body: Sequence[wtfconfig.MacroBodyLine], k: int) -> list[wtfconfig.Ma
     ]
 
 
-def plan(doc: wtfconfig.MacrosDocument, *, scope: macrocheck.MacroScope, file: str) -> FixPlan:
+def plan(
+    doc: wtfconfig.MacrosDocument,
+    *,
+    scope: macrocheck.MacroScope,
+    file: str,
+    client: clientlists.Client | None = None,
+) -> FixPlan:
     """What `macros fix` would write for `doc`, the file `file` (relative to
-    the flavor folder) of `scope`."""
+    the flavor folder) of `scope`; `client` as `macrocheck.check` takes it,
+    for the findings it leaves."""
     sources = [macrocheck.SourceMacro(scope=scope, file=file, macro=m) for m in doc.macros]
-    checked = macrocheck.check(sources, None)
+    checked = macrocheck.check(sources, None, client=client)
     fixable = {f.macro.line: f for f in checked.findings if f.fixable}
     left = [f for f in checked.findings if not f.fixable]
     lines = list(doc.lines)
