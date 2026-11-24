@@ -198,6 +198,7 @@ if TYPE_CHECKING:
     from wowlab_core import macrocheck as macrocheck
     from wowlab_core import macroplace as macroplace
     from wowlab_core import pathfacts as pathfacts
+    from wowlab_core import practice as practice
     from wowlab_core import process as process
     from wowlab_core import profiles as profiles
     from wowlab_core import simexport as simexport
@@ -1775,7 +1776,13 @@ if TYPE_CHECKING:
         _NO_LOG as _NO_LOG,
     )
     from wowlab_core.cli._cmd_log import (
+        _PRACTICE_NOTES as _PRACTICE_NOTES,
+    )
+    from wowlab_core.cli._cmd_log import (
         _STILL_WRITING as _STILL_WRITING,
+    )
+    from wowlab_core.cli._cmd_log import (
+        MAX_GAP_SECONDS as MAX_GAP_SECONDS,
     )
     from wowlab_core.cli._cmd_log import (
         MAX_TAIL_LINES as MAX_TAIL_LINES,
@@ -1793,6 +1800,9 @@ if TYPE_CHECKING:
         LogTailReport as LogTailReport,
     )
     from wowlab_core.cli._cmd_log import (
+        PracticeReport as PracticeReport,
+    )
+    from wowlab_core.cli._cmd_log import (
         _follow_log as _follow_log,
     )
     from wowlab_core.cli._cmd_log import (
@@ -1802,10 +1812,31 @@ if TYPE_CHECKING:
         _logs_dir as _logs_dir,
     )
     from wowlab_core.cli._cmd_log import (
+        _practice_clock as _practice_clock,
+    )
+    from wowlab_core.cli._cmd_log import (
+        _practice_counted as _practice_counted,
+    )
+    from wowlab_core.cli._cmd_log import (
+        _practice_pct as _practice_pct,
+    )
+    from wowlab_core.cli._cmd_log import (
+        _practice_timings as _practice_timings,
+    )
+    from wowlab_core.cli._cmd_log import (
         _print_log_entry as _print_log_entry,
     )
     from wowlab_core.cli._cmd_log import (
         _rel as _rel,
+    )
+    from wowlab_core.cli._cmd_log import (
+        _say_practice as _say_practice,
+    )
+    from wowlab_core.cli._cmd_log import (
+        _say_segments as _say_segments,
+    )
+    from wowlab_core.cli._cmd_log import (
+        log_practice as log_practice,
     )
     from wowlab_core.cli._cmd_log import (
         log_tail as log_tail,
