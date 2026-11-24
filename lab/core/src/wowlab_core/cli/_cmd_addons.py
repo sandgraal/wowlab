@@ -70,6 +70,11 @@ def addons_list(root: RootOpt = None, flavor: FlavorOpt = None, json_out: JsonOp
             bits.append("no TOC file named after the folder; the client does not load it")
         if declared is not None:
             bits.append(f"TOC declares Interface {declared.text}")
+        bits.extend(
+            f"{t.file} is too large to read whole; only its opening lines were read"
+            for t in a.tocs
+            if t.document is not None and t.document.partial
+        )
         if a.blizzard:
             bits.append("named like a Blizzard addon")
         _say("  ".join(bits))
@@ -148,6 +153,10 @@ def _check_toc_lines(
     lines = [f"{indent}interface   {_check_interface(toc, interface, role)}"]
     if toc.interface_status == "unread":
         return lines
+    if toc.partial:
+        lines.append(
+            f"{indent}read        only its opening lines: the file is too large to read whole"
+        )
     if toc.dependencies:
         words = {
             "installed": "installed",

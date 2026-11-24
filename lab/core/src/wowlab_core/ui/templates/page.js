@@ -5347,6 +5347,14 @@
     return patchDayItem(read.flavor, addon.name, addon.path, " could not be checked against this game.");
   }
 
+  // An addon one of whose counted TOCs was too large to read whole: `addons
+  // check` read its opening lines only (`partial`) and judged it by them.
+  function patchDayPartial(read, addon) {
+    const toc = patchDayCounted(addon).find((t) => t.partial === true);
+    return patchDayItem(read.flavor, addon.name, patchDayToc(addon, toc ? toc.file : null),
+      " has a TOC file too large to read whole, so wowlab checked it by its opening lines only.");
+  }
+
   // How many addons are current, when the game's interface is known.
   function patchDayCount(read, current, unchecked) {
     const all = read.addons.length;
@@ -5451,6 +5459,8 @@
     patchDayList(item, "Needs an addon that will not load", needy.map((a) => patchDayNeeds(read, a)));
     patchDayList(item, "Could not be checked",
       unchecked.map((a) => patchDayUnchecked(read, a)).filter((line) => line !== null));
+    const partial = addons.filter((a) => patchDayCounted(a).some((t) => t.partial === true));
+    patchDayList(item, "TOC files read in part", partial.map((a) => patchDayPartial(read, a)));
     const unread = read.unread || [];
     if (unread.length) {
       const lines = unread.map((f) => patchDayUnread(read, f, card));

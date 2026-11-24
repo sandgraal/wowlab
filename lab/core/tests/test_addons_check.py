@@ -16,6 +16,7 @@ a fake with no client, and opening game data fails the test (no network).
 
 from __future__ import annotations
 
+import base64
 import shutil
 from pathlib import Path
 
@@ -25,6 +26,7 @@ import pytest
 from typer.testing import CliRunner
 
 from wowlab_core import addoncheck, cli, install, layout
+from wowlab_core.toc import MAX_TOC_BYTES
 
 FIXTURES = Path(__file__).resolve().parent / "fixtures"
 CAPTURE = FIXTURES / "macos"
@@ -417,3 +419,97 @@ def test_orphan_addons_are_counted_by_folded_name_constructed(flavor: Path) -> N
     (sv / "syndicator.lua.bak").write_bytes((sv / "Syndicator.lua").read_bytes())
     out = ok("sv", "list", "--orphans")
     assert out.startswith("6 SavedVariables files of 4 addons,")
+
+
+# ─── a TOC larger than wowlab reads whole (M22-21) ──────────────────────────
+
+
+def _oversized(header: bytes) -> bytes:
+    """A constructed TOC in QuestieDB's shape: a header, the file lines, then
+    `## X-` lines of base64 data running past the read limit."""
+    payload = base64.b64encode(bytes(range(256)) * 3)
+    blob = b"".join(b"## X-Data-%d: %s\n" % (i, payload) for i in range(1_200))
+    data = header + b"\nsrc\\config.lua\n\n" + blob
+    assert len(data) > MAX_TOC_BYTES
+    return data
+
+
+def _questie(flavor: Path, header: bytes, name: str = "QuestieDB_Forever.toc") -> None:
+    folder = flavor / "Interface" / "AddOns" / "QuestieDB"
+    folder.mkdir()
+    (folder / name).write_bytes(_oversized(header))
+
+
+def test_an_oversized_toc_is_checked_by_its_header_constructed(flavor: Path) -> None:
+    _questie(
+        flavor,
+        b"## Interface: 16001\n## Title: QuestieDB|cFF00FF00 v1.1.5|r\n## Version: 1.1.5\n"
+        b"## Dependencies: DBM-Core\n## X-Dependencies: NotThis\n",
+    )
+    check = _check().check
+    by_name = {a.name: a for a in check.addons}
+    (toc,) = by_name["QuestieDB"].tocs
+    assert toc.error is None and toc.partial is True
+    assert toc.interface_status == "matches" and toc.interface_versions == (16001,)
+    assert toc.title == "QuestieDB|cFF00FF00 v1.1.5|r"
+    assert toc.version == "1.1.5"
+    assert [(d.name, d.status) for d in toc.dependencies] == [("DBM-Core", "missing")]
+    assert by_name["QuestieDB"].missing_dependencies == ("DBM-Core",)
+    assert all(t.partial is False for a in check.addons if a.name != "QuestieDB" for t in a.tocs)
+    out = ok("addons", "check")
+    assert (
+        'QuestieDB  "QuestieDB v1.1.5"\n'
+        "  interface   16001: matches this client\n"
+        "  read        only its opening lines: the file is too large to read whole\n"
+        "  needs       DBM-Core (not installed)\n"
+    ) in out
+
+
+def test_addons_list_says_a_toc_was_not_read_whole_constructed(flavor: Path) -> None:
+    _questie(flavor, b"## Interface: 16001\n## Title: QuestieDB\n", "QuestieDB.toc")
+    report = cli.AddonsReport.model_validate_json(ok("addons", "list", "--json"))
+    (questie,) = [a for a in report.addons if a.name == "QuestieDB"]
+    (toc,) = questie.tocs
+    assert toc.document is not None and toc.document.partial is True
+    assert toc.document.get("Title") == "QuestieDB"
+    out = ok("addons", "list")
+    said = (
+        'QuestieDB  "QuestieDB"  TOC declares Interface 16001  QuestieDB.toc is too large to '
+        "read whole; only its opening lines were read\n"
+    )
+    assert said in out
+    assert "DBM-Brawlers" in out and "too large" not in out.replace(said, "")
+
+
+def test_addons_list_says_it_of_a_suffixed_toc_too_constructed(flavor: Path) -> None:
+    """QuestieDB's real TOC is suffixed (`_Forever`), so which one loads
+    depends on the game type and no title is shown; the partial read is
+    still said."""
+    _questie(flavor, b"## Interface: 16001\n## Title: QuestieDB\n")
+    (line,) = [x for x in ok("addons", "list").splitlines() if x.startswith("QuestieDB  ")]
+    assert line.endswith(
+        "  QuestieDB_Forever.toc is too large to read whole; only its opening lines were read"
+    )
+
+
+def test_saved_data_of_a_toc_read_in_part_constructed(flavor: Path) -> None:
+    """A header that declares the file ends the orphan; a header that
+    declares nothing leaves the folder not judged, since the declaration may
+    come after the part read."""
+    addons = flavor / "Interface" / "AddOns"
+    (addons / "Syndicator").mkdir()
+    (addons / "Syndicator" / "Syndicator.toc").write_bytes(
+        _oversized(b"## Interface: 16001\n## SavedVariables: SYNDICATOR_CONFIG\n")
+    )
+    (addons / "RareScanner").mkdir()
+    (addons / "RareScanner" / "RareScanner.toc").write_bytes(_oversized(b"## Interface: 16001\n"))
+    lay = layout.Layout(flavor)
+    found = addoncheck.orphan_saved_variables(lay.saved_variables(), lay.addons())
+    paths = [f.path for f in found.files]
+    assert f"{SV_DIR}/Syndicator.lua" not in paths
+    assert f"{SV_DIR}/RareScanner.lua" not in paths
+    assert found.not_judged == ("RareScanner",)
+    assert f"{SV_DIR}/DBM-Party-Vanilla.lua" in paths
+    caveat = cli._not_judged_caveat(["RareScanner"])
+    assert "whose TOC could not be read whole" in caveat
+    assert caveat in _orphans().notes
