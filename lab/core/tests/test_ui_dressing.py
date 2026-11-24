@@ -162,7 +162,8 @@ def test_the_link_is_static_markup_with_no_href(server: Any) -> None:
     # test_ui_twink.py. M21-04 added the Profiles row's four and the guild's
     # before it, and the gear rows' twenty after the saved ones, graded in
     # test_ui_char_links.py; M21-05 the profile links of the Crew tab's player
-    # and of Spy's, graded in test_ui_crew_links.py.
+    # and of Spy's, graded in test_ui_crew_links.py. M21-07 added Open my
+    # talents after See my look, graded in test_ui_talents.py.
     profiles = [
         "char-profile-armory",
         "char-profile-ft",
@@ -172,6 +173,7 @@ def test_the_link_is_static_markup_with_no_href(server: Any) -> None:
     ]
     # M21-06 added See my look beside the dressing-room link, graded in
     # test_ui_purist.py.
+    talents = ["char-talents-link"]
     saved = ["char-saved-ft-profile", "char-saved-ft-build", "char-saved-wcl-report"]
     twink = ["char-twink-planner", "char-twink-wowhead"]
 
@@ -182,6 +184,7 @@ def test_the_link_is_static_markup_with_no_href(server: Any) -> None:
         *(static(i) for i in profiles),
         static("char-dressing-link"),
         static("char-purist-link"),
+        *(static(i) for i in talents),
         *(static(i) for i in saved),
         *(static(f"char-gear-wowhead-{n}", "gear-name gear-wowhead") for n in range(20)),
         *(static(i) for i in twink),
@@ -192,7 +195,7 @@ def test_the_link_is_static_markup_with_no_href(server: Any) -> None:
         ),
     ]
     body = _page(server).body.decode("utf-8")
-    assert body.count('target="_blank" rel="noopener noreferrer"') == 38
+    assert body.count('target="_blank" rel="noopener noreferrer"') == 39
     assert "See it dressed</a>" in body
 
 

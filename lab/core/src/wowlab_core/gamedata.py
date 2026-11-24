@@ -15,6 +15,10 @@ The rules this module exists to hold:
 - **ADR-0012.** This is the only network client in the library and no test
   exercises it live; tests inject a transport that replays recordings.
 
+The client's hotfix cache (`hotfix`, M22-23) is laid over cached tables by
+`overlay_hotfixes` and `flavor_hotfixes` only when its build is the
+tables' build; the cached files themselves are never changed (L5).
+
 Downloads stream into a temp name in the cache directory and are published
 under the final name only when complete, so an interrupted download never
 leaves a partial file there. Publishing is a hard link, which fails
@@ -72,7 +76,7 @@ import httpx
 import platformdirs
 from pydantic import BaseModel, ConfigDict, TypeAdapter, ValidationError
 
-from wowlab_core import __version__
+from wowlab_core import __version__, hotfix
 from wowlab_core.errors import WowlabError
 from wowlab_core.snapshot import make_private_dirs
 
@@ -81,12 +85,14 @@ __all__ = [
     "MAX_BUILDS_BYTES",
     "MAX_TABLE_BYTES",
     "NAME_TABLES",
+    "TALENT_TABLES",
     "Build",
     "BuildNotPublished",
     "CacheLocationError",
     "GameData",
     "GameDataError",
     "HasVersion",
+    "HotfixOverlay",
     "MalformedTable",
     "Sidecar",
     "Source",
@@ -96,8 +102,11 @@ __all__ = [
     "WagoSource",
     "builds",
     "cached_rows",
+    "cached_table_path",
     "default_cache_dir",
+    "flavor_hotfixes",
     "missing_tables",
+    "overlay_hotfixes",
     "resolve_build",
     "rows",
     "table",
@@ -121,6 +130,7 @@ _DISPOSITION_FILENAME = re.compile(r'(?:^|;)\s*filename="([^"]*)"', re.IGNORECAS
 _INSTALL_MARKER = ".build.info"  # what makes a directory an install (LAB_PLAN §6.1)
 _LOOPBACK_HOSTS = frozenset({"127.0.0.1", "::1", "localhost"})
 _ASCII_DIGITS = re.compile(r"[0-9]+")
+_ROW_ID = re.compile(r"-?[0-9]{1,10}")
 # Publishing differs by platform (see _publish_without_overwrite). A module
 # constant rather than os.name at each use, so both branches can be graded on
 # one machine: pathlib itself reads os.name, so tests cannot patch that.
@@ -945,6 +955,14 @@ NAME_TABLES: tuple[str, ...] = ("ChrRaces", "ChrClasses", "ChrSpecialization", "
 """The tables the names of races, classes, specs and professions are read
 from (M18-02). Table names, not game data and nothing about a flavor (L6)."""
 
+TALENT_TABLES: tuple[str, ...] = ("TraitNode", "TraitNodeGroup", "TraitNodeGroupXTraitNode")
+"""The tables that place each class talent in its tree, by row and column
+(M21-07, `talentlink`): the node's position, and the groups the game's
+talent frame splits a class's one trait tree into its three trees by. On
+Forever the classic `Talent` and `TalentTab` tables are still in the
+client but describe the classic layout, not the one the game draws
+(docs/DATA_SOURCES.md, 2026-11-24). Table names only (L6)."""
+
 
 def missing_tables(names: Iterable[str], build: str, *, cache_dir: Path | None = None) -> list[str]:
     """Which of ``names`` are not cached for exactly ``build``, in order: the
@@ -952,6 +970,279 @@ def missing_tables(names: Iterable[str], build: str, *, cache_dir: Path | None =
     Raises ``ValueError`` for a malformed key."""
     base = cache_dir if cache_dir is not None else default_cache_dir()
     return [name for name in names if not _table_path(base, name, build).exists()]
+
+
+# ─── the hotfix cache over the cached tables (M22-23) ────────────────────────
+
+
+def _build_number(build: str) -> int:
+    """The last part of a full build string (``1.60.1.71037`` → 71037), the
+    number a hotfix cache's header names."""
+    if not _BUILD_STRING.fullmatch(build):
+        raise ValueError(f"not a full build string: {build[:64]!r}")
+    return int(build.rsplit(".", 1)[1])
+
+
+class HotfixOverlay:
+    """The rows of the client's hotfix cache laid over the cached tables of
+    one build (M22-23; ADR-0022, ADR-0033 note of 2026-11-23).
+
+    Built with `overlay_hotfixes`. Everything is decided when it is built:
+    whether the cache may be laid over these tables at all (its build is
+    the tables' build, each layout matches its table's columns, every row
+    decodes), and, per table, which rows the cache adds, replaces and
+    removes. `rows` then filters a table's rows; `report` says what was
+    done, or why nothing was. Records apply in file order, a later record
+    of a row winning (**[verify]**): the client appends to the file in time
+    order, and on the owner's file at 71037 sorting by push id, as
+    wowsims/forever and DBCD do, keeps an older copy of 15 `ItemSparse` rows
+    over the server's later push (domain review of M22-23; DATA_SOURCES,
+    2026-11-24). Status 1 with data adds or replaces the row; 2 and 3
+    remove it and anything else is left alone, both **[verify]**. Every row
+    taken from the cache carries `hotfix.SOURCE_KEY`."""
+
+    def __init__(
+        self,
+        build: str,
+        *,
+        file: str | None,
+        cache_build: int | None,
+        refused: str | None,
+        changes: dict[str, dict[int, dict[str, str] | None]],
+        tables: list[hotfix.OverlayTable],
+    ) -> None:
+        self._changes = changes
+        self._report = hotfix.OverlayReport(
+            file=file,
+            cache_build=cache_build,
+            tables_build=build,
+            applied=refused is None,
+            refused=refused,
+            tables=tables if refused is None else [],
+        )
+
+    def report(self) -> hotfix.OverlayReport:
+        return self._report
+
+    def rows(self, name: str, base: Iterable[dict[str, str]]) -> Iterator[dict[str, str]]:
+        """`base`, the cached rows of `name`, with the cache's rows laid
+        over: a replaced row in its place, a removed one left out, the
+        added ones after the rest in ascending ID. Unchanged when the
+        overlay was refused or the cache has nothing for `name`."""
+        changes = self._changes.get(name) if self._report.applied else None
+        if not changes:
+            yield from base
+            return
+        seen: set[int] = set()
+        for row in base:
+            rid = _row_id(row)
+            if rid is None or rid not in changes:
+                yield row
+                continue
+            seen.add(rid)
+            new = changes[rid]
+            if new is not None:
+                yield new
+        for rid in sorted(changes):
+            new = changes[rid]
+            if rid not in seen and new is not None:
+                yield new
+
+
+def _row_id(row: dict[str, str]) -> int | None:
+    text = row.get("ID")
+    if text is None or not _ROW_ID.fullmatch(text):
+        return None
+    return int(text)
+
+
+def _refused(build: str, file: str | None, cache_build: int | None, why: str) -> HotfixOverlay:
+    return HotfixOverlay(
+        build, file=file, cache_build=cache_build, refused=why, changes={}, tables=[]
+    )
+
+
+def _table_header(path: Path) -> list[str]:
+    with path.open("rb") as handle:
+        reader = csv.reader(_decoded_lines(path, handle), strict=True)
+        try:
+            return next(reader)
+        except StopIteration:
+            return []
+        except csv.Error as exc:
+            raise MalformedTable(f"{path}: line 1: {exc}") from exc
+
+
+def overlay_hotfixes(
+    cache: hotfix.HotfixCache | None,
+    build: str,
+    table_path: Callable[[str], Path | None],
+    *,
+    tables: Iterable[str] | None = None,
+    file: str | None = None,
+    refused: str | None = None,
+) -> HotfixOverlay:
+    """The overlay of `cache` (read from `file`, relative to the flavor
+    folder) on the cached tables of `build`, for `tables` (default: every
+    table the shipped layouts describe; a name they do not describe raises
+    `ValueError`). `table_path` gives a table's cached CSV for `build`
+    (fetching it first is the caller's choice), or None when it is not
+    cached. Refused, with the reason in `report().refused`, when `refused`
+    is given (the caller could not read the cache), when there is no cache,
+    when the cache is of another build, when a table is not cached, when a
+    layout does not match its table's columns, when a table has more than
+    `hotfix.MAX_TABLE_ROWS` records, or when a row does not decode. Raises `ValueError` for a `build` that is not a full build
+    string, and `MalformedTable` or `OSError` when a cached table cannot be
+    read."""
+    tables_build = _build_number(build)
+    layouts = _layouts_of(tables)
+    if refused is not None:
+        return _refused(build, file, cache.build if cache else None, refused)
+    if cache is None:
+        return _refused(build, file, None, "this game folder has no hotfix cache")
+    if cache.build != tables_build:
+        return _refused(
+            build,
+            file,
+            cache.build,
+            f"the hotfix cache is of build {cache.build} and the game tables of {build}; wowlab "
+            "lays a hotfix cache only over the game tables of its own build",
+        )
+    by_table: dict[str, list[hotfix.HotfixRecord]] = {}
+    for record in cache.records:
+        by_table.setdefault(record.table, []).append(record)
+    changes: dict[str, dict[int, dict[str, str] | None]] = {}
+    counts: list[hotfix.OverlayTable] = []
+    for name, layout in layouts.items():
+        path = table_path(name)
+        if path is None:
+            return _refused(
+                build,
+                file,
+                cache.build,
+                f"the game table {name} of {build} is not in wowlab's cache",
+            )
+        header = _table_header(path)
+        if header != layout.columns:
+            return _refused(
+                build,
+                file,
+                cache.build,
+                f"the columns of the game table {name} of {build} are not the ones wowlab "
+                "decodes the hotfix cache's rows with",
+            )
+        records = by_table.get(name, [])  # file order: a later record wins [verify]
+        if len(records) > hotfix.MAX_TABLE_ROWS:
+            return _refused(
+                build,
+                file,
+                cache.build,
+                f"the hotfix cache holds {len(records)} {name} records, more than the "
+                f"{hotfix.MAX_TABLE_ROWS} wowlab reads",
+            )
+        final: dict[int, dict[str, str] | None] = {}
+        left_alone = 0
+        for record in records:
+            if record.status == hotfix.STATUS_ROW and record.data:
+                try:
+                    final[record.record_id] = hotfix.decode_row(layout, record)
+                except hotfix.HotfixError as exc:
+                    return _refused(build, file, cache.build, str(exc))
+            elif record.status in hotfix.STATUS_REMOVED:
+                final[record.record_id] = None
+            else:
+                left_alone += 1
+        added = replaced = changed = removed = 0
+        if final:
+            present: set[int] = set()
+            for row in _iter_rows(path):
+                rid = _row_id(row)
+                if rid is not None and rid in final:
+                    present.add(rid)
+                    new = final[rid]
+                    if new is not None and any(new[k] != v for k, v in row.items()):
+                        changed += 1
+            for rid, new in final.items():
+                if new is None:
+                    removed += rid in present
+                elif rid in present:
+                    replaced += 1
+                else:
+                    added += 1
+        changes[name] = final
+        counts.append(
+            hotfix.OverlayTable(
+                table=name,
+                records=len(records),
+                added=added,
+                replaced=replaced,
+                changed=changed,
+                removed=removed,
+                left_alone=left_alone,
+            )
+        )
+    return HotfixOverlay(
+        build, file=file, cache_build=cache.build, refused=None, changes=changes, tables=counts
+    )
+
+
+def _layouts_of(tables: Iterable[str] | None) -> dict[str, hotfix.TableLayout]:
+    known = hotfix.layouts()
+    if tables is None:
+        return dict(known)
+    names = list(tables)
+    unknown = [n for n in names if n not in known]
+    if unknown:
+        raise ValueError(f"no hotfix layout for {', '.join(unknown)}")
+    return {n: known[n] for n in names}
+
+
+def flavor_hotfixes(
+    flavor_path: Path,
+    install_root: Path,
+    build: str,
+    table_path: Callable[[str], Path | None],
+    *,
+    tables: Iterable[str] | None = None,
+) -> HotfixOverlay:
+    """`overlay_hotfixes` of the flavor folder's `Cache/ADB/<locale>/DBCache.bin`
+    (the one of the game's `textLocale` when there is one, else the newest),
+    read read-only from the install root (L1), for `tables` (default: every
+    table with a shipped layout). A cache that cannot be read refuses the
+    overlay with the reason, its paths written relative to the flavor
+    folder."""
+    names = list(_layouts_of(tables))
+    found = hotfix.find_caches(flavor_path, hotfix.game_locale(flavor_path, install_root))
+    if not found:
+        return overlay_hotfixes(None, build, table_path, tables=names)
+    path = found[0]
+    rel = path.relative_to(flavor_path).as_posix()
+    try:
+        cache = hotfix.read(path, names, root=install_root)
+    except hotfix.HotfixError as exc:
+        why = str(exc)
+    except OSError as exc:
+        why = _relative_words(exc.strerror or str(exc), flavor_path, install_root)
+    else:
+        return overlay_hotfixes(cache, build, table_path, tables=names, file=rel)
+    return overlay_hotfixes(
+        None, build, table_path, tables=names, file=rel, refused=f"{rel} cannot be read: {why}"
+    )
+
+
+def _relative_words(text: str, flavor_path: Path, install_root: Path) -> str:
+    """`text` with the flavor folder's and the install's absolute paths
+    written relative to them, so no home folder reaches a note."""
+    for base in (flavor_path, install_root):
+        text = text.replace(str(base) + os.sep, "").replace(str(base), ".")
+    return text
+
+
+def cached_table_path(name: str, build: str, *, cache_dir: Path | None = None) -> Path | None:
+    """The cached CSV of `name` at exactly `build`, or None when it is not
+    cached. Never fetches and never writes."""
+    path = _table_path(cache_dir if cache_dir is not None else default_cache_dir(), name, build)
+    return path if path.is_file() else None
 
 
 def _sidecar_path(table_path: Path) -> Path:

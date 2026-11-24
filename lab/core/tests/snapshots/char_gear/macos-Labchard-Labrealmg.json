@@ -306,6 +306,21 @@
   "region": null,
   "region_absent": "the portal setting in WTF/Config.wtf is \"test\", not one of us, eu, kr, tw, cn",
   "saved_links": [],
+  "talents": {
+    "link": {
+      "link": "talents",
+      "site": "wowforeverbuilds",
+      "site_name": "WoW Forever Builds",
+      "label": "Open my talents",
+      "why": "the character's class is not known"
+    },
+    "ranks": null,
+    "tables_build": null,
+    "record_build": "1.60.1.70009",
+    "table_note": null,
+    "download": [],
+    "download_build": null
+  },
   "links": {
     "profiles": [
       {

@@ -1018,6 +1018,9 @@ if TYPE_CHECKING:
         _talent_table as _talent_table,
     )
     from wowlab_core.cli._cmd_char import (
+        _talents_line as _talents_line,
+    )
+    from wowlab_core.cli._cmd_char import (
         _time_notes as _time_notes,
     )
     from wowlab_core.cli._cmd_char import (
@@ -1523,6 +1526,12 @@ if TYPE_CHECKING:
     )
     from wowlab_core.cli._cmd_doctor import (
         _hash_now as _hash_now,
+    )
+    from wowlab_core.cli._cmd_doctor import (
+        _hotfix_cache as _hotfix_cache,
+    )
+    from wowlab_core.cli._cmd_doctor import (
+        _hotfix_line as _hotfix_line,
     )
     from wowlab_core.cli._cmd_doctor import (
         _install_step as _install_step,
