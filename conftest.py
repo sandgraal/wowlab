@@ -332,3 +332,61 @@ def pytest_runtest_call(item: pytest.Item) -> None:
     leaks = user_store_leaks(os.environ, area, _user_data_dir(), windows=sys.platform == "win32")
     if leaks:
         pytest.fail("the user data directory escapes tmp_path: " + "; ".join(leaks), pytrace=False)
+
+
+# ─── the addon managers' folders stay out of reach (M22-25) ──────────────────
+
+# `wowlab addons list` reads WowUp's and the CurseForge app's records from the
+# user's own folders. No test may read the real ones: every test runs with
+# the folder rules wrapped (`_user_dirs.keep_manager_folders_out`), and an
+# audit hook records any open inside a real one, which fails the test. An
+# `@live` test, run by hand against the owner's machine, is exempt. The
+# helpers live in `lab/core/tests/_user_dirs.py`, loaded here by path and
+# under the name the tests import it by, so both share one copy.
+
+
+def _load_user_dirs() -> object:
+    import importlib.util
+
+    if "_user_dirs" in sys.modules:
+        return sys.modules["_user_dirs"]
+    source = Path(__file__).resolve().parent / "lab" / "core" / "tests" / "_user_dirs.py"
+    spec = importlib.util.spec_from_file_location("_user_dirs", source)
+    if spec is None or spec.loader is None:
+        return None
+    module = importlib.util.module_from_spec(spec)
+    sys.modules["_user_dirs"] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+_USER_DIRS = _load_user_dirs()
+if _USER_DIRS is not None and _USER_DIRS.note_real_manager_folders():  # type: ignore[attr-defined]
+    sys.addaudithook(_USER_DIRS.audit_manager_opens)  # type: ignore[attr-defined]
+
+
+@pytest.fixture(autouse=True)
+def _no_real_manager_folders(
+    request: pytest.FixtureRequest, tmp_path_factory: pytest.TempPathFactory
+) -> Iterator[None]:
+    """Keep this test out of the real WowUp and CurseForge folders, and fail
+    it when it opened a file inside one anyway."""
+    if _USER_DIRS is None or request.node.get_closest_marker("live") is not None:
+        yield
+        return
+    opens = _USER_DIRS.MANAGER_OPENS  # type: ignore[attr-defined]
+    patches = pytest.MonkeyPatch()
+    blocked = tmp_path_factory.getbasetemp() / "no-manager-folders"
+    _USER_DIRS.keep_manager_folders_out(patches, blocked)  # type: ignore[attr-defined]
+    del opens[:]
+    try:
+        yield
+    finally:
+        patches.undo()
+    if opens:
+        seen = sorted(set(opens))
+        del opens[:]
+        pytest.fail(
+            "this test opened a file in the user's real addon manager folder: " + "; ".join(seen),
+            pytrace=False,
+        )

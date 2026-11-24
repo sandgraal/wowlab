@@ -22,12 +22,12 @@ from __future__ import annotations
 import json
 import os
 import shutil
-import subprocess
 import sys
 import threading
 import time
 from pathlib import Path
 
+import _user_dirs
 import pytest
 from _user_dirs import redirect_user_dirs
 from test_cli_player_copy import hits
@@ -48,7 +48,6 @@ INSTALL_PATH = b"/Volumes/Labdisk/Games/World of Warcraft/_forever_/"
 FOREVER = "_forever_"  # the provenance rows' flavor folder; tests may name it (L6)
 AUCTIONATOR = "119a315a-11ba-40e5-9374-b38fdae7caed"
 WRITTEN_NS = 1_790_000_000_000_000_000
-REPO = Path(__file__).resolve().parents[3]
 
 runner = CliRunner()
 
@@ -506,104 +505,36 @@ def test_listing_writes_nothing_in_the_install_or_the_apps_folder(
     assert state() == before and path.is_file()
 
 
-# ─── no test reads this machine's CurseForge records ─────────────────────────
-
-# The tests that run `addons list` without moving the home folder (they call
-# `_user_dirs.no_wowup_list`, which since M22-25 moves CurseForge's folder too).
-UNISOLATED = [
-    "lab/core/tests/test_cli.py::test_addons_list",
-    "lab/core/tests/test_cli.py::test_read_commands_leave_the_install_untouched",
-    "lab/core/tests/test_cli_explain_detail.py::test_each_view_decodes_the_captured_file",
-    "lab/core/tests/test_cli_player_copy.py::test_read_output_is_player_copy",
-    "lab/core/tests/test_filemap_addon_executables.py::test_views_for_paths_the_row_takes_constructed",
-    "lab/core/tests/review/test_review_m22_16_unlisted_installation_said_nowhere.py",
-]
-
-_HOOK = """
-import os, sys
-_SENTINEL = os.environ["M22_25_SENTINEL"]
-_LOG = os.environ["M22_25_LOG"]
-def _hook(event, args):
-    if event == "open" and args and isinstance(args[0], (str, bytes, os.PathLike)):
-        if os.path.realpath(os.fsdecode(args[0])) == _SENTINEL:
-            with open(_LOG, "a", encoding="utf-8") as f:
-                f.write(os.environ.get("PYTEST_CURRENT_TEST", "-") + "\\n")
-sys.addaudithook(_hook)
-"""
+# ─── no test reads this machine's records (the root conftest's guard) ────────
 
 
-def _stand_in(tmp_path: Path) -> tuple[dict[str, str], Path]:
-    stand_in = tmp_path / "machine-home"
-    stand_in.mkdir()
-    site = tmp_path / "site"
-    site.mkdir()
-    (site / "sitecustomize.py").write_text(_HOOK, encoding="utf-8")
-    env = {k: v for k, v in os.environ.items() if k not in ("WOWLAB_WOW_ROOT", "WOWLAB_FLAVOR")}
-    for name in ("PYTEST_ADDOPTS", "PYTEST_XDIST_WORKER", "PYTEST_CURRENT_TEST"):
-        env.pop(name, None)
-    env["HOME"] = str(stand_in)
-    env["XDG_CONFIG_HOME"] = str(stand_in / ".config")
-    folder = subprocess.run(
-        [
-            sys.executable,
-            "-c",
-            "from wowlab_core import addonsource as a; print(a.curseforge_folder())",
-        ],
-        env=env,
-        capture_output=True,
-        text=True,
-        check=True,
-    ).stdout.strip()
-    sentinel = _records_path(Path(folder))
-    assert stand_in in sentinel.parents, sentinel
-    sentinel.parent.mkdir(parents=True)
-    sentinel.write_bytes(CURSEFORGE.read_bytes())
-    log = tmp_path / "opens.log"
-    log.write_text("", encoding="utf-8")
-    env["PYTHONPATH"] = os.pathsep.join(filter(None, [str(site), env.get("PYTHONPATH", "")]))
-    env["M22_25_SENTINEL"] = os.path.realpath(sentinel)
-    env["M22_25_LOG"] = str(log)
-    return env, log
+def test_every_test_is_kept_out_of_the_real_folders() -> None:
+    """This test leaves the home folder as it is: the rules it sees still
+    never name the real folders, which the session noted before it ran."""
+    real = set(_user_dirs.note_real_manager_folders())
+    assert real, "the session noted the real folders"
+    for rule in (addonsource.wowup_folder, addonsource.curseforge_folder):
+        assert hasattr(rule, "__wrapped__"), "the rule is wrapped for every test"
+        assert str(rule()) not in real and os.path.realpath(rule()) not in real
 
 
-@pytest.mark.skipif(os.name == "nt", reason="platformdirs ignores HOME on Windows")
-def test_the_hook_sees_a_read_of_the_home_records_constructed(tmp_path: Path) -> None:
-    env, log = _stand_in(tmp_path)
-    subprocess.run(
-        [sys.executable, "-c", "from wowlab_core import addonsource as a; a.read_curseforge()"],
-        env=env,
-        check=True,
-    )
-    assert log.read_text(encoding="utf-8").strip() != ""
+def test_the_guard_records_an_open_inside_a_real_folder_constructed() -> None:
+    """Positive control for the audit hook: an open of a path inside a real
+    folder is recorded (fed to the hook directly: nothing is opened)."""
+    [first, *_] = _user_dirs.note_real_manager_folders()
+    inside = str(Path(first, "agent", "GameInstances", "AddonGameInstance.json"))
+    _user_dirs.audit_manager_opens("open", (inside, "r", 0))
+    _user_dirs.audit_manager_opens("open", (first + "-elsewhere", "r", 0))
+    _user_dirs.audit_manager_opens("open", (7, "r", 0))
+    try:
+        assert [inside] == _user_dirs.MANAGER_OPENS
+    finally:
+        del _user_dirs.MANAGER_OPENS[:]  # this test opened nothing
 
 
-@pytest.mark.skipif(os.name == "nt", reason="platformdirs ignores HOME on Windows")
-def test_no_test_reads_the_home_curseforge_records_constructed(tmp_path: Path) -> None:
-    env, log = _stand_in(tmp_path)
-    ran = subprocess.run(
-        [
-            sys.executable,
-            "-m",
-            "pytest",
-            "-q",
-            "-p",
-            "no:cacheprovider",
-            "-p",
-            "no:xdist",
-            "--basetemp",
-            str(tmp_path / "inner"),
-            *UNISOLATED,
-        ],
-        cwd=REPO,
-        env=env,
-        capture_output=True,
-        text=True,
-        timeout=280,
-    )
-    assert ran.returncode == 0, ran.stdout[-3000:] + ran.stderr[-3000:]
-    readers = sorted({line.split(" (")[0] for line in log.read_text(encoding="utf-8").splitlines()})
-    assert readers == [], "these tests read the home folder's CurseForge records: " + "; ".join(
-        readers
+def test_a_moved_home_keeps_its_own_folder(home: Path) -> None:
+    assert addonsource.curseforge_folder("darwin") == (
+        home / "Library" / "Application Support" / "CurseForge"
     )
 
 
