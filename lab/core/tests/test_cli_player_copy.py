@@ -468,6 +468,11 @@ def read_commands(root: Path, tmp_path: Path) -> list[list[str]]:
         ["crew", "scan-log"],
         ["crew", "list", "--world"],
         ["crew", "matches", "--world", "--notes"],
+        # M22-08: the sandbox holds no QuestieDB and no item table, so both
+        # say there is nothing to search; test_cli_lookup.py runs it on a
+        # constructed QuestieDB slice and lints that text too.
+        ["lookup", "claw"],
+        ["lookup", "claw", "--notes"],
         # M22-05: the captures hold no game id and no earlier save, so both
         # say so; test_cli_live.py runs it on a constructed match and store.
         ["live", "recap"],

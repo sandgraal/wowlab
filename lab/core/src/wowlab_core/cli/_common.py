@@ -529,6 +529,7 @@ _PART_NAMES = (
     "_cmd_casc",
     "_cmd_charmodel",
     "_cmd_crew",
+    "_cmd_lookup",
     "_cmd_live",
     "_cmd_spy",
     "_cmd_ui",
@@ -559,6 +560,7 @@ _COMMAND_MODULES: dict[str, tuple[str, ...]] = {
     "char": ("_cmd_char", "_cmd_charmodel"),
     "casc": ("_cmd_casc",),
     "crew": ("_cmd_crew",),
+    "lookup": ("_cmd_lookup",),
     "live": ("_cmd_live",),
     "spy": ("_cmd_spy",),
 }

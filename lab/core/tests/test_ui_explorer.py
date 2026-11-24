@@ -564,6 +564,10 @@ def test_the_explorer_runs_only_listed_read_commands(server: Any) -> None:
         # M20-18: its "Read the combat logs not read before" runs `crew scan-log`, which
         # writes only into wowlab's crew database (graded in test_ui_crew.py).
         ("crew", "scan-log"),
+        # M22-08: the Look up tab's search runs the read `lookup`; its
+        # download offer adds `fetch`, which writes only into wowlab's own
+        # game-table cache (graded in test_ui_lookup.py).
+        ("lookup",),
         # M22-05: the Live view reads with `live recap` (graded in
         # test_ui_live.py).
         ("live", "recap"),

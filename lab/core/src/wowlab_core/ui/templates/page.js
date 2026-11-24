@@ -3805,7 +3805,7 @@
   // Commands, Looks). A section with more than one view has its own row of
   // tabs. `showTab` shows one view and marks its section and its tab.
   const SECTIONS = {
-    characters: ["account", "character", "crew"],
+    characters: ["account", "character", "crew", "lookup"],
     backups: ["backups"],
     addons: ["addons"],
     keybinds: ["keybinds"],
@@ -3813,11 +3813,11 @@
     advanced: ["explorer", "gaps", "commands", "looks"],
   };
   // The views with a tab, in their order; the first is shown when the page opens.
-  const TABS = ["account", "character", "crew", "explorer", "gaps", "commands", "looks"];
+  const TABS = ["account", "character", "crew", "lookup", "explorer", "gaps", "commands", "looks"];
   // Every view's element. Keybinds shows the character page's own element
   // with its keys and macros panels alone, so the picker and the keys are
   // one; the character page shows the rest.
-  const VIEWS = ["account", "character", "crew", "backups", "addons", "live", "explorer", "gaps", "commands", "looks"];
+  const VIEWS = ["account", "character", "crew", "lookup", "backups", "addons", "live", "explorer", "gaps", "commands", "looks"];
   const CHARACTER_PANELS = ["char-page", "char-about"];
   const KEYBIND_PANELS = ["char-keys-panel", "char-macros-panel"];
   // The view each section showed last, so going back to it lands there.
@@ -3862,6 +3862,7 @@
     }
     if (name === "gaps") loadGaps();
     if (name === "crew") loadCrew();
+    if (name === "lookup") byId("lookup-query").focus();
     if (name === "live") startLive();
     else stopLive();
     if (name === "character" || keys) {
@@ -4754,6 +4755,141 @@
   byId("crew-note").addEventListener("click", () => crewPlan(["crew", "note"], { text: byId("crew-note-text").value }));
   byId("crew-forget").addEventListener("click", () => crewPlan(["crew", "forget"], {}));
   byId("crew-confirm").addEventListener("click", () => crewConfirm());
+
+
+  // ─── look up (M22-08) ───
+  // What `lookup --json` finds in the game version's QuestieDB addon and the
+  // game's item and zone tables: each hit's heading and lines are the
+  // command's own text, shown through `visible()` only, never in an
+  // attribute, a class or an id, and no link or address is built from them.
+  // Typing searches after a pause; the button searches now. The download
+  // offer runs the same command with `fetch`, which fetches only the tables
+  // not here yet.
+
+  const LOOKUP_KINDS = [
+    ["", "Everything"],
+    ["item", "Items"],
+    ["npc", "NPCs"],
+    ["quest", "Quests"],
+    ["object", "Objects"],
+  ];
+  const lookupState = { seq: 0, timer: null, fetching: false, running: false, queued: null, waiters: [] };
+  fillSelect(byId("lookup-kind"), LOOKUP_KINDS);
+
+  function lookupSay(text, isError) {
+    const node = byId("lookup-status");
+    announce(node, text, Boolean(isError));
+    node.classList.toggle("error", Boolean(isError));
+  }
+
+  function lookupParams(fetch) {
+    const params = { query: byId("lookup-query").value.trim(), limit: "10" };
+    if (byId("lookup-kind").value) params.kind = byId("lookup-kind").value;
+    if (fetch) params.fetch = true;
+    return params;
+  }
+
+  function lookupHit(hit) {
+    const box = make("section");
+    box.className = "panel lookup-hit";
+    box.appendChild(make("h3", visible(typeof hit.heading === "string" ? hit.heading : "")));
+    const list = make("ul");
+    list.className = "crew-lines";
+    for (const line of Array.isArray(hit.lines) ? hit.lines : []) {
+      if (typeof line === "string") list.appendChild(make("li", visible(line)));
+    }
+    box.appendChild(list);
+    return box;
+  }
+
+  function drawLookup(report) {
+    const hits = Array.isArray(report.hits) ? report.hits.filter((h) => h && typeof h === "object") : [];
+    byId("lookup-hits").replaceChildren(...hits.map(lookupHit));
+    const tables = Array.isArray(report.game_tables) ? report.game_tables : [];
+    const missing = tables.some((t) => t && t.state === "missing");
+    byId("lookup-offer").hidden = !missing;
+    byId("lookup-fetch").disabled = lookupState.fetching;
+    // The caveat and the notes are the command's own sentences, the ones
+    // its text output prints (one fact, one place).
+    const caveat = typeof report.caveat === "string" ? report.caveat : "";
+    byId("lookup-caveat").textContent = visible(caveat);
+    byId("lookup-caveat").hidden = !caveat;
+    const notes = Array.isArray(report.notes) ? report.notes.filter((n) => typeof n === "string") : [];
+    byId("lookup-left-out").replaceChildren(...notes.map((n) => make("li", visible(n))));
+    byId("lookup-left-out").hidden = notes.length === 0;
+  }
+
+  // One run at a time: a search asked for while one runs waits, and only the
+  // latest of those runs when it ends, so typing never stacks up runs.
+  async function runLookup(fetch) {
+    const query = byId("lookup-query").value.trim();
+    if (!query && !fetch) {
+      lookupState.seq += 1;
+      lookupState.queued = null;
+      byId("lookup-hits").replaceChildren();
+      lookupSay("", false);
+      return;
+    }
+    if (lookupState.running) {
+      lookupState.queued = { fetch: Boolean(fetch) || Boolean(lookupState.queued && lookupState.queued.fetch) };
+      // Settled once the queued run has run, so a caller (the download
+      // button) waits for it.
+      return new Promise((resolve) => lookupState.waiters.push(resolve));
+    }
+    lookupState.running = true;
+    const seq = ++lookupState.seq;
+    try {
+      lookupSay(fetch ? "Downloading zone and item names…" : "Looking up…", false);
+      const reply = await runJson(["lookup"], lookupParams(fetch), true);
+      if (seq !== lookupState.seq) return;
+      const report = reply.data;
+      if (!report || typeof report !== "object" || typeof report.words !== "string") {
+        byId("lookup-hits").replaceChildren();
+        byId("lookup-caveat").hidden = true;
+        lookupSay(reply.error ? shown(reply.error) : "The lookup came back in a shape this page does not know.", true);
+        return;
+      }
+      drawLookup(report);
+      lookupSay(visible(report.words), Boolean(reply.error));
+    } finally {
+      lookupState.running = false;
+      const next = lookupState.queued;
+      const waiters = lookupState.waiters;
+      lookupState.queued = null;
+      lookupState.waiters = [];
+      if (next) await runLookup(next.fetch);
+      for (const resolve of waiters) resolve();
+    }
+  }
+
+  function lookupSoon() {
+    if (lookupState.timer !== null) clearTimeout(lookupState.timer);
+    lookupState.timer = setTimeout(() => {
+      lookupState.timer = null;
+      runLookup(false);
+    }, 400);
+  }
+
+  async function fetchLookupTables() {
+    if (lookupState.fetching) return;
+    lookupState.fetching = true;
+    byId("lookup-fetch").disabled = true;
+    try {
+      await runLookup(true);
+    } finally {
+      lookupState.fetching = false;
+      byId("lookup-fetch").disabled = false;
+    }
+  }
+
+  byId("lookup-query").addEventListener("input", () => lookupSoon());
+  byId("lookup-kind").addEventListener("change", () => runLookup(false));
+  byId("lookup-go").addEventListener("click", () => {
+    if (lookupState.timer !== null) clearTimeout(lookupState.timer);
+    lookupState.timer = null;
+    runLookup(false);
+  });
+  byId("lookup-fetch").addEventListener("click", () => fetchLookupTables());
 
   // ─── the Characters home (M18-04, docs/design/COMPANION.md) ───
   // Above the table of every character: two status cards, then one card per
