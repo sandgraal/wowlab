@@ -3,21 +3,30 @@
 Nothing here runs Lua (L3). Two halves, as in test_m21_11_api_fixes.py:
 
 1. Source pins. `readRegion`, `resolveNames` and the schema 3 migration are
-   pinned token for token, with how they are reached (once each, from the
-   end of the gated roster pass) and the cap per login.
+   pinned token for token, with how they are reached (from the end of the
+   gated roster pass and of the scoreboard pass) and what marks a player as
+   met this session (`resolveSeen`, in `readMember` and `recordMatch`).
 2. Stub clients. Each pinned function has a line-for-line Python model, and
    a stub client stands in for the game: what `GetCurrentRegionName()` and
    `GetPlayerInfoByGUID(guid)` give, and whether the player is in combat.
-   Each case the ticket names is played through the model: out of combat
-   only, a GUID the client no longer knows gives nothing and is asked again
-   at a later login, and at most MAX_RESOLVES GUIDs per login.
+   The stub names only players it has seen this session (`known`), as the
+   client is believed to: a new login starts with a new, empty stub, and a
+   `deferred` GUID is named only from its second ask (the client's answer
+   arriving later; the 71037 event list has no event for it). Each case the
+   ticket and its fix round name is played through the model: out of
+   combat only; a GUID the client does not name gives nothing and goes to
+   the back of the queue; players met this session are asked first and not
+   limited; one retry a few seconds later in the same session; the limits
+   per pass and per login; and more than 100 players the client cannot name
+   never starve a player it can.
 
 The model proves the code as pinned. What the real client gives is the
 owner's check of 2026-11-23 (Forever launch client, US): `GetCurrentRegionName()`
 returned "US" and `GetPlayerInfoByGUID` returned
 "Warlock", "WARLOCK", "Undead", "Scourge", 3, "Tay Soulrend", "", 22. Whether
-the client answers for a GUID it met long ago, and that the eighth value is
-the level, are not yet confirmed ([verify] in lab/addon/README.md).
+the client answers for a GUID it met in an earlier session, whether a second
+ask collects a late answer, and that the eighth value is the level are not
+yet confirmed ([verify] in lab/addon/README.md).
 
 CONSTRUCTED INPUT: every stub value and GUID below is invented; the one
 answer shaped like the owner's is the owner's own test character's name,
@@ -57,28 +66,75 @@ RESOLVE_NAMES = (
     f"function resolveNames ( ) {GATE} "
     'if type ( GetPlayerInfoByGUID ) ~= "function" then return end '
     'local now = nil if type ( time ) == "function" then now = ns . Number ( time ( ) ) end '
+    "local seen , fresh , again , older = { } , { } , { } , { } "
+    "local olderRoom = MAX_RESOLVES - backlogAsked "
     "for _ , entry in pairs ( WowLabCrewDB . players ) do "
-    "if resolveAsked >= MAX_RESOLVES then return end "
     "local guid = nil "
     'if type ( entry ) == "table" and entry . resolved_name == nil then '
     "guid = ns . String ( entry . guid ) end "
-    "if guid ~= nil and resolveTried [ guid ] == nil "
-    'and string . find ( guid , "^Player%-" ) ~= nil then '
-    "resolveTried [ guid ] = true resolveAsked = resolveAsked + 1 "
+    'if guid ~= nil and string . find ( guid , "^Player%-" ) ~= nil then '
+    "local asked = resolveTried [ guid ] local due = asked == nil "
+    "if asked ~= nil and resolveRetried [ guid ] == nil and now ~= nil "
+    "and now - asked >= RETRY_SECONDS then due = true end "
+    "local tried = ns . Number ( entry . resolve_tried_at ) "
+    "if due and resolveSeen [ guid ] == true then seen [ # seen + 1 ] = entry "
+    "elseif due and asked ~= nil then again [ # again + 1 ] = entry "
+    "elseif due and tried == nil then fresh [ # fresh + 1 ] = entry "
+    "elseif due and olderRoom > 0 then local last = older [ # older ] "
+    "if # older < olderRoom or tried < ( ns . Number ( last . resolve_tried_at ) or 0 ) then "
+    "if # older >= olderRoom then older [ # older ] = nil end "
+    "local at = # older + 1 "
+    "while at > 1 and ( ns . Number ( older [ at - 1 ] . resolve_tried_at ) or 0 ) > tried do "
+    "older [ at ] = older [ at - 1 ] at = at - 1 end "
+    "older [ at ] = entry end end end end "
+    "local queue , kinds = { } , { } "
+    "for i = 1 , # seen do queue [ # queue + 1 ] = seen [ i ] kinds [ # queue ] = 1 end "
+    "for i = 1 , # fresh do queue [ # queue + 1 ] = fresh [ i ] kinds [ # queue ] = 2 end "
+    "for i = 1 , # again do queue [ # queue + 1 ] = again [ i ] kinds [ # queue ] = 2 end "
+    "for i = 1 , # older do queue [ # queue + 1 ] = older [ i ] kinds [ # queue ] = 3 end "
+    "local passRoom = MAX_RESOLVES "
+    "for i = 1 , # queue do local entry = queue [ i ] local kind = kinds [ i ] "
+    "local guid = ns . String ( entry . guid ) "
+    "if guid ~= nil and ( kind == 1 or passRoom > 0 ) then "
+    "if kind ~= 1 then passRoom = passRoom - 1 end "
+    "if kind == 3 then backlogAsked = backlogAsked + 1 end "
+    "if resolveTried [ guid ] == nil then resolveTried [ guid ] = now or 0 "
+    "else resolveRetried [ guid ] = true end "
+    "resolveAsked = resolveAsked + 1 "
     "local _ , _ , _ , _ , _ , name , realm , eighth = GetPlayerInfoByGUID ( guid ) "
     "if secret ( name ) or secret ( realm ) or secret ( eighth ) then addSkipped ( ) end "
+    "entry . resolve_tried_at = now "
     'if not secret ( name ) and type ( name ) == "string" and name ~= "" '
     "and name ~= UNKNOWNOBJECT then "
     "entry . resolved_name = ns . String ( name ) entry . resolved_at = now "
+    "entry . resolve_tried_at = nil "
     'if not secret ( realm ) and type ( realm ) == "string" then '
     "entry . resolved_realm = ns . String ( realm ) end "
     'if not secret ( eighth ) and type ( eighth ) == "number" then '
     "entry . resolved_eighth = ns . Number ( eighth ) end end end end end"
 )
 PASS_TAIL = "pcall ( readRegion ) pcall ( resolveNames ) end"
+PVP_PASS_TAIL = "if pvpWon ( ) then pcall ( recordMatch ) pcall ( resolveNames ) end end"
+MEMBER_SEEN = "entry . guid = ns . String ( guid ) resolveSeen [ guid ] = true end"
+ROW_SEEN = 'if type ( score . guid ) == "string" then resolveSeen [ score . guid ] = true end'
 MAX_RESOLVES = 100
-MAX_RESOLVES_DECL = f"local MAX_RESOLVES = {MAX_RESOLVES}"
-SESSION_STATE = ("local resolveTried = { }", "local resolveAsked = 0")
+RETRY_SECONDS = 5
+CONSTANTS = {
+    "MAX_RESOLVES": f"local MAX_RESOLVES = {MAX_RESOLVES}",
+    "RETRY_SECONDS": f"local RETRY_SECONDS = {RETRY_SECONDS}",
+}
+SESSION_STATE = (
+    "local resolveTried = { }",
+    "local resolveRetried = { }",
+    "local resolveSeen = { }",
+    "local resolveAsked = 0",
+    "local backlogAsked = 0",
+)
+
+
+def _stores(text: str, piece: str) -> int:
+    """How many times `piece` is a store (`piece` then `=`, never `==`)."""
+    return len(re.findall(re.escape(piece) + r" = (?!=)", text))
 
 
 def pin_problems(crew: Path = CREW) -> list[str]:
@@ -91,39 +147,52 @@ def pin_problems(crew: Path = CREW) -> list[str]:
     for label, pin in (("readRegion", READ_REGION), ("resolveNames", RESOLVE_NAMES)):
         if g._body(flow, label) != pin:
             problems.append(f"Crew.lua: {label} is not the pinned one")
-        # Defined once, and reached only through the pass's one pcall.
-        if text.count(f" {label} ") != 2 or text.count(f"pcall ( {label} )") != 1:
-            problems.append(f"Crew.lua: {label} is reached other than from the pass")
+    # readRegion from the roster pass only; resolveNames from it and from the
+    # scoreboard pass, each through pcall.
+    if text.count(" readRegion ") != 2 or text.count("pcall ( readRegion )") != 1:
+        problems.append("Crew.lua: readRegion is reached other than from the pass")
+    if text.count(" resolveNames ") != 3 or text.count("pcall ( resolveNames )") != 2:
+        problems.append("Crew.lua: resolveNames is reached other than from the two passes")
     if not g._body(flow, "pass").endswith(PASS_TAIL):
         problems.append("Crew.lua: the pass does not end by asking the region and the names")
-    problems += g._crew_constant_problems(flow, "MAX_RESOLVES", MAX_RESOLVES_DECL)
+    if not g._body(flow, "pvpPass").endswith(PVP_PASS_TAIL):
+        problems.append("Crew.lua: the scoreboard pass does not ask the names after the match")
+    if MEMBER_SEEN not in g._body(flow, "readMember"):
+        problems.append("Crew.lua: a group member's GUID is not marked as met this session")
+    if ROW_SEEN not in g._body(flow, "recordMatch"):
+        problems.append("Crew.lua: a scoreboard row's GUID is not marked as met this session")
+    for name, decl in CONSTANTS.items():
+        problems += g._crew_constant_problems(flow, name, decl)
     for decl in SESSION_STATE:
         if text.count(decl) != 1:
             problems.append(f"Crew.lua: the session state {decl!r} is not declared once")
-    # The two session values change only in resolveNames, never stored in
-    # the book.
+    # The session state: written only where pinned, never stored in the book.
     resolve = g._body(flow, "resolveNames")
-    for name, store in (
-        ("resolveTried", "resolveTried [ guid ] = true"),
-        ("resolveAsked", "resolveAsked = resolveAsked + 1"),
+    for name, writes in (
+        ("resolveTried", {"resolveTried [ guid ]": resolve}),
+        ("resolveRetried", {"resolveRetried [ guid ]": resolve}),
+        ("resolveAsked", {"resolveAsked": resolve}),
+        ("backlogAsked", {"backlogAsked": resolve}),
     ):
-        # Its declaration and its one store, nothing else.
-        stores = re.findall(rf"(?<![\w.]){name}(?: \[ [^]]* \])? = (?!=)", text)
-        if len(stores) != 2 or text.count(store) != 1 or store not in resolve:
+        found = re.findall(rf"(?<![\w.]){name}(?: \[ [^]]* \])? = (?!=)", text)
+        ((piece, body),) = writes.items()
+        if len(found) != 2 or _stores(body, piece) != 1:
             problems.append(f"Crew.lua: {name} is written other than in resolveNames")
+    seen = re.findall(r"(?<![\w.])resolveSeen(?: \[ [^]]* \])? = (?!=)", text)
+    if len(seen) != 3:
+        problems.append("Crew.lua: resolveSeen is written other than where met")
     if "WowLabCrewDB . resolve" in text:
         problems.append("Crew.lua: the session state is stored in the book")
-    # The region and the four name fields are stored only by the pinned two.
-    for stored, owner in (
-        ("WowLabCrewDB . region =", "readRegion"),
-        ("entry . resolved_name =", "resolveNames"),
-        ("entry . resolved_realm =", "resolveNames"),
-        ("entry . resolved_eighth =", "resolveNames"),
-        ("entry . resolved_at =", "resolveNames"),
+    # The region and the name fields are stored only by the pinned two.
+    for stored, owner, count in (
+        ("WowLabCrewDB . region", "readRegion", 1),
+        ("entry . resolved_name", "resolveNames", 1),
+        ("entry . resolved_realm", "resolveNames", 1),
+        ("entry . resolved_eighth", "resolveNames", 1),
+        ("entry . resolved_at", "resolveNames", 1),
+        ("entry . resolve_tried_at", "resolveNames", 2),
     ):
-        # A store, not an `==` test.
-        count = len(re.findall(re.escape(stored) + r"(?!=)", text))
-        if count != 1 or stored not in g._body(flow, owner):
+        if _stores(text, stored) != count or _stores(g._body(flow, owner), stored) != count:
             problems.append(f"Crew.lua: {stored!r} is written other than in {owner}")
     return problems
 
@@ -147,6 +216,16 @@ def test_m21_12_the_migration_is_the_pinned_one() -> None:
     assert g.CREW_PINS_3.pinned["crewMigrate"] == g.CREW_MIGRATE_3
 
 
+def test_m21_12_the_client_has_no_event_for_a_late_answer() -> None:
+    """Why the retry asks again: the launch build's event list has no event
+    that delivers a GUID's name later (fix round 1)."""
+    events = (g.ADDON_ROOT / "forever_api" / "event.txt").read_text(encoding="utf-8").split()
+    # GM_PLAYER_INFO is the GM tools' and UNIT_NAME_UPDATE names a unit
+    # token, not a GUID.
+    assert not [e for e in events if "BY_GUID" in e or e.startswith("GET_PLAYER_INFO")]
+    assert "UNIT_NAME_UPDATE" in events
+
+
 # Constructed: each edit breaks one rule and must fail the pins or Crew.lua's
 # own rules.
 EDITS: dict[str, tuple[str, str]] = {
@@ -155,30 +234,38 @@ EDITS: dict[str, tuple[str, str]] = {
         "    if crewBlocked() then\n        return\n    end\n",
         "local function resolveNames()\n    if not crewOn() then\n        return\n    end\n",
     ),
-    "resolve: no cap": (
-        "        if resolveAsked >= MAX_RESOLVES then\n            return\n        end\n",
-        "",
+    "resolve: no limit per pass": (
+        "        if guid ~= nil and (kind == 1 or passRoom > 0) then\n",
+        "        if guid ~= nil then\n",
     ),
-    "resolve: a GUID asked again in the session": (
-        "            resolveTried[guid] = true\n",
-        "",
+    "resolve: no limit per login": (
+        "    local olderRoom = MAX_RESOLVES - backlogAsked\n",
+        "    local olderRoom = MAX_RESOLVES\n",
+    ),
+    "resolve: asked again at once": (
+        "now - asked >= RETRY_SECONDS then\n",
+        "now - asked >= 0 then\n",
+    ),
+    "resolve: a miss not sent to the back": (
+        "            entry.resolve_tried_at = now\n            if not secret(name)",
+        "            if not secret(name)",
     ),
     "resolve: the name stored untested": (
         '            if not secret(name) and type(name) == "string" and name ~= "" '
         "and name ~= UNKNOWNOBJECT then\n",
         '            if type(name) == "string" then\n',
     ),
-    "resolve: a nil answer stored": (
-        "                entry.resolved_name = ns.String(name)\n",
-        '                entry.resolved_name = ns.String(name) or ""\n',
-    ),
     "resolve: the cap raised": (
         "local MAX_RESOLVES = 100\n",
         "local MAX_RESOLVES = 100000\n",
     ),
-    "resolve: asked outside the pass": (
+    "resolve: asked outside the passes": (
         "    pcall(nearFull)\n",
         "    pcall(nearFull)\n    pcall(resolveNames)\n",
+    ),
+    "resolve: a member not marked as met": (
+        "            resolveSeen[guid] = true\n",
+        "",
     ),
     "region: asked every pass": (
         "    if WowLabCrewDB.region ~= nil then\n        return\n    end\n",
@@ -214,18 +301,25 @@ def _is_secret(value: Any) -> bool:
 
 @dataclass
 class Client:
-    """What the game gives: the region, and GetPlayerInfoByGUID's eight
-    values per GUID it knows now (a GUID it does not know gives nothing)."""
+    """What the game gives in one session: the region, and
+    GetPlayerInfoByGUID's eight values for each GUID it has seen this
+    session (`known`; any other GUID gives nothing). A `deferred` GUID gives
+    nothing at its first ask and its answer from the second on (the
+    client's answer arriving later). A new login is a new Client."""
 
     region: Any = "US"
     known: dict[str, tuple[Any, ...]] = field(default_factory=dict)
+    deferred: dict[str, tuple[Any, ...]] = field(default_factory=dict)
     in_combat: bool = False
     has_info: bool = True
     has_region: bool = True
     asked: list[str] = field(default_factory=list)
 
     def info(self, guid: str) -> tuple[Any, ...]:
+        first = guid not in self.asked
         self.asked.append(guid)
+        if guid in self.deferred:
+            return () if first else self.deferred[guid]
         return self.known.get(guid, ())
 
 
@@ -233,13 +327,16 @@ class Client:
 class Session:
     """One login or /reload: the session state, never saved."""
 
-    tried: set[str] = field(default_factory=set)
-    asked: int = 0
+    tried: dict[str, int] = field(default_factory=dict)  # resolveTried
+    retried: set[str] = field(default_factory=set)  # resolveRetried
+    seen: set[str] = field(default_factory=set)  # resolveSeen
+    asked: int = 0  # resolveAsked
+    backlog: int = 0  # backlogAsked
 
 
 @dataclass
 class Book:
-    """WowLabCrewDB as the two functions touch it."""
+    """WowLabCrewDB as the functions touch it."""
 
     on: bool = True
     region: Any = None
@@ -262,38 +359,104 @@ def read_region(book: Book, c: Client) -> None:
         book.region = region
 
 
-def resolve_names(book: Book, c: Client, s: Session, now: int = 1_800_000_000) -> None:
+def _number(value: Any) -> int | float | None:
+    """ns.Number."""
+    return value if isinstance(value, (int, float)) and not isinstance(value, bool) else None
+
+
+def meet(book: Book, s: Session, key: str, guid: str) -> None:
+    """readMember's or recordMatch's part: the GUID stored and marked as met
+    this session."""
+    book.players.setdefault(key, {"met": 1})["guid"] = guid
+    s.seen.add(guid)
+
+
+def resolve_names(book: Book, c: Client, s: Session, now: int | None = 1_800_000_000) -> None:
     """resolveNames, line for line."""
     if not book.on or c.in_combat:
         return
     if not c.has_info:
         return
+    seen: list[dict[str, Any]] = []
+    fresh: list[dict[str, Any]] = []
+    again: list[dict[str, Any]] = []
+    older: list[dict[str, Any]] = []
+    older_room = MAX_RESOLVES - s.backlog
     for entry in book.players.values():
-        if s.asked >= MAX_RESOLVES:
-            return
         guid = None
         if isinstance(entry, dict) and entry.get("resolved_name") is None:
             got = entry.get("guid")
             guid = got if isinstance(got, str) else None
-        if guid is not None and guid not in s.tried and guid.startswith("Player-"):
-            s.tried.add(guid)
+        if guid is not None and guid.startswith("Player-"):
+            asked = s.tried.get(guid)
+            due = asked is None
+            if (
+                asked is not None
+                and guid not in s.retried
+                and now is not None
+                and now - asked >= RETRY_SECONDS
+            ):
+                due = True
+            tried = _number(entry.get("resolve_tried_at"))
+            if due and guid in s.seen:
+                seen.append(entry)
+            elif due and asked is not None:
+                again.append(entry)
+            elif due and tried is None:
+                fresh.append(entry)
+            elif due and older_room > 0:
+                assert tried is not None
+                last = older[-1] if older else None
+                if len(older) < older_room or (
+                    last is not None and tried < (_number(last.get("resolve_tried_at")) or 0)
+                ):
+                    if len(older) >= older_room:
+                        older.pop()
+                    at = len(older)
+                    while at > 0 and (_number(older[at - 1].get("resolve_tried_at")) or 0) > tried:
+                        at -= 1
+                    older.insert(at, entry)
+    queue = [(e, 1) for e in seen] + [(e, 2) for e in fresh + again] + [(e, 3) for e in older]
+    pass_room = MAX_RESOLVES
+    for entry, kind in queue:
+        guid = entry.get("guid")
+        guid = guid if isinstance(guid, str) else None
+        if guid is not None and (kind == 1 or pass_room > 0):
+            if kind != 1:
+                pass_room -= 1
+            if kind == 3:
+                s.backlog += 1
+            if guid not in s.tried:
+                s.tried[guid] = now or 0
+            else:
+                s.retried.add(guid)
             s.asked += 1
             values = (*c.info(guid), None, None, None, None, None, None, None, None)
             name, realm, eighth = values[5], values[6], values[7]
             if _is_secret(name) or _is_secret(realm) or _is_secret(eighth):
                 book.skipped += 1
+            entry["resolve_tried_at"] = now
             if not _is_secret(name) and isinstance(name, str) and name != "" and name != UNKNOWN:
                 entry["resolved_name"] = name
                 entry["resolved_at"] = now
+                entry["resolve_tried_at"] = None
                 if not _is_secret(realm) and isinstance(realm, str):
                     entry["resolved_realm"] = realm
-                if not _is_secret(eighth) and isinstance(eighth, (int, float)):
+                if not _is_secret(eighth) and _number(eighth) is not None:
                     entry["resolved_eighth"] = eighth
+            # Lua stores nil as "no key".
+            for k in [k for k, v in entry.items() if v is None]:
+                del entry[k]
 
 
 TAY_GUID = "Player-9998-0000000E"
 # The owner's check of 2026-11-23, as GetPlayerInfoByGUID returned it.
 TAY_INFO = ("Warlock", "WARLOCK", "Undead", "Scourge", 3, "Tay Soulrend", "", 22)
+T = 1_800_000_000
+
+
+def _info(name: str) -> tuple[Any, ...]:
+    return (*TAY_INFO[:5], name, "", 10)
 
 
 def _book(*guids: str) -> Book:
@@ -301,31 +464,35 @@ def _book(*guids: str) -> Book:
 
 
 def test_m21_12_the_owners_answer_is_kept_as_given() -> None:
-    book = Book(players={"Tay-Soulrend": {"met": 1, "guid": TAY_GUID}})
+    book = Book()
+    session = Session()
+    meet(book, session, "Tay-Soulrend", TAY_GUID)
     client = Client(known={TAY_GUID: TAY_INFO})
-    resolve_names(book, client, Session(), now=1_800_000_000)
+    resolve_names(book, client, session, now=T)
     assert book.players["Tay-Soulrend"] == {
         "met": 1,
         "guid": TAY_GUID,
         "resolved_name": "Tay Soulrend",
         "resolved_realm": "",
         "resolved_eighth": 22,
-        "resolved_at": 1_800_000_000,
+        "resolved_at": T,
     }
     read_region(book, client)
     assert book.region == "US"
 
 
 def test_m21_12_nothing_is_asked_in_combat() -> None:
-    book = Book(players={"Tay-Soulrend": {"guid": TAY_GUID}})
+    book = Book()
+    session = Session()
+    meet(book, session, "Tay-Soulrend", TAY_GUID)
     client = Client(known={TAY_GUID: TAY_INFO}, in_combat=True)
-    resolve_names(book, client, Session())
+    resolve_names(book, client, session)
     read_region(book, client)
     assert client.asked == [] and book.region is None
     assert "resolved_name" not in book.players["Tay-Soulrend"]
     # Out of combat again: the next pass asks.
     client.in_combat = False
-    resolve_names(book, client, Session())
+    resolve_names(book, client, session)
     assert book.players["Tay-Soulrend"]["resolved_name"] == "Tay Soulrend"
 
 
@@ -337,50 +504,98 @@ def test_m21_12_a_book_that_is_off_is_not_touched() -> None:
     assert client.asked == [] and book.region is None
 
 
-def test_m21_12_an_unknown_guid_is_kept_empty_and_asked_at_a_later_login() -> None:
+def test_m21_12_a_miss_keeps_its_time_and_is_asked_once_more_later_the_same_session() -> None:
     book = _book("Player-9998-00000001")
-    client = Client()
-    first = Session()
-    resolve_names(book, client, first)
-    entry = book.players["Invented0-Second"]
-    assert client.asked == ["Player-9998-00000001"]
-    assert "resolved_name" not in entry and "resolved_at" not in entry
-    # The same session does not ask it again, however many passes run.
-    resolve_names(book, client, first)
-    assert client.asked == ["Player-9998-00000001"]
-    # A later login (a new session) asks again; the client knows it now.
-    client.known["Player-9998-00000001"] = (*TAY_INFO[:5], "Invented Second", "", 10)
-    resolve_names(book, client, Session())
-    assert client.asked == ["Player-9998-00000001"] * 2
-    assert entry["resolved_name"] == "Invented Second"
-
-
-def test_m21_12_at_most_the_cap_is_asked_per_login() -> None:
-    guids = [f"Player-9998-{i:08X}" for i in range(MAX_RESOLVES + 50)]
-    book = _book(*guids)
-    client = Client(
-        known={g: (*TAY_INFO[:5], f"Name{i} Second", "", 5) for i, g in enumerate(guids)}
-    )
+    client = Client(deferred={"Player-9998-00000001": _info("Late Answer")})
     session = Session()
+    resolve_names(book, client, session, now=T)
+    entry = book.players["Invented0-Second"]
+    assert entry == {"met": 1, "guid": "Player-9998-00000001", "resolve_tried_at": T}
+    # A pass too soon does not ask again.
+    resolve_names(book, client, session, now=T + RETRY_SECONDS - 1)
+    assert client.asked == ["Player-9998-00000001"]
+    # One more ask at a pass a few seconds later collects the late answer.
+    resolve_names(book, client, session, now=T + RETRY_SECONDS)
+    assert client.asked == ["Player-9998-00000001"] * 2
+    assert entry["resolved_name"] == "Late Answer" and "resolve_tried_at" not in entry
+
+
+def test_m21_12_a_miss_is_retried_once_only_per_session() -> None:
+    book = _book("Player-9998-00000002")
+    client = Client()  # never names it
+    session = Session()
+    for step in range(5):
+        resolve_names(book, client, session, now=T + step * 60)
+    assert client.asked == ["Player-9998-00000002"] * 2
+    assert book.players["Invented0-Second"]["resolve_tried_at"] == T + 60
+    # The next login asks it again, as one of the oldest misses.
+    resolve_names(book, Client(), Session(), now=T + 3600)
+    assert book.players["Invented0-Second"]["resolve_tried_at"] == T + 3600
+
+
+def test_m21_12_more_than_the_cap_of_players_it_cannot_name_never_starve_a_new_one() -> None:
+    """Fix round 1: 150 players met in earlier sessions that the client
+    cannot name, at every login; a player met this session is named in the
+    same pass, and one never asked comes before the old misses."""
+    old = [f"Player-9998-{i:08X}" for i in range(150)]
+    book = _book(*old)
+    for login in range(3):
+        client = Client()  # a cold start: it knows no one
+        session = Session()
+        now = T + login * 86_400
+        resolve_names(book, client, session, now=now)  # 15 s after entering the world
+        new_guid = f"Player-9997-{login:08X}"
+        meet(book, session, f"Newcomer{login}-Second", new_guid)
+        client.known[new_guid] = _info(f"Newcomer{login} Second")
+        resolve_names(book, client, session, now=now + 1)  # the next roster pass
+        assert book.players[f"Newcomer{login}-Second"]["resolved_name"] == f"Newcomer{login} Second"
+        # Never more than the cap of old misses in one login, and never a
+        # player twice in a pass.
+        assert session.backlog <= MAX_RESOLVES
+        assert len(client.asked) == len(set(client.asked))
+
+
+def test_m21_12_the_old_misses_are_asked_oldest_first_across_logins() -> None:
+    """Each login asks at most the cap of old misses, the oldest asks
+    first, so every one of them is asked again within a few logins."""
+    old = [f"Player-9998-{i:08X}" for i in range(250)]
+    book = _book(*old)
+    resolve_names(book, Client(), Session(), now=T)  # first pass: 100 never asked
+    resolve_names(book, Client(), Session(), now=T + 10)  # another login: 100 more
+    resolve_names(book, Client(), Session(), now=T + 20)  # the last 50 never asked, then 50 old
+    times = sorted(e["resolve_tried_at"] for e in book.players.values())
+    assert times.count(T + 20) == 100 and times.count(T + 10) == 100 and times.count(T) == 50
+    # The next login takes the 50 asked at T first, then the oldest of T + 10.
+    client = Client()
+    resolve_names(book, client, Session(), now=T + 30)
+    asked_at = [e for e in book.players.values() if e["resolve_tried_at"] == T + 30]
+    assert len(client.asked) == MAX_RESOLVES and len(asked_at) == MAX_RESOLVES
+    assert not [e for e in book.players.values() if e["resolve_tried_at"] == T]
+
+
+def test_m21_12_players_met_this_session_are_not_limited() -> None:
+    """A full battleground's scoreboard: every row met now is asked in the
+    one pass, beyond the limit, and before the never-asked."""
+    book = _book(*[f"Player-9998-{i:08X}" for i in range(MAX_RESOLVES)])
+    client = Client()
+    session = Session()
+    rows = [f"Player-9997-{i:08X}" for i in range(80)]
+    for i, guid in enumerate(rows):
+        meet(book, session, f"Row{i}-Second", guid)
+        client.known[guid] = _info(f"Row{i} Second")
     resolve_names(book, client, session)
-    resolve_names(book, client, session)  # a second pass in the same login
-    assert len(client.asked) == MAX_RESOLVES
-    resolved = [e for e in book.players.values() if "resolved_name" in e]
-    assert len(resolved) == MAX_RESOLVES
-    # The next login asks the rest, and never one already named.
-    resolve_names(book, client, Session())
-    assert len(client.asked) == MAX_RESOLVES + 50
-    assert len(set(client.asked)) == len(client.asked)
-    assert all("resolved_name" in e for e in book.players.values())
+    assert client.asked[:80] == rows
+    assert len(client.asked) == 80 + MAX_RESOLVES
+    assert all(book.players[f"Row{i}-Second"].get("resolved_name") for i in range(80))
 
 
 @pytest.mark.parametrize(
     ("answer", "stored", "skipped"),
     [
-        ((*TAY_INFO[:5], SECRET, "", 22), {}, 1),
-        ((*TAY_INFO[:5], "", "", 22), {}, 0),
-        ((*TAY_INFO[:5], UNKNOWN, "", 22), {}, 0),
-        ((*TAY_INFO[:5], None, None, None), {}, 0),
+        ((*TAY_INFO[:5], SECRET, "", 22), {"resolve_tried_at": 1}, 1),
+        ((*TAY_INFO[:5], "", "", 22), {"resolve_tried_at": 1}, 0),
+        ((*TAY_INFO[:5], UNKNOWN, "", 22), {"resolve_tried_at": 1}, 0),
+        ((*TAY_INFO[:5], None, None, None), {"resolve_tried_at": 1}, 0),
         (
             (*TAY_INFO[:5], "Tay Soulrend", SECRET, SECRET),
             {"resolved_name": "Tay Soulrend", "resolved_at": 1},
@@ -407,7 +622,7 @@ def test_m21_12_what_is_kept_of_an_answer(
     book = _book("Player-9998-00000002")
     resolve_names(book, Client(known={"Player-9998-00000002": answer}), Session(), now=1)
     entry = book.players["Invented0-Second"]
-    assert {k: v for k, v in entry.items() if k.startswith("resolved_")} == stored
+    assert {k: v for k, v in entry.items() if k.startswith("resolve")} == stored
     assert book.skipped == skipped
 
 
