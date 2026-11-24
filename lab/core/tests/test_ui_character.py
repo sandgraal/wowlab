@@ -560,7 +560,8 @@ def test_the_tab_runs_only_the_four_char_reads(server: Any, timed: Path, tmp_pat
         if request["body"] is None:
             assert request["url"].startswith("/api/commands"), request
         else:
-            assert tuple(request["body"]["command"]) in READS | {("tree",)}, request
+            assert tuple(request["body"]["command"]) in READS | PLANS | {("tree",)}, request
+            assert "confirm" not in request["body"], request
     # All five are read commands the server offers, not excluded and not a
     # confirm-step command.
     offered = {tuple(c["path"]): c for c in scenario["commands"]["commands"]}

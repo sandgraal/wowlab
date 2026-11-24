@@ -53,7 +53,7 @@ link_app = typer.Typer(
 char_app.add_typer(
     link_app,
     name="link",
-    short_help="Addresses you paste for a character (ForeverTwinking, Warcraft Logs).",
+    short_help="Addresses you paste for a character, shown as links.",
 )
 
 

@@ -2117,9 +2117,10 @@
   ];
   const saved = { params: null, pending: null, seq: 0 };
 
+  // Not a live region: the tab's status line (`charSay`) is its only one.
   function savedSay(text, isError) {
     const node = byId("char-saved-status");
-    announce(node, text, Boolean(isError));
+    node.textContent = text;
     node.classList.toggle("error", Boolean(isError));
   }
 
