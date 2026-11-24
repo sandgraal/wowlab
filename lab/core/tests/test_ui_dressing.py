@@ -166,6 +166,8 @@ def test_the_link_is_static_markup_with_no_href(server: Any) -> None:
         "char-profile-raiderio",
         "char-guild-link",
     ]
+    # M21-06 added See my look beside the dressing-room link, graded in
+    # test_ui_purist.py.
     saved = ["char-saved-ft-profile", "char-saved-ft-build", "char-saved-wcl-report"]
     twink = ["char-twink-planner", "char-twink-wowhead"]
 
@@ -175,12 +177,13 @@ def test_the_link_is_static_markup_with_no_href(server: Any) -> None:
     assert anchors == [
         *(static(i) for i in profiles),
         static("char-dressing-link"),
+        static("char-purist-link"),
         *(static(i) for i in saved),
         *(static(f"char-gear-wowhead-{n}", "gear-name gear-wowhead") for n in range(20)),
         *(static(i) for i in twink),
     ]
     body = _page(server).body.decode("utf-8")
-    assert body.count('target="_blank" rel="noopener noreferrer"') == 31
+    assert body.count('target="_blank" rel="noopener noreferrer"') == 32
     assert "See it dressed</a>" in body
 
 

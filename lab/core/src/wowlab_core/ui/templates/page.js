@@ -1561,6 +1561,7 @@
   function clearCharacter() {
     for (const id of CHAR_BOXES) byId(id).replaceChildren();
     clearDressing();
+    clearPurist();
     clearSim();
     clearSaved();
     clearProfiles();
@@ -1605,6 +1606,7 @@
     drawCharSources(report);
     drawGear(report);
     drawDressing(report.dressing);
+    drawPurist(report.purist);
     byId("char-sim-button").hidden = false;
     drawSaved(report.saved_links, params);
     drawProfiles(report.links, report.saved_links);
@@ -2152,6 +2154,42 @@
     ids.className = "dressing-ids";
     box.append(make("span", "Item ids: "), ids, copyButton(text, "Copy the item ids"));
     box.hidden = false;
+  }
+
+  // ─── See my look: the character on Purist (M21-06) ───
+  // `purist` is `{url, site_name, left_out}` or `{why}`. The address becomes
+  // the static link's href only when `outsideAddress` passes it for the
+  // site "purist" of the allowlist; anything else leaves the link hidden
+  // with no href. What the address leaves out, or why there is none, is a
+  // line under About this data.
+  function clearPurist() {
+    const look = byId("char-purist-link");
+    look.removeAttribute("href");
+    look.hidden = true;
+    look.title = "";
+    look.textContent = "See my look";
+    byId("char-purist-note").textContent = "";
+  }
+
+  function drawPurist(purist) {
+    clearPurist();
+    if (!purist || typeof purist !== "object") return;
+    const note = byId("char-purist-note");
+    if (typeof purist.url !== "string") {
+      if (typeof purist.why === "string") note.textContent = "No See my look link: " + visible(purist.why) + ".";
+      return;
+    }
+    const address = outsideAddress(purist.url, "purist");
+    if (address === null) {
+      note.textContent = "The look's address in the report is not one this page links to, so no link is shown.";
+      return;
+    }
+    const look = byId("char-purist-link");
+    pointLink(look, address);
+    look.title = "Opens Purist in a new tab; wowlab sends nothing";
+    look.hidden = false;
+    const left = (Array.isArray(purist.left_out) ? purist.left_out : []).filter((w) => typeof w === "string");
+    if (left.length) note.textContent = "See my look leaves out " + left.map(visible).join("; ") + ".";
   }
 
   // ─── addresses the player saved (M21-03) ───
@@ -3855,6 +3893,8 @@
           ),
           // A backup's record of a folder with no lab record (M18-11).
           held: Array.isArray(report.records_in_backups) ? objects(report.records_in_backups) : [],
+          // The flavor folders, for the Addons view's reads (M22-16).
+          flavors: objects(report.flavors).map((f) => f.folder).filter((f) => typeof f === "string" && f !== ""),
         };
         hub.note = reply.error ? shown(reply.error) : "";
         // Each card fails on its own: an error in one is said in that card,
@@ -4206,6 +4246,7 @@
       }
       loadHub();
     }
+    if (name === "addons") alone(sourcesSay, () => loadSources());
     if (name === "gaps") loadGaps();
     if (name === "crew") loadCrew();
     if (name === "lookup") byId("lookup-query").focus();
@@ -5850,6 +5891,7 @@
       drawGear(gear);
       drawDressing(gear.dressing);
       drawProfiles(gear.links, []);
+      drawPurist(gear.purist);
     } else {
       const why = hubStr(report.gear_absent) ? shown(report.gear_absent) : "Your backup holds no gear for this character.";
       byId("char-gear").replaceChildren(charLine(why, "char-none"));
@@ -6546,6 +6588,227 @@
     inputs.push({ param: param, input: input, box: box });
     return box;
   }
+
+  // ─── where each addon came from (M22-16) ───
+  // Per flavor the hub's report lists, the `sources` of `addons list
+  // --json`: the records of the addon managers wowlab reads (the WowUp
+  // app's), joined to the addon folders of their own game folder by the
+  // command. Every judgement (which game folder WowUp manages, a record out
+  // of date, an update, a folder not in the list) is the command's;
+  // the page lays it out. Read the first time the Addons view is shown,
+  // after the patch-day reads, one run at a time. Nothing here edits
+  // anything, and no address in a record becomes a link.
+
+  const sources = {
+    asked: null, // the reads, once; asked again after the hub failed
+    flavors: [], // per flavor folder, what `addons list` said
+  };
+
+  function sourcesSay(text, isError) {
+    const node = byId("sources-status");
+    announce(node, text, Boolean(isError));
+    node.classList.toggle("error", Boolean(isError));
+  }
+
+  function loadSources() {
+    if (!sources.asked) {
+      sources.asked = (async () => {
+        await loadHub();
+        if (!hub.report) {
+          // The hub's own line says why; the next visit asks again.
+          sources.asked = null;
+          return;
+        }
+        await (patchDay.reading || Promise.resolve());
+        const folders = [...new Set(hub.report.flavors || [])];
+        if (!folders.length) {
+          sourcesSay("wowlab found no flavor folder to read.", false);
+          return;
+        }
+        sourcesSay("Reading where your addons came from…", false);
+        const read = [];
+        for (const folder of folders) {
+          const reply = await runJson(["addons", "list"], { flavor: folder }, false, true);
+          read.push(sourcesRead(folder, reply));
+        }
+        sources.flavors = read;
+        sourcesSay("", false);
+        drawSources();
+      })();
+    }
+    return sources.asked;
+  }
+
+  function sourcesRead(folder, reply) {
+    const data = reply.data && typeof reply.data === "object" ? reply.data.sources : null;
+    if (!data || typeof data !== "object" || !Array.isArray(data.files) || !Array.isArray(data.records) ||
+        !Array.isArray(data.folders) || !Array.isArray(data.scopes)) {
+      return {
+        flavor: folder,
+        error: reply.error ? shown(reply.error) : "wowlab addons list printed something this page does not know.",
+        files: [], scopes: [], records: [], folders: [],
+      };
+    }
+    return {
+      flavor: folder,
+      error: "",
+      files: data.files.map((f) => (f && typeof f === "object" ? f : {})),
+      // One per file, in file order: never filtered, so the two stay paired.
+      scopes: data.scopes.map((s) => (s && typeof s === "object" ? s : {})),
+      records: objects(data.records).filter((r) => typeof r.record_id === "string"),
+      folders: objects(data.folders).filter((f) => typeof f.folder === "string"),
+    };
+  }
+
+  function sourcesLine(box, className, text) {
+    const line = make("p", text);
+    line.className = className;
+    box.appendChild(line);
+  }
+
+  // `n` and a word, the word made plural with an s.
+  function sourcesCount(n, word) {
+    return n === null ? "?" + word + "s" : grouped(n) + word + (n === 1 ? "" : "s");
+  }
+
+  // The present folders' versions, each with the folders that carry it.
+  function sourcesVersions(versions) {
+    const all = objects(versions).filter((v) => typeof v.version === "string");
+    if (all.length === 1 && texts(all[0].folders).length === 1) return "the TOC here says " + visible(all[0].version);
+    return "the TOCs here say " + all.map((v) => {
+      const folders = texts(v.folders);
+      const more = folders.length - 1;
+      return visible(v.version) + " (" + visible(folders[0] || "") + (more > 0 ? " and " + more + " more" : "") + ")";
+    }).join(", ");
+  }
+
+  // One record as a line: its name, the site, the version WowUp installed,
+  // and the update WowUp knew of, that WowUp leaves it alone, or why the
+  // record is out of date.
+  function sourcesRecord(record) {
+    const item = make("li");
+    item.className = "sources-item";
+    const name = hubStr(record.name) ? record.name : record.record_id;
+    item.appendChild(make("strong", visible(name)));
+    const words = [];
+    if (record.provider_known === false) words.push("WowUp does not know where it came from");
+    else if (hubStr(record.provider)) words.push("from " + visible(record.provider));
+    const installed = hubStr(record.installed_version);
+    const stale = record.stale === true;
+    if (installed) words.push((stale ? "WowUp installed " : "version ") + visible(installed));
+    if (stale) {
+      const why = texts(record.stale_why);
+      const parts = [];
+      if (why.includes("version_differs") && objects(record.toc_versions).length) {
+        parts.push(sourcesVersions(record.toc_versions));
+      }
+      if (why.includes("folders_missing") && texts(record.folders_missing).length) {
+        parts.push("not here: " + texts(record.folders_missing).map(visible).join(", "));
+      }
+      words.push("WowUp's record is out of date" + (parts.length ? " (" + parts.join("; ") + ")" : ""));
+    } else if (record.ignored === true) {
+      words.push("WowUp is set to leave it alone");
+    } else if (record.update_available === true && hubStr(record.latest_version)) {
+      words.push("update " + visible(record.latest_version) + " available when WowUp last checked");
+    }
+    item.appendChild(make("span", (words.length ? ": " + words.join(", ") : "") + "."));
+    const here = texts(record.folders_here);
+    if (here.length) {
+      const folders = make("span", " Folders: " + here.map(visible).join(", ") + ".");
+      folders.className = "sources-folders";
+      item.appendChild(folders);
+    }
+    return item;
+  }
+
+  function sourcesList(box, what, items) {
+    if (!items.length) return;
+    sourcesLine(box, "sources-what", what);
+    const list = make("ul");
+    list.className = "sources-list";
+    list.append(...items);
+    box.appendChild(list);
+  }
+
+  // Which game folders WowUp's list is for, said first, as the command
+  // reports it.
+  function sourcesScope(item, read, file, scope) {
+    const others = objects(scope.others).filter((o) => typeof o.folder === "string")
+      .map((o) => shown(o.folder) + " (" + sourcesCount(hubNum(o.records), " addon") + ")").join("; ");
+    const hinted = read.folders.filter((f) => objects(f.same_name_as).length > 0).length;
+    const shares = hinted ? ", and " + sourcesCount(hinted, " folder") + " here " +
+      (hinted === 1 ? "shares" : "share") + " a name with one of them" : "";
+    const byName = hubNum(scope.by_name) || 0;
+    if (scope.manages === false && byName === 0) {
+      sourcesLine(item, "sources-clear", "WowUp does not manage this game folder" +
+        (others ? "; its list is for " + others : "; its list holds no addon") + shares + ".");
+      return;
+    }
+    if (byName > 0) {
+      const why = file.settings_state === "missing" ? "its settings file is not there"
+        : file.settings_state === "unreadable"
+          ? "its settings file could not be read" + (hubStr(file.settings_error) ? ": " + visible(file.settings_error) : "")
+          : sourcesCount(byName, " record") + " " + (byName === 1 ? "names" : "name") +
+            " a game folder its settings do not list";
+      sourcesLine(item, "sources-note", "wowlab cannot tell which game folder WowUp's list is for (" + why +
+        "), so its records are matched to these addons by folder name.");
+    }
+    if (others) sourcesLine(item, "sources-note", "WowUp's list also holds addons for " + others + shares + ".");
+  }
+
+  function sourcesBlock(read, several) {
+    const item = make("li");
+    if (several) item.appendChild(make("h4", visible(read.flavor)));
+    if (read.error) sourcesLine(item, "sources-error", read.error);
+    let anyRead = false;
+    let managed = false;
+    read.files.forEach((file, at) => {
+      if (file.state === "read") {
+        anyRead = true;
+        const scope = read.scopes[at] || {};
+        if (scope.manages !== false) managed = true;
+        sourcesScope(item, read, file, scope);
+        const n = hubNum(file.written_ns);
+        const held = Array.isArray(file.records) ? file.records.length : null;
+        sourcesLine(item, "sources-clear",
+          "WowUp's list" + (n === null ? "" : ", last written " + localTime(n)) + ": " +
+          (held === 1 ? "one addon" : (held === null ? "?" : grouped(held)) + " addons") + ".");
+      } else if (file.state === "unreadable") {
+        sourcesLine(item, "sources-error", "wowlab could not read WowUp's list: " +
+          (hubStr(file.error) ? visible(file.error) : "no reason given") + ".");
+      }
+    });
+    if (!read.error && !anyRead && !read.files.some((f) => f.state === "unreadable")) {
+      sourcesLine(item, "sources-clear",
+        "wowlab found no WowUp list on this computer, so it cannot tell where these addons came from.");
+    }
+    const records = read.records.filter((r) => r.installation !== "other_folder");
+    sourcesList(item, "In WowUp's list",
+      records.filter((r) => texts(r.folders_here).length > 0).map(sourcesRecord));
+    sourcesList(item, "In WowUp's list, with none of their folders here",
+      records.filter((r) => texts(r.folders_here).length === 0).map(sourcesRecord));
+    const loose = read.folders.filter((f) => f.unclaimed === true).map((f) => visible(f.folder));
+    if (loose.length) {
+      sourcesLine(item, "sources-what",
+        "Not in WowUp's list, the only addon manager's list wowlab reads (" + grouped(loose.length) + ")");
+      sourcesLine(item, "sources-loose", loose.join(", "));
+    }
+    if (anyRead && managed) {
+      sourcesLine(item, "sources-note",
+        "An out-of-date record means the addon changed after WowUp last wrote its list, by hand or by another app.");
+    }
+    return item;
+  }
+
+  function drawSources() {
+    const flavor = byId("hub-flavor").value;
+    const several = sources.flavors.length > 1;
+    byId("sources-lines").replaceChildren(
+      ...sources.flavors.filter((r) => !flavor || "f:" + r.flavor === flavor).map((r) => sourcesBlock(r, several)),
+    );
+  }
+
+  byId("hub-flavor").addEventListener("change", () => drawSources());
 
   // ─── the confirm step (M14-02) ───
 

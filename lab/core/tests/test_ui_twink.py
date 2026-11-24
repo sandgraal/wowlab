@@ -174,8 +174,9 @@ def test_the_links_are_static_markup_with_no_href() -> None:
     # address `outsideAddress` returned for that link's own site (the
     # dressing room, the three saved links, the planner, the Wowhead link,
     # and M21-04's `pointOutside`, which every profile, guild and gear-row
-    # link goes through; test_ui_char_links.py).
-    assert script.count("pointLink(") == 6
+    # link goes through; test_ui_char_links.py; and since M21-06 See my
+    # look, graded in test_ui_purist.py).
+    assert script.count("pointLink(") == 7
     assert script.count("function pointLink(link, checked) {") == 1
     for call, checked in (
         ("pointLink(link, checked);", "const checked = dressingAddress(dressing.url);"),

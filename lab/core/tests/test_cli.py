@@ -34,6 +34,7 @@ import httpx
 import platformdirs
 import psutil
 import pytest
+from _user_dirs import no_wowup_list
 from pydantic import BaseModel
 from typer.testing import CliRunner
 
@@ -120,6 +121,7 @@ def _recorded(request: httpx.Request) -> httpx.Response:
 @pytest.fixture(autouse=True)
 def user_data(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     redirected = tmp_path / "userdata"
+    no_wowup_list(monkeypatch, tmp_path / "wowup")
     monkeypatch.setattr(platformdirs, "user_data_path", lambda *a, **k: redirected / "wowlab")
     return redirected / "wowlab"
 

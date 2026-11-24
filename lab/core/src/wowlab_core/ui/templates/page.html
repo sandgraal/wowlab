@@ -110,6 +110,7 @@
 <p class="char-dress">
 <a id="char-dressing-link" class="dressing-link" target="_blank" rel="noopener noreferrer" hidden>See it dressed</a>
 <span id="char-dressing-short" class="dressing-short"></span>
+<a id="char-purist-link" class="dressing-link" target="_blank" rel="noopener noreferrer" hidden>See my look</a>
 <button id="char-sim-button" class="sim-button" type="button" aria-controls="char-sim" aria-expanded="false" hidden>Copy for WoWSims</button>
 </p>
 <div id="char-sim" class="char-sim" hidden>
@@ -222,13 +223,14 @@
 </section>
 </div>
 <details class="about"><summary>About this data</summary>
-<p class="intro">One character as the lab-addon last saved it: the file it wrote at logout or <code>/reload</code>, never the session in progress, beside the key bindings and macros the client last wrote, and its earlier saves that your backups hold. This page reads with <code>wowlab char list</code>, <code>wowlab char gear</code>, <code>wowlab char binds</code>, <code>wowlab char macros</code> and <code>wowlab char history</code>, or, for a character kept only in a backup, <code>wowlab char kept</code>, and, when you click <strong>Copy for WoWSims</strong>, <code>wowlab char sim-export</code>, and, when you ask the Twink panel, <code>wowlab char twink</code>. The one change it makes is to <strong>Your links</strong>: adding or forgetting one runs <code>wowlab char link set</code> or <code>wowlab char link forget</code>, which show their plan first and, on Confirm, write only wowlab's own <code>links.json</code> in its data folder, never the game folder. Nothing else runs. The professions are the ones <code>wowlab char list --summary</code> read for All characters. An item's name is the bracketed text of its item link as the game saved it, and nothing is fetched, except that the Twink panel's first run for a game version downloads that version's item tables from wago.tools once. <strong>See it dressed</strong> opens an outside dressing room in your own browser, and only when you click it; this page makes no request to it. <strong>Copy for WoWSims</strong> shows the character as the text WoWSims' Addon Import reads, to copy and paste there yourself; wowlab sends nothing to WoWSims. The same way as See it dressed, only when you click: the <strong>Profiles</strong> row opens the character's page on Blizzard's armory and the Journey Companion's lookup, and the ForeverTwinking page you saved; the guild's name opens its armory page; each item's name in the gear list opens its Wowhead page (its <strong>Details</strong> button opens the rest); and the Twink panel's links and Your links open Wowhead, ForeverTwinking and Warcraft Logs. A link that cannot be made says why.</p>
+<p class="intro">One character as the lab-addon last saved it: the file it wrote at logout or <code>/reload</code>, never the session in progress, beside the key bindings and macros the client last wrote, and its earlier saves that your backups hold. This page reads with <code>wowlab char list</code>, <code>wowlab char gear</code>, <code>wowlab char binds</code>, <code>wowlab char macros</code> and <code>wowlab char history</code>, or, for a character kept only in a backup, <code>wowlab char kept</code>, and, when you click <strong>Copy for WoWSims</strong>, <code>wowlab char sim-export</code>, and, when you ask the Twink panel, <code>wowlab char twink</code>. The one change it makes is to <strong>Your links</strong>: adding or forgetting one runs <code>wowlab char link set</code> or <code>wowlab char link forget</code>, which show their plan first and, on Confirm, write only wowlab's own <code>links.json</code> in its data folder, never the game folder. Nothing else runs. The professions are the ones <code>wowlab char list --summary</code> read for All characters. An item's name is the bracketed text of its item link as the game saved it, and nothing is fetched, except that the Twink panel's first run for a game version downloads that version's item tables from wago.tools once. <strong>See it dressed</strong> opens an outside dressing room in your own browser, and only when you click it; this page makes no request to it. <strong>Copy for WoWSims</strong> shows the character as the text WoWSims' Addon Import reads, to copy and paste there yourself; wowlab sends nothing to WoWSims. The same way as See it dressed, only when you click: the <strong>Profiles</strong> row opens the character's page on Blizzard's armory and the Journey Companion's lookup, and the ForeverTwinking page you saved; the guild's name opens its armory page; each item's name in the gear list opens its Wowhead page (its <strong>Details</strong> button opens the rest); and the Twink panel's links and Your links open Wowhead, ForeverTwinking and Warcraft Logs. <strong>See my look</strong> opens the character on Purist, an outfit builder, the same way: its address holds the character's name, race, body type, class, barber-shop choices and equipped item ids, after a <code>#</code>, so your browser does not send them to Purist; its page reads them there. A link that cannot be made says why.</p>
 <div id="char-about" class="char-about">
 <div id="char-sources"></div>
 <div id="char-dressing" class="char-dressing" hidden>
 <h3>See it dressed</h3>
 <p id="char-dressing-note" class="dressing-note"></p>
 <div id="char-dressing-items" class="dressing-items" hidden></div>
+<p id="char-purist-note" class="dressing-note"></p>
 </div>
 <section id="char-history-panel" class="char-about-part" aria-labelledby="char-history-title">
 <h3 id="char-history-title">Every save</h3>
@@ -358,8 +360,13 @@
 <ul id="patch-day-lines" class="patch-day-lines"></ul>
 <p id="patch-day-status" role="status"></p>
 </div>
+<div id="sources" class="panel sources" role="region" aria-labelledby="sources-heading">
+<h3 id="sources-heading">Where they came from</h3>
+<ul id="sources-lines" class="sources-lines"></ul>
+<p id="sources-status" role="status"></p>
+</div>
 <details class="about"><summary>About this data</summary>
-<p class="patch-day-intro">Addons the game may skip, and saved data no installed addon declares, as wowlab reads them from your files. Reads only. Pick a line to see its file in the Explorer.</p>
+<p class="patch-day-intro">Addons the game may skip, and saved data no installed addon declares, as wowlab reads them from your files. Reads only. Pick a line to see its file in the Explorer. Where they came from is what the WowUp app recorded when it installed each addon into this game folder, read with <code>wowlab addons list</code>: the site, the version, an update WowUp knew of when it last checked, and whether its record still matches the folders here. WowUp keeps one list for every game folder it manages; a record of another game folder is never counted as this folder's. WowUp's own files are read, never changed, and nothing is fetched. An addon not in WowUp's list was installed by hand or by an app wowlab does not read.</p>
 </details>
 </section>
 <section id="live-view" role="tabpanel" aria-labelledby="sec-live" hidden>

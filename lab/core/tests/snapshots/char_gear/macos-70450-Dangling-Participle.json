@@ -395,6 +395,16 @@
       }
     }
   ],
+  "purist": {
+    "link": "purist_look",
+    "site": "purist",
+    "site_name": "Purist",
+    "label": "Purist",
+    "url": "https://purist.pages.dev/#2|Dangling%20Participle|2.0.1.1.8.forever|0.0.0||6096,4916,3363,3291,1427,281269,1377,6520,5778",
+    "left_out": [
+      "the face and hair: the record holds no barber-shop visit"
+    ]
+  },
   "flavor_folder": "_classic_beta_",
   "dressing": {
     "url": "https://www.wowhead.com/forever/dressing-room#fM80R0a89c877Qz2L808zTO808zSo87czpEj808AK808558084K808LE808zHl87s",

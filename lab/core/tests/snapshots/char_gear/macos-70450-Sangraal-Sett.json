@@ -492,6 +492,14 @@
       }
     }
   ],
+  "purist": {
+    "link": "purist_look",
+    "site": "purist",
+    "site_name": "Purist",
+    "label": "Purist",
+    "url": "https://purist.pages.dev/#2|Sangraal%20Sett|5.0.1.1.9.forever|0.0.0|58:918,59:923,60:941,61:956,62:980,534:5330,563:6287|9749,6539,9747,14114,14122,6541,5071,2310,2632,15969",
+    "left_out": []
+  },
   "flavor_folder": "_classic_beta_",
   "dressing": {
     "url": "https://www.wowhead.com/forever/dressing-room#fV80s0f89c877QDU808MZV8cPh87mmqn8cPK8z2P8cPK8z2K8cPK8MZc8cPQ8mqG8cPK8PN8cPh808mKu8cPn808zyp87c",
