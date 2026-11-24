@@ -441,7 +441,7 @@ def _crew_version(opened: _Opened) -> str | None:
     return opened.where[0].version if opened.where is not None else None
 
 
-def _profile_links(p: crewdb.CrewRow, version: str | None) -> list[crewdb.ProfileLink]:
+def _crew_profile_links(p: crewdb.CrewRow, version: str | None) -> list[crewdb.ProfileLink]:
     """A player's profile links (M21-05): the armory, the Journey Companion
     and Raider.IO, each an address or why there is none, from the names and
     region the row holds. A row with no second name (a key whose second part
@@ -454,7 +454,7 @@ def _linked(rows: Sequence[crewdb.CrewRow], opened: _Opened) -> list[crewdb.Crew
     for those rows only, and only for output that shows them: about a
     third of a millisecond a player."""
     version = _crew_version(opened)
-    return [r.model_copy(update={"links": _profile_links(r, version)}) for r in rows]
+    return [r.model_copy(update={"links": _crew_profile_links(r, version)}) for r in rows]
 
 
 def _rereader(opened: _Opened) -> Callable[[], bytes] | None:

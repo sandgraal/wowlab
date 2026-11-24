@@ -1003,11 +1003,12 @@ def test_the_panels_request_only_read_commands_cross_capture(
     for path in READS:
         assert offered[path]["excluded"] is None and not offered[path].get("confirm"), path
         assert "yes" not in {p["name"] for p in offered[path]["params"]}, path
-    # The controls the tab draws: the item names and the link's copy button
-    # of the gear; the keys and macros panels draw none.
+    # The controls the tab draws: each item's Details button (the name is
+    # its Wowhead link since M21-04) and the link's copy button of the gear;
+    # the keys and macros panels draw none.
     view = out["steps"][-1]
     kinds = {b.split(" ")[0] for b in view["buttons"]}
-    assert kinds == {"button.gear-name", "button.copy"}, view["buttons"]
+    assert kinds == {"button.gear-more", "button.copy"}, view["buttons"]
 
 
 def _character_section() -> str:

@@ -1564,6 +1564,7 @@
     clearPurist();
     clearSim();
     clearSaved();
+    clearProfiles();
     character.params = null;
     clearTwink();
     character.kept = null;
@@ -1608,6 +1609,7 @@
     drawPurist(report.purist);
     byId("char-sim-button").hidden = false;
     drawSaved(report.saved_links, params);
+    drawProfiles(report.links, report.saved_links);
   }
 
   // One fact; `title`, when given, is the exact value behind the one shown.
@@ -1812,6 +1814,7 @@
   function drawGear(report) {
     const body = byId("char-gear");
     body.replaceChildren();
+    const itemLinks = gearLinkPool(report.item_links);
     const bySlot = new Map();
     for (const slot of report.slots) if (slot && typeof slot.slot === "number") bySlot.set(slot.slot, { slot: slot, filled: true });
     for (const slot of report.empty_slots) {
@@ -1828,7 +1831,7 @@
       for (const n of shown) {
         const row = bySlot.get(n);
         if (!row) continue;
-        list.appendChild(row.filled ? gearItem(row.slot) : emptyItem(row.slot));
+        list.appendChild(row.filled ? gearItem(row.slot, itemLinks) : emptyItem(row.slot));
       }
       if (list.children.length) grid.appendChild(list);
     });
@@ -1858,22 +1861,24 @@
     return li;
   }
 
-  // A filled slot, and its detail, drawn hidden and shown by a click on the
-  // item's name.
-  function gearItem(slot) {
+  // A filled slot, and its detail, drawn hidden and shown by a click on its
+  // Details button. The item's name is its Wowhead link when there is one
+  // (M21-04), else plain text; `itemLinks` is drawGear's `gearLinkPool`.
+  function gearItem(slot, itemLinks) {
     const li = make("li");
     li.className = "gear-row";
     const main = make("div");
     main.className = "gear-main";
     const words = make("div");
     words.className = "gear-words";
-    const name = make("button", visible(String(slot.name)));
-    name.type = "button";
-    name.className = "gear-name";
+    const shownName = visible(String(slot.name));
+    const linked = itemLinks.take(slot);
+    const name = linked.anchor || make("span");
+    name.textContent = shownName;
+    name.className = linked.anchor ? "gear-name gear-wowhead" : "gear-name";
     const colour = colourClass(slot.colour);
     if (colour) name.classList.add(colour);
-    name.setAttribute("aria-expanded", "false");
-    if (typeof slot.quality === "string" && slot.quality) name.title = visible(slot.quality);
+    name.title = typeof slot.quality === "string" && slot.quality ? visible(slot.quality) : "";
     words.append(gearSlotLine(slot), name);
     main.appendChild(words);
     const level = make("span");
@@ -1882,16 +1887,63 @@
       level.append(unseen("item level "), make("span", String(slot.item_level)));
     }
     main.appendChild(level);
-    const detail = gearDetail(slot);
-    name.addEventListener("click", () => {
+    const more = make("button", "Details");
+    more.type = "button";
+    more.className = "gear-more";
+    more.setAttribute("aria-expanded", "false");
+    more.setAttribute("aria-label", "Details of " + shownName);
+    main.appendChild(more);
+    const detail = gearDetail(slot, linked.why);
+    more.addEventListener("click", () => {
       detail.hidden = !detail.hidden;
-      name.setAttribute("aria-expanded", detail.hidden ? "false" : "true");
+      more.setAttribute("aria-expanded", detail.hidden ? "false" : "true");
     });
     li.append(main, detail);
     return li;
   }
 
-  function gearDetail(slot) {
+  // ─── the gear rows' Wowhead links (M21-04) ───
+  // `char gear --json`'s `item_links`: each filled slot's Wowhead page, by
+  // slot number. Each is drawn in one of page.html's static links (the page
+  // makes no link of its own), handed out in the order the rows are drawn,
+  // and only for an address `outsideAddress` passes for Wowhead; else the
+  // name stays plain text and the row's detail says why.
+  const GEAR_LINK_COUNT = 20;
+  const gearLinks = [];
+  for (let at = 0; at < GEAR_LINK_COUNT; at += 1) gearLinks.push(byId("char-gear-wowhead-" + at));
+
+  function gearLinkPool(given) {
+    const bySlot = new Map();
+    for (const row of Array.isArray(given) ? given : []) {
+      if (row && typeof row === "object" && typeof row.slot === "number" && row.link && typeof row.link === "object") {
+        if (!bySlot.has(row.slot)) bySlot.set(row.slot, row.link);
+      }
+    }
+    for (const anchor of gearLinks) {
+      if (!anchor) continue;
+      hideOutside(anchor);
+      anchor.textContent = "";
+    }
+    let next = 0;
+    return {
+      // `{anchor, why}`: a static link pointed at the slot's page, or null
+      // and why not (null when the report says nothing of this slot).
+      take(slot) {
+        const link = bySlot.get(slot.slot);
+        if (!link) return { anchor: null, why: null };
+        if (typeof link.url !== "string") {
+          return { anchor: null, why: typeof link.why === "string" && link.why ? link.why : "no reason given" };
+        }
+        const anchor = next < gearLinks.length ? gearLinks[next] : null;
+        if (!anchor) return { anchor: null, why: "this page draws at most " + GEAR_LINK_COUNT + " item links" };
+        if (!pointOutside(anchor, link.url, "wowhead")) return { anchor: null, why: NOT_LINKED };
+        next += 1;
+        return { anchor: anchor, why: null };
+      },
+    };
+  }
+
+  function gearDetail(slot, noLink) {
     const box = make("div");
     box.className = "gear-detail";
     box.hidden = true;
@@ -1910,6 +1962,7 @@
     charFact(list, "Gems", idList(slot.gem_ids));
     charFact(list, "Bonus ids", idList(slot.bonus_ids));
     if (slot.crafter_removed === true) charFact(list, "Crafter", "the crafter's GUID was removed from this link");
+    if (typeof noLink === "string" && noLink) charFact(list, "Wowhead", "no link: " + visible(noLink));
     list.appendChild(make("dt", "Link"));
     const link = make("dd");
     const raw = make("code", visible(String(slot.raw_link)));
@@ -2217,6 +2270,8 @@
       link.hidden = false;
     }
     byId("char-saved-none").hidden = any;
+    // The Profiles row's ForeverTwinking link follows what is saved (M21-04).
+    drawProfileFt(list);
   }
 
   // The plan run of one change; Confirm is offered only when the server
@@ -2307,6 +2362,103 @@
     byId(slot.id + "-forget").addEventListener("click", () =>
       savedPlan(["char", "link", "forget"], { site: slot.site, kind: slot.kind }),
     );
+  }
+
+  // ─── profile and guild links (M21-04) ───
+  // `char gear --json`'s `links` (and `char kept`'s gear): the character's
+  // armory page, the Journey Companion's lookup and, once the ruleset is
+  // known, Raider.IO, each `{link, label, url}` or `{link, label, why}`, and
+  // the guild with its armory page. Each address goes to its own static link
+  // of page.html, only when `outsideAddress` passes it for that link's site;
+  // a link with none says why, beside the row. The ForeverTwinking link is
+  // the address the player saved (`saved_links`), never one built here.
+  const PROFILE_SLOTS = [
+    { link: "armory_character", site: "blizzard", id: "char-profile-armory" },
+    { link: "journey", site: "journey", id: "char-profile-journey" },
+    { link: "raiderio", site: "raiderio", id: "char-profile-raiderio" },
+  ];
+  const NOT_LINKED = "its address is not one this page links to";
+
+  function hideOutside(anchor) {
+    anchor.removeAttribute("href");
+    anchor.hidden = true;
+  }
+
+  // Points one static link at an address `outsideAddress` passes for `site`
+  // and shows it; else hides it with no href. True when it is drawn.
+  function pointOutside(anchor, url, site) {
+    const checked = outsideAddress(url, site);
+    if (checked === null) {
+      hideOutside(anchor);
+      return false;
+    }
+    pointLink(anchor, checked);
+    anchor.hidden = false;
+    return true;
+  }
+
+  function clearProfiles() {
+    for (const slot of PROFILE_SLOTS) hideOutside(byId(slot.id));
+    hideOutside(byId("char-profile-ft"));
+    byId("char-profiles-why").textContent = "";
+    byId("char-profiles").hidden = true;
+    const guild = byId("char-guild-link");
+    hideOutside(guild);
+    guild.textContent = "";
+    byId("char-guild-text").textContent = "";
+    byId("char-guild").hidden = true;
+  }
+
+  // The saved ForeverTwinking page of the character, from `saved_links`.
+  function drawProfileFt(rows) {
+    const anchor = byId("char-profile-ft");
+    hideOutside(anchor);
+    const list = Array.isArray(rows) ? rows.filter((r) => r && typeof r === "object") : [];
+    const row = list.find((r) => r.site === "forevertwinking" && r.kind === "profile");
+    if (row && typeof row.url === "string") pointOutside(anchor, row.url, "forevertwinking");
+  }
+
+  function drawProfiles(made, savedRows) {
+    clearProfiles();
+    const given = charObj(made);
+    const list = Array.isArray(given.profiles) ? given.profiles.filter((r) => r && typeof r === "object") : [];
+    // Each reason once, with the links it holds back ("Armory and Journey
+    // Companion: no link (the character's region is not known)").
+    const missing = new Map();
+    for (const slot of PROFILE_SLOTS) {
+      const row = list.find((r) => r.link === slot.link);
+      if (!row) continue;
+      const label = typeof row.label === "string" && row.label ? visible(row.label) : slot.link;
+      let why = null;
+      if (typeof row.url === "string") {
+        if (pointOutside(byId(slot.id), row.url, slot.site)) continue;
+        why = NOT_LINKED;
+      } else {
+        why = typeof row.why === "string" && row.why ? visible(row.why) : "no reason given";
+      }
+      if (!missing.has(why)) missing.set(why, []);
+      missing.get(why).push(label);
+    }
+    drawProfileFt(savedRows);
+    byId("char-profiles-why").textContent = Array.from(missing, ([why, labels]) => labels.join(" and ") + ": no link (" + why + ")").join("; ");
+    byId("char-profiles").hidden = false;
+    drawGuild(given);
+  }
+
+  // The guild line: shown only when the record names a guild; its name is
+  // the armory link, or plain text with why there is none.
+  function drawGuild(given) {
+    const name = typeof given.guild === "string" && given.guild ? visible(given.guild) : null;
+    if (name === null) return;
+    const link = charObj(given.guild_link);
+    const anchor = byId("char-guild-link");
+    byId("char-guild").hidden = false;
+    if (typeof link.url === "string" && pointOutside(anchor, link.url, "blizzard")) {
+      anchor.textContent = name;
+      return;
+    }
+    const why = typeof link.url === "string" ? NOT_LINKED : typeof link.why === "string" && link.why ? visible(link.why) : "no reason given";
+    byId("char-guild-text").textContent = name + " (no link: " + why + ")";
   }
 
   // ─── Copy for WoWSims (M21-08) ───
@@ -5842,6 +5994,7 @@
       drawCharSources(gear);
       drawGear(gear);
       drawDressing(gear.dressing);
+      drawProfiles(gear.links, []);
       drawPurist(gear.purist);
     } else {
       const why = hubStr(report.gear_absent) ? shown(report.gear_absent) : "Your backup holds no gear for this character.";
