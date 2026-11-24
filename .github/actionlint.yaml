@@ -1,0 +1,12 @@
+# actionlint's configuration (the CI `harness` job and the pre-commit hook
+# both read it from here).
+#
+# release.yml's three Windows jobs are paused with `if: false` (ADR-0031
+# amendment of 2026-11-24, owner decision; M22-24), which actionlint reports
+# as a constant condition. That report is the one ignored, in release.yml
+# only; tests/scripts/test_release.py pins that `if: false` appears on
+# exactly those three jobs. Delete this file when Windows resumes.
+paths:
+  .github/workflows/release.yml:
+    ignore:
+      - 'constant expression "false" in condition'

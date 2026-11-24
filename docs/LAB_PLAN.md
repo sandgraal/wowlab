@@ -2084,6 +2084,15 @@ yet, and a fixture produced by the thing under test proves nothing).
   A Windows or macOS regression is now found after merge, by the nightly run
   or by an on-demand run on the branch before it.
 
+  *Amended 2026-11-24 (owner decision, ADR-0031 amendment of 2026-11-24,
+  M22-24):* Windows is paused. `windows.yml` has no nightly trigger and
+  `windows-app.yml` no pull-request trigger; both run only when started by
+  hand, and `release.yml` builds no Windows app (its three Windows jobs
+  carry `if: false`). A Windows regression is not looked for until Windows
+  resumes; the library keeps its Windows paths and `skipif` tests, and what
+  the paused suite last found is in `docs/DATA_SOURCES.md`, "The paused
+  Windows suite".
+
   *Amended 2026-11-18 (owner decisions, M15-21; the measurements are in
   `docs/handoffs/test-time-2026-11.md`):* what runs when.
   - A pull request and a push to `main` run `ci.yml`. Its "Lint,
@@ -2109,7 +2118,8 @@ yet, and a fixture produced by the thing under test proves nothing).
   - Every night at 09:17 UTC, off-hours for the owner, `nightly.yml` runs
     the whole Linux suite, both passes with the mutation probes, and
     `windows.yml` and `macos.yml` run the Lab suite on those platforms
-    (no longer after each merge); `perf-nightly.yml` runs at 08:47 UTC.
+    (no longer after each merge; `windows.yml` paused since 2026-11-24, see
+    the amendment of that date below); `perf-nightly.yml` runs at 08:47 UTC.
     The desktop suites and the nightly one also run on demand for a branch.
   - A release tag runs everything in `release.yml`, unchanged.
   - Locally, `make test` runs both passes with the probes, `make test-fast`

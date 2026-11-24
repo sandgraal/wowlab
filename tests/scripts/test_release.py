@@ -121,7 +121,8 @@ def test_the_token_is_read_only_except_on_the_release_job() -> None:
     # M17-08 added the macOS app's build and smoke jobs, read-only like the
     # rest, and `app_release`, which attaches the app to the published release
     # (tests/packaging/test_macos_app.py grades the three). M17-09 added the
-    # Windows app's three, the same way (tests/packaging/test_windows_app.py).
+    # Windows app's three, the same way (tests/packaging/test_windows_app.py),
+    # paused since 2026-11-24 but kept, permissions and all (WINDOWS_PAUSED).
     assert set(jobs) == {
         "version",
         "test",
@@ -181,7 +182,11 @@ def test_every_publish_waits_for_the_release_environment() -> None:
     for name in ("app_release", "windows_app_release"):
         attach = jobs[name]
         assert "release" in attach["needs"]
-        assert "if" not in attach  # the implicit success(): only after `release` succeeded
+        if name in WINDOWS_PAUSED:
+            # Paused (M22-24): it never runs, whatever `release` did.
+            assert attach["if"] is False
+        else:
+            assert "if" not in attach  # the implicit success(): only after `release` succeeded
         assert attach["permissions"] == {
             "contents": "write",
             "id-token": "write",
@@ -189,6 +194,102 @@ def test_every_publish_waits_for_the_release_environment() -> None:
         }
     data = _workflow()
     assert data.get("on", data.get(True)) == {"push": {"tags": ["v*"]}}
+
+
+# ─── Windows, paused ──────────────────────────────────────────────────────────
+# ADR-0031 amendment of 2026-11-24 (owner decision; M22-24): a release builds
+# no Windows app. The three Windows jobs stay in release.yml with `if: false`;
+# resuming is deleting those three lines and emptying this set.
+WINDOWS_PAUSED = frozenset({"windows_app", "windows_app_smoke", "windows_app_release"})
+
+
+def test_the_windows_jobs_are_paused_and_no_other_job_is() -> None:
+    jobs = _jobs()
+    assert {n for n, j in jobs.items() if j.get("if") is False} == WINDOWS_PAUSED
+    text = WORKFLOW.read_text(encoding="utf-8")
+    assert text.count("\n    if: false\n") == len(WINDOWS_PAUSED)
+    assert "PAUSED since 2026-11-24 (ADR-0031 amendment of 2026-11-24" in text
+    # The actionlint ignore below would also let a constant `if` on a step
+    # through, so no step carries an `if` at all (none did before the pause).
+    assert [(job, step.get("name")) for job, step in _steps() if "if" in step] == []
+    # actionlint calls a constant condition an error; the one ignore that
+    # lets `if: false` through is scoped to release.yml and to that message.
+    config = yaml.safe_load((ROOT / ".github" / "actionlint.yaml").read_text(encoding="utf-8"))
+    assert config == {
+        "paths": {
+            ".github/workflows/release.yml": {
+                "ignore": ['constant expression "false" in condition'],
+            },
+        },
+    }
+
+
+def test_the_release_notes_and_install_guide_say_windows_is_not_supported() -> None:
+    notes = TEMPLATE.read_text(encoding="utf-8")
+    assert "Windows is not supported for now" in notes
+    assert "this release has no Windows app" in notes
+    # No Windows zip is offered for this release, and none to verify.
+    assert "windows-x64" not in notes
+    assert "## The Windows app" not in notes
+    install = (ROOT / "docs" / "INSTALL.md").read_text(encoding="utf-8")
+    assert "**Windows is not supported for now**" in install
+    assert "Releases after\nv0.3.0 come with no Windows app." in install
+
+
+def _would_run(jobs: dict[str, Any]) -> set[str]:
+    """The jobs a `v*` tag push runs when every job succeeds: a job with
+    `if: false` never runs, and a job none of whose `needs` is skipped runs
+    under the implicit success(). Any other `if` would need GitHub's
+    expression engine, so it fails the test rather than being guessed."""
+    ran: dict[str, bool] = {}
+
+    def runs(name: str) -> bool:
+        if name not in ran:
+            job = jobs[name]
+            condition = job.get("if", True)
+            assert condition in (True, False), (name, condition)
+            needs = job.get("needs", [])
+            needs = [needs] if isinstance(needs, str) else needs
+            ran[name] = bool(condition) and all(runs(n) for n in needs)
+        return ran[name]
+
+    return {name for name in jobs if runs(name)}
+
+
+def test_a_release_run_builds_no_windows_asset() -> None:
+    # The release's plan, worked out from release.yml as data: what a pushed
+    # `v*` tag runs, with every job green (the repository has no other release
+    # dry run; the attach job's own steps are run against a stand-in `gh` in
+    # tests/packaging/test_macos_app.py, which leaves a release holding the
+    # wheel, the sdist, SHA256SUMS and the macOS zip only).
+    jobs = _jobs()
+    running = _would_run(jobs)
+    assert running == {
+        "version",
+        "test",
+        "build",
+        "smoke",
+        "release",
+        "app",
+        "app_smoke",
+        "app_release",
+        "pypi",
+    }
+    assert not running & WINDOWS_PAUSED
+    for name in running:
+        job = jobs[name]
+        assert "windows" not in str(job["runs-on"]), name
+        for step in job["steps"]:
+            uses = step.get("uses", "")
+            if uses.startswith(("actions/upload-artifact@", "actions/download-artifact@")):
+                assert step["with"]["name"] != "windows-app", name
+            if uses.startswith("actions/attest-build-provenance@"):
+                assert "windows" not in str(step["with"]), name
+            # Nothing that runs names the Windows zip in a command; only
+            # app_release's OTHER_ZIP env names it, to check a zip a past
+            # release may hold.
+            assert "windows-x64" not in step.get("run", ""), name
+    assert {n for n in running if "windows-x64" in str(jobs[n].get("env", {}))} == {"app_release"}
 
 
 def test_every_action_is_pinned_to_a_commit() -> None:
@@ -271,7 +372,11 @@ def test_the_version_check_gates_every_other_job() -> None:
         assert jobs[name]["needs"] == "version", name
     assert jobs["smoke"]["needs"] == ["version", "build"]
     for name in jobs:
-        assert "if" not in jobs[name], name
+        if name in WINDOWS_PAUSED:
+            # Paused (M22-24): `if: false` only ever skips; it gates nothing open.
+            assert jobs[name]["if"] is False, name
+        else:
+            assert "if" not in jobs[name], name
     # The tagged commit is on main: a release is built from reviewed code only.
     runs = [s.get("run", "") for s in version["steps"]]
     assert 'git merge-base --is-ancestor "$GITHUB_SHA" origin/main' in runs
