@@ -2759,7 +2759,7 @@
     return objects(report.keys).filter((row) => {
       if (onlyDisagreeing && row.disagrees !== true) return false;
       if (!needle) return true;
-      const hay = [row.key, row.command, row.does, ...texts(row.sources)]
+      const hay = [row.key, row.command, row.command_label, row.does, ...texts(row.sources)]
         .filter((s) => typeof s === "string")
         .join("\n")
         .toLowerCase();
@@ -2816,6 +2816,11 @@
     key.className = "key-key";
     const command = make("td", visible(String(row.command)));
     command.className = "key-command";
+    // The game's own name for the command (M22-18), from the report; a
+    // command the game's interface does not have (an addon's) is marked by
+    // its class, and its `does` says so in the report's words.
+    if (typeof row.command_label === "string") command.appendChild(make("small", visible(row.command_label)));
+    if (row.client_command === false) tr.classList.add("key-not-client");
     const slot = make("td", typeof row.slot === "number" ? String(row.slot) : "-");
     slot.className = "key-slot";
     if (typeof row.page_note === "string") slot.title = visible(row.page_note);
@@ -2927,15 +2932,29 @@
       plural(m.bytes, "byte", "bytes");
     if (m.complete === false) facts += " (the file ends before this macro's END)";
     card.appendChild(charLine(facts, "macro-facts"));
-    // The body, one element a line, as text.
+    // The body, one element a line, as text. A line a finding is about is
+    // marked, with the finding's words as its tooltip (M22-18): body line k
+    // is line `m.line + 1 + k` of the file.
     const lines = texts(m.body_lines);
+    const flagged = new Map();
+    for (const f of objects(m.findings)) {
+      if (typeof f.line !== "number" || typeof m.line !== "number") continue;
+      const at = f.line - m.line - 1;
+      if (at < 0) continue;
+      const said = visible(String(f.detail));
+      flagged.set(at, flagged.has(at) ? flagged.get(at) + "\n" + said : said);
+    }
     const body = make("div");
     body.className = "macro-body";
-    for (const text of lines) {
+    lines.forEach((text, at) => {
       const one = make("code", visible(text));
       one.className = "macro-line";
+      if (flagged.has(at)) {
+        one.classList.add("macro-line-finding");
+        one.title = flagged.get(at);
+      }
       body.appendChild(one);
-    }
+    });
     if (!lines.length) body.appendChild(charLine("no body lines", "char-none"));
     card.append(body, placementBox(m.placement, keysIncomplete));
     const found = objects(m.findings);
@@ -4093,6 +4112,183 @@
     byId("tab-account").focus();
   });
 
+  // ─── Seen by Spy (M22-01) ───
+
+  // What the Spy addon saved, from `spy list --json`: its search, filters
+  // and order are the command's own options, so the matching and the order
+  // are Python's. A row opens what `spy show --json` prints (its `lines`),
+  // sent the row's key as an argument. Read only: nothing here writes.
+  // Every name, guild and place is other people's text: it reaches the page
+  // only as text, through `visible()`, never in an attribute, a class or an
+  // id, and no link or address is built from it.
+  const spySeen = { listSeq: 0, showSeq: 0, searchTimer: null, read: false };
+  const SPY_FILTER = [["", "Everyone"], ["enemies", "Enemies"], ["kos", "Kill on sight"]];
+  const SPY_SORT = [["last", "Last seen, newest first"], ["name", "By name"], ["level", "Highest level first"]];
+  const SPY_COLUMNS = ["Player", "Who", "Guild", "Last seen", "Place Spy last recorded", "Seen by"];
+  fillSelect(byId("spy-filter"), SPY_FILTER);
+  fillSelect(byId("spy-sort"), SPY_SORT);
+
+  function spySay(text, isError) {
+    const node = byId("spy-status");
+    announce(node, text, Boolean(isError));
+    node.classList.toggle("error", Boolean(isError));
+  }
+
+  function spyParams() {
+    const params = {};
+    const search = byId("spy-search").value;
+    if (search.trim() !== "") params.search = search;
+    const filter = byId("spy-filter").value;
+    if (filter === "enemies") params.enemies = true;
+    if (filter === "kos") params.kos_only = true;
+    params.sort = byId("spy-sort").value || "last";
+    return params;
+  }
+
+  function spyWho(p) {
+    const level = hubNum(p.level);
+    const parts = [
+      level === null ? null : "level " + level + (p.is_guess === true ? "?" : ""),
+      hubStr(p.race) ? visible(p.race) : null,
+      crewClass(p.class_token),
+    ].filter(Boolean);
+    const side = hubStr(p.faction) ? visible(p.faction) : null;
+    const enemy = p.is_enemy === true ? "hostile when Spy last looked" : null;
+    const marks = [p.kos === true ? "kill on sight" : null, p.ignored === true ? "ignored" : null];
+    return [parts.join(" "), side, enemy, ...marks].filter(Boolean).join(", ") || NOT_RECORDED;
+  }
+
+  function spyWhere(p) {
+    const zone = hubStr(p.zone) ? visible(p.zone) : "";
+    const sub = hubStr(p.sub_zone) ? visible(p.sub_zone) : "";
+    return [zone, sub].filter(Boolean).join(": ") || NOT_RECORDED;
+  }
+
+  function spySeenBy(p) {
+    const source = p.source && typeof p.source === "object" ? p.source : {};
+    const character = hubStr(source.character) ? source.character : "";
+    return character ? visible(character.split("/").pop()) : NOT_RECORDED;
+  }
+
+  function spyRow(p) {
+    const tr = make("tr");
+    tr.className = "hub-row";
+    const name = make("td");
+    const open = make("button", visible(p.key));
+    open.type = "button";
+    open.className = "hub-open";
+    open.title = "Show everything Spy saved about this player";
+    name.appendChild(open);
+    tr.appendChild(name);
+    const cells = [
+      spyWho(p),
+      hubStr(p.guild) ? visible(p.guild) : "none",
+      crewDay(p.time) || NOT_RECORDED,
+      spyWhere(p),
+      spySeenBy(p),
+    ];
+    for (const text of cells) tr.appendChild(make("td", text));
+    tr.addEventListener("click", () => openSpyPlayer(p.key));
+    return tr;
+  }
+
+  async function loadSpy() {
+    const seq = ++spySeen.listSeq;
+    spySay("Reading Spy's saved data…", false);
+    const reply = await runJson(["spy", "list"], spyParams(), true);
+    if (seq !== spySeen.listSeq) return;
+    const report = reply.data;
+    const box = byId("spy-table");
+    const warnings = byId("spy-warnings");
+    if (!report || typeof report !== "object" || !Array.isArray(report.players) || typeof report.words !== "string") {
+      box.replaceChildren();
+      box.hidden = true;
+      warnings.replaceChildren();
+      warnings.hidden = true;
+      spySay(reply.error ? shown(reply.error) : "Spy's list came back in a shape this page does not know.", true);
+      return;
+    }
+    spySeen.read = true;
+    // The version warnings and the caveat on shared rows, then the standing
+    // notes under the panel, as the command gives them.
+    const said = [...(Array.isArray(report.warnings) ? report.warnings : []), report.caveat]
+      .filter((w) => typeof w === "string");
+    warnings.replaceChildren(...said.map((w) => make("li", visible(w))));
+    warnings.hidden = said.length === 0;
+    byId("spy-notes").replaceChildren(...(Array.isArray(report.notes) ? report.notes : [])
+      .filter((n) => typeof n === "string").map((n) => make("li", visible(n))));
+    const players = report.players.filter((p) => p && typeof p.key === "string");
+    const total = hubNum(report.total);
+    if (players.length === 0) {
+      box.replaceChildren();
+      box.hidden = true;
+      if (reply.error) spySay(shown(reply.error), true);
+      else spySay(total ? "No row matches." : visible(report.words), false);
+      return;
+    }
+    const table = make("table");
+    table.className = "char-table hub crew";
+    const caption = make("caption", "Players Spy saw");
+    caption.className = "unseen";
+    table.appendChild(caption);
+    const head = make("thead");
+    const tr = make("tr");
+    for (const label of SPY_COLUMNS) {
+      const th = make("th", label);
+      th.scope = "col";
+      tr.appendChild(th);
+    }
+    head.appendChild(tr);
+    table.appendChild(head);
+    const body = make("tbody");
+    for (const p of players) body.appendChild(spyRow(p));
+    table.appendChild(body);
+    box.replaceChildren(table);
+    box.hidden = false;
+    const n = players.length;
+    const all = total === null ? n : total;
+    if (reply.error) {
+      spySay(shown(reply.error), true);
+    } else {
+      // `total` counts rows, one per character that saw a player, as the
+      // command's own match line does.
+      spySay(n === all ? visible(report.words) : "Showing " + n + " of " + pluralWord(all, " row") + ".", false);
+    }
+  }
+
+  async function openSpyPlayer(key) {
+    const seq = ++spySeen.showSeq;
+    byId("spy-player").hidden = false;
+    byId("spy-player-title").textContent = visible(key);
+    const lines = byId("spy-player-lines");
+    lines.replaceChildren(make("li", "Reading…"));
+    const reply = await runJson(["spy", "show"], { name: key }, true);
+    if (seq !== spySeen.showSeq) return;
+    const report = reply.data;
+    const said = report && Array.isArray(report.lines) ? report.lines.filter((l) => typeof l === "string") : null;
+    if (!said) {
+      lines.replaceChildren(make("li", reply.error ? shown(reply.error) : "This player's entry came back in a shape this page does not know."));
+      return;
+    }
+    lines.replaceChildren(...said.map((line) => make("li", visible(line.trim()))));
+    byId("spy-player-title").focus();
+  }
+
+  function spyAgain() {
+    if (spySeen.read) loadSpy();
+  }
+
+  byId("spy-show").addEventListener("click", () => loadSpy());
+  byId("spy-filter").addEventListener("change", () => spyAgain());
+  byId("spy-sort").addEventListener("change", () => spyAgain());
+  byId("spy-search").addEventListener("input", () => {
+    if (spySeen.searchTimer !== null) clearTimeout(spySeen.searchTimer);
+    spySeen.searchTimer = setTimeout(() => {
+      spySeen.searchTimer = null;
+      spyAgain();
+    }, 300);
+  });
+
   // ─── the crew book (M19-06, docs/LAB_PLAN.md §20.4) ───
   // The players the lab-addon's crew book keeps, from `crew list --json`:
   // its search, rating filter and order are the command's own options, so
@@ -4119,20 +4315,29 @@
     key: null, // the stored key of the player shown
     pending: null, // the plan Confirm would run: { command, params, token }
     searchTimer: null,
+    // The Matches filter just changed (M22-03): the next read sends no order,
+    // so the command uses that view's own, and the Order box then shows it.
+    viewOrder: false,
   };
   const CREW_RATED = [["", "Everyone"], ["good", "Rated good"], ["bad", "Rated bad"], ["any", "Rated either way"]];
   const CREW_SORT = [
     ["last", "Last grouped, newest first"], ["met", "Most groups first"], ["name", "By name"],
     ["faced", "Most matches against you first"], ["allied", "Most matches with you first"],
+    ["world", "Latest open-world fight first"],
+    ["deaths", "Most killed by them"], ["team_losses", "Most team losses to them"],
   ];
   // `crew list --faced` and `--allied` (M20-09): players met in a match.
   // `crew list --world` (M20-18): players met in the open world, from a combat log.
+  // `crew list --nemeses` and `--rivals` (M22-03): your nemeses (by killing
+  // blows), and rival teams (by battleground and arena results).
   const CREW_PVP = [
     ["", "Everyone"], ["faced", "Against you in a match"], ["allied", "With you in a match"],
-    ["world", "Met in the open world"],
+    ["world", "Met in the open world"], ["nemeses", "Your nemeses"], ["rivals", "Rival teams"],
   ];
   const CREW_RATE = [["good", "good"], ["bad", "bad"], ["none", "none (take it away)"]];
-  const CREW_COLUMNS = ["Player", "Class", "Groups", "Last grouped", "Last instance", "Your rating", "Your note"];
+  const CREW_COLUMNS = [
+    "Player", "Class", "Record against them", "Groups", "Last grouped", "Last instance", "Your rating", "Your note",
+  ];
 
   function fillSelect(select, choices) {
     select.replaceChildren();
@@ -4183,6 +4388,20 @@
     return visible(text.charAt(0).toUpperCase() + text.slice(1).toLowerCase());
   }
 
+  // The record against them (M22-03), as `crew list --json` adds it up,
+  // its two parts apart: killing blows each way, then team results; "none"
+  // with no fight kept.
+  function crewRecord(record) {
+    const r = record && typeof record === "object" ? record : {};
+    const fights = hubNum(r.fights);
+    if (fights === null || fights === 0) return "none";
+    const me = r.personal && typeof r.personal === "object" ? r.personal : {};
+    const team = r.team && typeof r.team === "object" ? r.team : {};
+    return pluralWord(fights, " fight") +
+      "; they killed you " + (hubNum(me.deaths) || 0) + ", you killed them " + (hubNum(me.kills) || 0) +
+      "; team won " + (hubNum(team.wins) || 0) + ", lost " + (hubNum(team.losses) || 0);
+  }
+
   function crewCells(p) {
     const level = hubNum(p.level);
     const klass = crewClass(p.class_token);
@@ -4192,6 +4411,7 @@
     const met = hubNum(p.met);
     return [
       who || NOT_RECORDED,
+      crewRecord(p.record),
       met === null ? NOT_RECORDED : String(met),
       crewDay(p.last) || NOT_RECORDED,
       hubStr(p.where) ? visible(p.where) : "none",
@@ -4215,6 +4435,19 @@
     open.className = "hub-open";
     open.title = "Show everything the crew book keeps about this player";
     name.appendChild(open);
+    // The two badges (M22-03), each Python's verdict, never the page's:
+    // Nemesis from killing blows, Rival team from match results.
+    const record = p.record && typeof p.record === "object" ? p.record : {};
+    if (record.personal && record.personal.nemesis === true) {
+      const badge = make("span", "Nemesis");
+      badge.className = "badge badge-nemesis";
+      name.appendChild(badge);
+    }
+    if (record.team && record.team.rival === true) {
+      const badge = make("span", "Rival team");
+      badge.className = "badge badge-rival";
+      name.appendChild(badge);
+    }
     tr.appendChild(name);
     for (const text of crewCells(p)) tr.appendChild(make("td", text));
     tr.addEventListener("click", () => openCrewPlayer(p.key));
@@ -4234,6 +4467,14 @@
     notes.replaceChildren(...(Array.isArray(report.notes) ? report.notes : [])
       .filter((n) => typeof n === "string").map((n) => make("li", visible(n))));
     byId("crew-tools").hidden = !on;
+    // The nemeses and rival-team views say the rule they apply, in Python's
+    // words (M22-03).
+    const rule = byId("crew-rule");
+    const rules = [];
+    if (report.nemeses === true) rules.push(hubStr(report.nemesis_rule) || "");
+    if (report.rivals === true) rules.push(hubStr(report.rival_rule) || "");
+    rule.textContent = on ? visible(rules.filter(Boolean).join(" ")) : "";
+    rule.hidden = !rule.textContent;
     const box = byId("crew-table");
     const players = Array.isArray(report.players) ? report.players.filter((p) => p && typeof p.key === "string") : [];
     const unread = Array.isArray(report.unread) ? report.unread.filter((u) => u && typeof u.key === "string") : [];
@@ -4279,13 +4520,15 @@
     if (search.trim() !== "") params.search = search;
     const rated = byId("crew-rated").value;
     if (rated) params.rated = rated;
-    params.sort = byId("crew-sort").value || "last";
+    if (!crew.viewOrder) params.sort = byId("crew-sort").value || "last";
     // The match filters (M20-09): each the command's own option, sent only
     // when set, so the matching is Python's.
     const pvp = byId("crew-pvp").value;
     if (pvp === "faced") params.faced = true;
     if (pvp === "allied") params.allied = true;
     if (pvp === "world") params.world = true;
+    if (pvp === "nemeses") params.nemeses = true;
+    if (pvp === "rivals") params.rivals = true;
     const map = byId("crew-map").value;
     if (map.trim() !== "") params.map_text = map;
     const since = byId("crew-since").value;
@@ -4310,6 +4553,9 @@
       return;
     }
     crew.report = report;
+    // The Order box shows the order the command used (M22-03).
+    crew.viewOrder = false;
+    if (CREW_SORT.some(([value]) => value === report.sort)) byId("crew-sort").value = report.sort;
     drawCrew();
     // A history on show is read again: a forget or a sync may have changed it.
     if (!byId("crew-matches").hidden) showCrewMatches(false, crew.world);
@@ -4327,7 +4573,10 @@
   });
   byId("crew-rated").addEventListener("change", () => loadCrew());
   byId("crew-sort").addEventListener("change", () => loadCrew());
-  byId("crew-pvp").addEventListener("change", () => loadCrew());
+  byId("crew-pvp").addEventListener("change", () => {
+    crew.viewOrder = true;
+    loadCrew();
+  });
   byId("crew-since").addEventListener("change", () => loadCrew());
   byId("crew-map").addEventListener("input", () => {
     if (crew.searchTimer !== null) clearTimeout(crew.searchTimer);

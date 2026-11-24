@@ -20,7 +20,7 @@ from pathlib import Path
 
 import pytest
 
-from wowlab_core import bindscoach, keymap, labaddon, wtfconfig
+from wowlab_core import bindscoach, clientlists, keymap, labaddon, wtfconfig
 
 FIXTURES = Path(__file__).resolve().parent / "fixtures"
 SCHEMA_3 = (
@@ -109,11 +109,14 @@ def test_schema3_slots_hold_what_the_bars_and_spellbook_say_12_main_bar_3_bottom
         type="spell", id=707, sub_type="spell", name="Immolate", subtext="Rank 2"
     )
     assert one.page_note is not None and one.page_note.startswith(
-        "main bar button 1, page 1, the page shown with no form, stance or stealth active; "
+        "Action Bar (the main bar) button 1, page 1, the page shown with no form, stance or stealth active; "
         "paging, a form, stance or stealth, or a possess, override or vehicle bar [verify] "
         "shows another page"
     )
-    assert row(km, "Q", "MULTIACTIONBAR1BUTTON1").page_note == "bottom left bar button 1, page 6"
+    assert (
+        row(km, "Q", "MULTIACTIONBAR1BUTTON1").page_note
+        == "Action Bar 2 (bottom left) button 1, page 6"
+    )
     # A command that is no action button presses no slot.
     stance = row(km, "CTRL-F1", "SHAPESHIFTBUTTON1")
     assert (stance.slot, stance.holds, stance.page_note) == (None, None, None)
@@ -122,7 +125,10 @@ def test_schema3_slots_hold_what_the_bars_and_spellbook_say_12_main_bar_3_bottom
         row(km, "CTRL-1", "BONUSACTIONBUTTON1").does == "pet bar button 1 (not followed) [verify]"
     )
     assert row(km, "SHIFT-6", "ACTIONPAGE6").does == "shows main-bar page 6"
-    assert row(km, "M", "TOGGLEWORLDMAP").does == "a binding command, not an action slot"
+    # M22-18: a command that is no action button is named in the game's words.
+    world = row(km, "M", "TOGGLEWORLDMAP")
+    assert world.does == world.command_label == "Toggle World Map Pane (Interface Panel)"
+    assert world.client_command is True
 
 
 def test_schema3_and_the_account_file_3_agree_128_not_in_a_file_0_disagree_cross_capture() -> None:
@@ -153,7 +159,7 @@ def test_the_two_macro_slots_64_65_are_given_by_index_and_no_name() -> None:
     assert macros[0].does == (
         "runs macro 149 (a macro index [verify]); the record keeps no macro name or body"
     )
-    assert macros[0].page_note == "bottom left bar button 4, page 6"
+    assert macros[0].page_note == "Action Bar 2 (bottom left) button 4, page 6"
 
 
 def test_bindscoach_uses_keymaps_slot_rule_and_spellbook() -> None:
@@ -183,7 +189,7 @@ def test_a_file_only_key_disagrees_and_names_what_the_record_has_constructed() -
     f5 = row(km, "CTRL-F11", "TOGGLEBACKPACK")
     assert (f5.sources, f5.agreement, f5.disagrees) == (["account file"], "file only", True)
     assert f5.note == "the record has no command on CTRL-F11"
-    assert (f5.slot, f5.holds, f5.does) == (None, None, "a binding command, not an action slot")
+    assert (f5.slot, f5.holds, f5.does) == (None, None, "Toggle Backpack (Interface Panel)")
     # Key 1 is on another command in the record: both rows say so, neither is chosen.
     file_one = row(km, "1", "TOGGLEWORLDMAP")
     assert (file_one.agreement, file_one.note) == ("file only", "the record has 1 on ACTIONBUTTON1")
@@ -240,7 +246,7 @@ def test_a_key_on_a_paged_slot_constructed() -> None:
     )
     paged = row(km, "CTRL-Q", "MULTIACTIONBAR2BUTTON1")
     assert (paged.slot, paged.does) == (49, "casts Immolate (Rank 2, spell 707)")
-    assert paged.page_note == "bottom right bar button 1, page 5"
+    assert paged.page_note == "Action Bar 3 (bottom right) button 1, page 5"
     assert 49 not in [u.slot for u in km.unreached_slots]
     assert [u.slot for u in km.unreached_slots][:1] == [50]
 
@@ -256,7 +262,7 @@ def test_a_slot_on_an_unfollowed_main_bar_page_is_marked_constructed() -> None:
     )
     assert by_slot[145].unfollowed_page is False
     assert by_slot[145].page_note == (
-        "bar 5 button 1, page 13 (unconfirmed: no capture has had a key on this bar)"
+        "Action Bar 6 button 1, page 13 (unconfirmed: no capture has had a key on this bar)"
     )
 
 
@@ -296,7 +302,7 @@ def test_an_empty_slot_and_one_past_the_walked_range_constructed() -> None:
         None,
         "empty slot (nothing recorded in it)",
     )
-    assert empty.page_note == "right bar button 1, page 3"
+    assert empty.page_note == "Action Bar 4 (right) button 1, page 3"
     rec = real_record()
     bars = rec.actionbars
     assert isinstance(bars, labaddon.ActionBars)
@@ -411,3 +417,135 @@ def test_what_other_slot_types_do_constructed(slot_type: str, ident: int | None,
     found = next(u for u in km.unreached_slots if u.slot == 30)
     assert (found.holds.type, found.holds.id, found.holds.name) == (slot_type, ident, None)
     assert found.does == does
+
+
+# ─── naming a command (M22-18) ───────────────────────────────────────────────
+
+LAUNCH = FIXTURES / "macos-70888/forever/WTF/Account/LABACCOUNTA/1/Sandgraal-Rizzen"
+
+
+def test_the_launch_capture_names_every_command_and_marks_two_addons_bindings() -> None:
+    """The 70888 capture: its character `bindings-cache.wtf` (8 lines) and
+    its record (125 commands with a key). Every row is named in the game's
+    words but the two commands of the owner's addons, Questie's
+    QUESTIE_TOGGLE_JOURNEY and ITEMTREE_OPEN, which no file of the game's
+    interface defines: those say they are an addon's, with the build."""
+    record = labaddon.read_char(LAUNCH / "SavedVariables" / "WowLab.lua")
+    km = keymap.join_record(
+        account=None,
+        character=wtfconfig.read_bindings(LAUNCH / "bindings-cache.wtf"),
+        record=record,
+    )
+    addon = sorted({r.command for r in km.keys if r.client_command is False})
+    assert addon == ["ITEMTREE_OPEN", "QUESTIE_TOGGLE_JOURNEY"]
+    for r in km.keys:
+        if r.command == "NONE":
+            assert (r.client_command, r.command_label) == (None, None)
+        elif r.client_command is False:
+            assert r.command_label is None
+            assert r.does == (
+                "an addon's key binding: the game's own interface has no such command "
+                "(interface code 1.60.1.71037, strings 1.60.1.70938)"
+            )
+        else:
+            assert r.client_command is True and r.command_label, r.command
+            assert "a binding command, not an action slot" not in r.does
+    journey = row(km, ";", "QUESTIE_TOGGLE_JOURNEY")
+    assert journey.sources == ["character file", "record"]
+    q = row(km, "Q", "MULTIACTIONBAR1BUTTON1")
+    assert q.command_label == "Action Bar 2 Button 1"  # its category is not said twice
+    assert q.does.startswith("casts ")  # a slot's command still says what the slot holds
+
+
+def test_a_command_with_no_name_in_the_game_s_strings_says_what_it_is_constructed() -> None:
+    """RELOADUI is in the game's binding file with no English name; NONE
+    clears a key; an unknown name is an addon's."""
+    km = keymap.join_record(
+        account=lines("F1 RELOADUI", "F2 NONE", "F3 LABADDON_DO_THING"),
+        character=None,
+        record=None,
+    )
+    reload = row(km, "F1", "RELOADUI")
+    assert (reload.client_command, reload.command_label) == (True, None)
+    assert reload.does == "a binding of the game's own interface (under Debug), not an action slot"
+    assert row(km, "F2", "NONE").client_command is None
+    assert row(km, "F3", "LABADDON_DO_THING").client_command is False
+
+
+@pytest.mark.parametrize(
+    ("action", "does"),
+    [
+        ("SPELL Fireball", "a key bound straight to the spell 'Fireball'"),
+        ("ITEM Hearthstone", "a key bound straight to the item 'Hearthstone'"),
+        ("MACRO Lab macro", "a key bound straight to the macro 'Lab macro'"),
+        (
+            "CLICK LabBarButton1:RightButton",
+            "presses the RightButton button of frame LabBarButton1 (often an addon's frame)",
+        ),
+        (
+            "CLICK LabBarButton2",
+            "presses the LeftButton button of frame LabBarButton2 (often an addon's frame)",
+        ),
+    ],
+    ids=[
+        "constructed-spell",
+        "constructed-item",
+        "constructed-macro",
+        "constructed-click",
+        "constructed-click-default",
+    ],
+)
+def test_a_key_bound_straight_to_a_spell_item_macro_or_click_is_said_constructed(
+    action: str, does: str
+) -> None:
+    """Review round 1: the client's own non-command binding kinds are neither
+    the game's named commands nor an addon's: no mark either way."""
+    km = keymap.join_record(account=lines(f"F6 {action}"), character=None, record=None)
+    found = row(km, "F6", action)
+    assert (found.does, found.client_command, found.command_label, found.slot) == (
+        does,
+        None,
+        None,
+        None,
+    )
+
+
+def test_another_build_s_client_is_not_judged_constructed() -> None:
+    """Review round 1: a client of another major.minor.patch than the lists'
+    is neither the game's nor an addon's; the words name all three builds.
+    A client of the lists' own patch is judged as before."""
+    files = lines("F1 TOGGLEWORLDMAP", "F2 LABADDON_DO_THING")
+    other = keymap.join_record(
+        account=files,
+        character=None,
+        record=None,
+        client=clientlists.Client(build="1.61.0.72000"),  # constructed
+    )
+    assert {r.command: r.client_command for r in other.keys} == {
+        "TOGGLEWORLDMAP": None,
+        "LABADDON_DO_THING": None,
+    }
+    assert row(other, "F2", "LABADDON_DO_THING").does == (
+        "a command not in the game's lists: the game's command lists were read at interface "
+        "code 1.60.1.71037, strings 1.60.1.70938, and this client is 1.61.0.72000, so whether "
+        "it is the game's or an addon's cannot be told"
+    )
+    assert row(other, "F1", "TOGGLEWORLDMAP").does == "Toggle World Map Pane (Interface Panel)"
+    same = keymap.join_record(
+        account=files, character=None, record=None, client=clientlists.Client(build="1.60.1.70888")
+    )
+    assert {r.command: r.client_command for r in same.keys} == {
+        "TOGGLEWORLDMAP": True,
+        "LABADDON_DO_THING": False,
+    }
+
+
+def test_every_bar_name_is_the_game_s_own() -> None:
+    """Review round 1: the bar a slot or a key is on is named as the game's
+    key-binding categories name it."""
+    for prefix in keymap.BAR_PAGES:
+        found = clientlists.binding_command(f"{prefix}1")
+        assert found is not None and found.category_label is not None
+        page = keymap.BAR_PAGES[prefix]
+        note = keymap.slot_page_note((page - 1) * 12 + 1)
+        assert note.startswith(f"{found.category_label} ") and "button 1, page" in note, note

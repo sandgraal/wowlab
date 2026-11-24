@@ -85,10 +85,11 @@ WOWHEAD_BONUS = False
 """Whether a Wowhead item address carries `?bonus=<id>`: off until the
 owner's check (M21-O2) confirms Wowhead's Forever pages read it. Taken over
 from M22-06's `twink`, which builds its Wowhead links here."""
-_SIZE_LIMIT = 64 * 1024  # the shipped file is about 12 KiB
+_SIZE_LIMIT = 64 * 1024  # the shipped file is about 17 KiB
 _KEY = re.compile(r"[a-z][a-z0-9_]{0,31}")
 _ORIGIN = re.compile(r"https://[a-z0-9]+(?:[.-][a-z0-9]+)*\.[a-z]{2,24}")
 _REGION = re.compile(r"[a-z]{2}")
+_NAME_SLUG = re.compile(r"[a-z0-9]+(?:-[a-z0-9]+)*")
 _ROOM = re.compile(r"[a-z0-9][a-z0-9-]{0,31}")  # a room label, as dressing_sites.toml's
 _PLACEHOLDER = re.compile(r"\{([a-z_]{1,16})\}")
 # What an address may hold after its origin: unreserved characters, `/`,
@@ -180,6 +181,10 @@ class SlugRule(_Model):
     hyphens: str = Field(max_length=8)
     accents: Literal["percent", "refuse"]
     max_length: int = Field(ge=1, le=256)
+    # Names the site spells its own way: the name as the game writes it
+    # (compared without case) and the site's slug or slugs for it. A name
+    # with several (a dungeon in wings) gets no single link.
+    names: dict[str, list[str]] = Field(default_factory=dict)
 
     @model_validator(mode="after")
     def _plain(self) -> SlugRule:
@@ -187,6 +192,12 @@ class SlugRule(_Model):
             value = getattr(self, name)
             if value != "refuse" and not _TEMPLATE_TEXT.fullmatch(value):
                 raise ValueError(f"{name} is {value!r}: 'refuse' or plain address text")
+        folded = [unicodedata.normalize("NFC", n).casefold() for n in self.names]
+        if len(set(folded)) != len(folded):
+            raise ValueError("a name is listed twice in names")
+        for name, slugs in self.names.items():
+            if not name or not slugs or any(not _NAME_SLUG.fullmatch(x) for x in slugs):
+                raise ValueError(f"names: {name!r} needs slugs of a-z, 0-9 and single hyphens")
         return self
 
 
@@ -406,6 +417,13 @@ def _slug(value: str, rule: SlugRule, what: str) -> str:
     if not isinstance(value, str) or not value:
         raise _RefusedError(f"the {what} is empty")
     text = unicodedata.normalize("NFC", value)
+    for name, slugs in rule.names.items():
+        if unicodedata.normalize("NFC", name).casefold() == text.casefold():
+            if len(slugs) == 1:
+                return slugs[0]
+            raise _RefusedError(
+                f"{name} has {len(slugs)} maps there, one for each part, so no single link"
+            )
     if len(text) > rule.max_length:
         raise _RefusedError(f"the {what} is longer than {rule.max_length} characters")
     if text != text.strip(" ") or "  " in text:
@@ -496,6 +514,8 @@ def build(
 
     room = room_of(version)
     path = t.rooms.get(room) if room is not None else None
+    if version is None:
+        return none("the game version is not known")
     if path is None:
         return none(f"{site.name} has no pages wowlab knows for this game version")
     values: dict[str, str] = {}
@@ -515,7 +535,7 @@ def build(
             slug = sites.rulesets.get(ruleset) if ruleset is not None else None
             if slug is None:
                 raise _RefusedError(
-                    "the character's ruleset (normal, PvP, RP or RP PvP) is not known"
+                    "the character's ruleset (Normal, PvP, Roleplay or Roleplay PvP) is not known"
                 )
             values["ruleset"] = slug
         if "{id}" in path:

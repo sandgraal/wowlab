@@ -15,8 +15,8 @@ the bar showing page p is slot (p - 1) * 12 + n (docs/GLOSSARY.md "Action
 slot"). That numbering is the default UI's **[verify]**. The real record is
 consistent with it and proves no more: `MULTIACTIONBAR1BUTTON1` to `3` hold
 keys and slots 61 to 63 hold spells, and slots 49 and 50 fit page 5; no
-`MULTIACTIONBAR5` to `7` command has had a key in a capture, so bars 5 to 7
-are unconfirmed. The main bar is read at page 1 only, the page shown with no
+`MULTIACTIONBAR5` to `7` command has had a key in a capture, so Action Bars 6
+to 8 are unconfirmed. The main bar is read at page 1 only, the page shown with no
 form, stance or stealth active. Its other pages (`UNFOLLOWED_SLOTS`: page 2, and the pages forms, stances and
 stealth show, and the possess, override or vehicle bars) are not followed,
 nor are the pet and stance bars, an addon's buttons, or a key bound straight
@@ -43,6 +43,16 @@ subtext; a macro, item, flyout or equipment set is given by id only (a macro
 slot never carries the macro's name or body, and an equipment-set slot keeps
 no id, the set's id being its name **[verify]**). Without a usable action-bar record, the slot a command presses is
 still given, and what it holds is "cannot place".
+
+Naming a command (M22-18). Each row also carries the game's own English
+name for its command and the command's category (`command_label`), from
+the shipped list of the client's key-binding commands (`clientlists`), and
+whether the game's own interface defines the command at all
+(`client_command`). A command that presses no followed slot is described
+by that name; one the list does not have is an addon's key binding, said
+with the build the list was read at. Which binding file the game loads
+for Forever is the list's reading (Forever's own, by its game type), not
+an observation of the client.
 """
 
 from __future__ import annotations
@@ -53,7 +63,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict
 
-from wowlab_core import labaddon, wtfconfig
+from wowlab_core import clientlists, labaddon, wtfconfig
 
 __all__ = [
     "BAR_PAGES",
@@ -69,6 +79,7 @@ __all__ = [
     "KeyRow",
     "Source",
     "UnreachedSlot",
+    "command_label",
     "command_slot",
     "dropped",
     "held",
@@ -93,15 +104,18 @@ BAR_PAGES: Mapping[str, int] = {
     "MULTIACTIONBAR7BUTTON": 15,
 }
 _BUTTON = re.compile(r"(ACTIONBUTTON|MULTIACTIONBAR[1-7]BUTTON)([1-9]|1[0-2])")
+# Each bar by the game's own name for it, the category of its buttons'
+# key bindings (`clientlists`: "Action Bar", "Action Bar 2" to "Action Bar
+# 8"), with where the default UI puts it as an aside (M22-18).
 _BAR_NAMES: Mapping[str, str] = {
-    "ACTIONBUTTON": "main bar",
-    "MULTIACTIONBAR3BUTTON": "right bar",
-    "MULTIACTIONBAR4BUTTON": "right bar 2",
-    "MULTIACTIONBAR2BUTTON": "bottom right bar",
-    "MULTIACTIONBAR1BUTTON": "bottom left bar",
-    "MULTIACTIONBAR5BUTTON": "bar 5",
-    "MULTIACTIONBAR6BUTTON": "bar 6",
-    "MULTIACTIONBAR7BUTTON": "bar 7",
+    "ACTIONBUTTON": "Action Bar (the main bar)",
+    "MULTIACTIONBAR1BUTTON": "Action Bar 2 (bottom left)",
+    "MULTIACTIONBAR2BUTTON": "Action Bar 3 (bottom right)",
+    "MULTIACTIONBAR3BUTTON": "Action Bar 4 (right)",
+    "MULTIACTIONBAR4BUTTON": "Action Bar 5 (right, second)",
+    "MULTIACTIONBAR5BUTTON": "Action Bar 6",
+    "MULTIACTIONBAR6BUTTON": "Action Bar 7",
+    "MULTIACTIONBAR7BUTTON": "Action Bar 8",
 }
 _UNCONFIRMED_BARS = frozenset(
     {"MULTIACTIONBAR5BUTTON", "MULTIACTIONBAR6BUTTON", "MULTIACTIONBAR7BUTTON"}
@@ -137,6 +151,13 @@ _OTHER_PAGES = "paging, a form, stance or stealth, or a possess, override or veh
 _PET = re.compile(r"BONUSACTIONBUTTON([1-9]|10)")
 _STANCE = re.compile(r"SHAPESHIFTBUTTON([1-9]|10)")
 _PAGE = re.compile(r"ACTIONPAGE([1-6])")
+# What the client saves for a key bound straight to a spell, an item or a
+# macro (`SetBindingSpell`, `SetBindingItem`, `SetBindingMacro`), or to a
+# frame's button (`SetBindingClick`): not a named command of any binding
+# file, and not an addon's either (the client runs it itself).
+_DIRECT = re.compile(r"(SPELL|ITEM|MACRO) (.+)", re.DOTALL)
+_CLICK = re.compile(r"CLICK ([^:]+)(?::(.*))?", re.DOTALL)
+_DIRECT_WORDS = {"SPELL": "spell", "ITEM": "item", "MACRO": "macro"}
 
 # The record keeps a command only by a plain upper-case name and a key only
 # as printable ASCII without a space (`labaddon.BindingCommand`,
@@ -182,8 +203,22 @@ def _command_page_note(command: str) -> str | None:
     return where
 
 
-def _command_words(command: str) -> str:
-    """What a binding command that presses no followed action slot does."""
+def direct_binding(command: str) -> str | None:
+    """What a key bound straight to a spell, item, macro or frame button
+    does, or None for a named command."""
+    if match := _DIRECT.fullmatch(command):
+        return f"a key bound straight to the {_DIRECT_WORDS[match.group(1)]} {match.group(2)!r}"
+    if match := _CLICK.fullmatch(command):
+        button = match.group(2) or "LeftButton"
+        return f"presses the {button} button of frame {match.group(1)} (often an addon's frame)"
+    return None
+
+
+def _command_words(command: str, why: str | None = None) -> str:
+    """What a binding command that presses no followed action slot does.
+    `why`: why the game's lists cannot judge this client (`clientlists.mismatch`)."""
+    if (direct := direct_binding(command)) is not None:
+        return direct
     if command == _CLEARED:
         return "clears the key (NONE) [verify]"
     if match := _PET.fullmatch(command):
@@ -192,7 +227,36 @@ def _command_words(command: str) -> str:
         return f"stance bar button {match.group(1)} (not followed) [verify]"
     if match := _PAGE.fullmatch(command):
         return f"shows main-bar page {match.group(1)}"
-    return "a binding command, not an action slot"
+    found = clientlists.binding_command(command)
+    if found is None and why is not None:
+        return (
+            f"a command not in the game's lists: {why}, so whether it is the game's or an "
+            "addon's cannot be told"
+        )
+    if found is None:
+        return (
+            "an addon's key binding: the game's own interface has no such command "
+            f"({clientlists.source_words()})"
+        )
+    label = command_label(command)
+    if label is not None:
+        return label
+    under = f" (under {found.category_label})" if found.category_label else ""
+    return f"a binding of the game's own interface{under}, not an action slot"
+
+
+def command_label(command: str) -> str | None:
+    """The game's own English name for a key-binding command, with its
+    category in brackets (`clientlists`), or None when the game's
+    interface has no such command or no name for it."""
+    found = clientlists.binding_command(command)
+    if found is None:
+        return None
+    if found.label is None:
+        return None
+    if found.category_label is None or found.label.startswith(found.category_label):
+        return found.label  # "Action Bar 2 Button 1", not "... (Action Bar 2)"
+    return f"{found.label} ({found.category_label})"
 
 
 def slot_page_note(slot: int) -> str:
@@ -310,6 +374,12 @@ class KeyRow(_Model):
     agreement: Agreement | None
     disagrees: bool  # agreement is "file only" or "record only"; not "not in a file"
     note: str | None
+    # M22-18: the game's own English name for the command and its category
+    # (`command_label`), None when it has none; and whether the command is
+    # one of the game's own interface (`clientlists`; False: an addon's),
+    # None for NONE, which clears a key.
+    command_label: str | None = None
+    client_command: bool | None = None
 
 
 class UnreachedSlot(_Model):
@@ -471,10 +541,14 @@ def join(
     no_bars: str = f"no action-bar record ({GET_RECORD})",
     no_bindings: str = f"no bindings record ({GET_RECORD})",
     macros: labaddon.Macros | labaddon.AbsentProbedSection | None = None,
+    client: clientlists.Client | None = None,
 ) -> KeyMap:
     """Every key of the two files and of the record's bindings section,
     joined to the action slots and the spellbook. `no_bars` and
-    `no_bindings` say why a section given as None is missing."""
+    `no_bindings` say why a section given as None is missing. `client` is
+    the opened flavor's build: when it is not the build the game's lists
+    were read at, no command is called the game's or an addon's."""
+    why = clientlists.mismatch(client)
     bars, cannot_place, bars_note = _usable_bars(actionbars, no_bars)
     binds, cannot_compare, binds_note = _usable_bindings(bindings, no_bindings)
     names, subtexts, no_book = spell_names(spellbook)
@@ -510,7 +584,7 @@ def join(
         slot = command_slot(command)
         holds: Holds | None = None
         if slot is None:
-            does = _command_words(command)
+            does = _command_words(command, why)
         elif bars is None:
             does = CANNOT_PLACE
         elif slot in filled:
@@ -560,6 +634,12 @@ def join(
                 agreement=agreement,
                 disagrees=agreement in ("file only", "record only"),
                 note=note,
+                command_label=command_label(command),
+                client_command=(
+                    None
+                    if command == _CLEARED or why is not None or direct_binding(command)
+                    else clientlists.binding_command(command) is not None
+                ),
             )
         )
     rows.sort(key=lambda r: (r.slot is None, r.slot or 0, r.command, r.key))
@@ -623,6 +703,7 @@ def join_record(
     character: wtfconfig.BindingsDocument | None,
     record: labaddon.CharDB | None,
     no_record: str = f"no lab-addon record ({GET_RECORD})",
+    client: clientlists.Client | None = None,
 ) -> KeyMap:
     """`join` with the three sections taken from a character's record.
     `no_record` says why there is none; a record before schema 3 has none
@@ -641,6 +722,7 @@ def join_record(
             spellbook=None,
             no_bars=no_bars,
             no_bindings=no_bindings,
+            client=client,
         )
     return join(
         account=account,
@@ -649,4 +731,5 @@ def join_record(
         actionbars=record.actionbars,
         spellbook=record.spellbook,
         macros=record.macros if isinstance(record, labaddon.CharDBV5) else None,
+        client=client,
     )
