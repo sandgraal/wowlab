@@ -1383,3 +1383,25 @@ Dated entries, newest last. Each names the fixture that prompted it.
   On the fixture characters this puts Sangraal-Sett's dagger (type 3) at 32
   and its off-hand item (type 3) at 33, and Dangling-Participle's staff
   (type 2) at 30. The ranged slot stays unsupported.
+- **2026-11-23, §8, unit names of the launch client's combat log (M21-02;
+  fixture `macos-71037/forever/Logs/WoWCombatLog-010926_073444.txt`, build
+  1.60.1.71037, the first 120 lines of the owner's log).** The launch client
+  (header `COMBAT_LOG_VERSION,22,ADVANCED_LOG_ENABLED,0,BUILD_VERSION,1.60.1,PROJECT_ID,18`)
+  names every other player in four hyphen-separated parts,
+  `"<First>-<Second>-<Realm>-<Region>"`: on the owner's real log
+  `"Kshatriya-Sune-Roleplay PvP-US"`, `"Aldric-Deathcrown-Roleplay PvP-US"`;
+  in the fixture `"Labothera-Crazywater-Roleplay PvP-US"` (the capture tool
+  replaced each first name and kept the rest). The realm keeps its space
+  (`Roleplay PvP`), unlike the beta's, and the region is set (`US`), where the
+  beta left it empty. The beta (build 1.60.1.70009, fixture `macos/`) wrote
+  three parts, `"<Name>-<Realm>-"`: the realm-style folder name with its spaces
+  removed and no second name. So the bullet above holds for the beta only.
+  On a flavor whose account folders hold `<digits>/<First>-<Second>/`
+  characters (and only there; elsewhere the old reading stands), wowlab now
+  reads four or more parts as first name, second name, realm
+  (the parts between, joined by `-`) and region, and keys the player
+  `<First>-<Second>`, as the lab-addon keys a Forever player; three or fewer
+  are read as before (`worldpvp.unit_parts`). Whether a realm can hold a
+  hyphen, which would make a four-part name ambiguous, is **[verify]**; so is
+  whether the launch client writes the owner's own unit name in four parts
+  too (the slice holds no line of the owner's).
