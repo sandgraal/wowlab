@@ -3708,9 +3708,10 @@ def discover_identity(root: Path, flavors: Sequence[Flavor], args: argparse.Name
 #   download links; LINK_TOKEN_RE) becomes LINK_PLACEHOLDER;
 # - the value of a JSON key naming an app install or an account
 #   (APP_ID_KEY_RE: WowUp's `install_id`, CurseForge's `SyncProfileID`) gets a
-#   stand-in: a text value everywhere it appears, a number under its key only
-#   (one found anywhere else refuses the file, since a number cannot be told
-#   from a size or a count);
+#   stand-in: a text value of APP_ID_ANYWHERE_MIN characters or more
+#   everywhere it appears, a number or a shorter text under its key only
+#   (one found anywhere else refuses the file, since it cannot be told from
+#   a size, a count or part of a word);
 # - this machine's home folder, in each spelling `home_forms` gives, becomes
 #   OUTSIDE_HOME (`/Volumes/Labdisk`, or `D:\Labdisk` for a home with a drive
 #   letter), spelled the same way. Any other home folder still refuses.
@@ -3760,6 +3761,9 @@ APP_ID_KEY_RE = re.compile(
     rb'"((?i:install_?id|sync_?profile_?id|user_?id|account_?id|member_?id|twitch_?id))"'
     rb'[ \t\r\n]*:[ \t\r\n]*("(?:[^"\\\r\n]|\\.)*"|-?[0-9]+)'
 )
+# A text id this long is replaced wherever it appears (a UUID is 36); a
+# shorter one, like a number, only under its key, and refuses elsewhere.
+APP_ID_ANYWHERE_MIN = 8
 APP_ID_LABEL = "app or account id not replaced"
 APP_ID_ELSEWHERE_LABEL = "app or account id found outside its key"
 _APP_ID_TEXT = b"00000000-0000-4000-8000-%012d"
@@ -3799,7 +3803,9 @@ class OutsideScan:
 
     edits: tuple[tuple[int, int, bytes, str], ...]
     stand_ins: frozenset[bytes]  # every app or account id stand-in issued
-    numbers: frozenset[bytes]  # real numeric ids: refused anywhere outside their key
+    # Real ids replaced under their key only (numbers, and text shorter than
+    # APP_ID_ANYWHERE_MIN): refused anywhere else.
+    keyed: frozenset[bytes]
 
 
 def outside_scan(data: bytes, home: str | None = None) -> OutsideScan:
@@ -3809,18 +3815,22 @@ def outside_scan(data: bytes, home: str | None = None) -> OutsideScan:
     for m in LINK_TOKEN_RE.finditer(data):
         if m.group(2) != LINK_PLACEHOLDER:
             edits.append((m.start(2), m.end(2), LINK_PLACEHOLDER, "link-token"))
-    texts: dict[bytes, bytes] = {}
-    numbers: dict[bytes, bytes] = {}
+    texts: dict[bytes, bytes] = {}  # replaced wherever they appear
+    keyed: dict[bytes, bytes] = {}  # replaced under their key only
     for m in APP_ID_KEY_RE.finditer(data):
         value = m.group(2)
-        if value.startswith(b'"'):
-            inner = value[1:-1]
-            if inner and inner not in texts:
-                texts[inner] = _APP_ID_TEXT % (len(texts) + len(numbers) + 1)
-        elif value not in numbers:
-            numbers[value] = _APP_ID_NUMBER % (len(texts) + len(numbers) + 1)
-        if not value.startswith(b'"'):
-            edits.append((m.start(2), m.end(2), numbers[value], "app-id"))
+        quoted = value.startswith(b'"')
+        inner = value[1:-1] if quoted else value
+        if not inner:
+            continue
+        if quoted and len(inner) >= APP_ID_ANYWHERE_MIN:
+            if inner not in texts:
+                texts[inner] = _APP_ID_TEXT % (len(texts) + len(keyed) + 1)
+            continue
+        if inner not in keyed:
+            stand_in = _APP_ID_TEXT if quoted else _APP_ID_NUMBER
+            keyed[inner] = stand_in % (len(texts) + len(keyed) + 1)
+        edits.append((m.start(2) + quoted, m.end(2) - quoted, keyed[inner], "app-id"))
     for real, stand_in in sorted(texts.items(), key=lambda kv: -len(kv[0])):
         start = data.find(real)
         while start != -1:
@@ -3837,8 +3847,8 @@ def outside_scan(data: bytes, home: str | None = None) -> OutsideScan:
     for edit in sorted(edits, key=lambda e: (e[0], -(e[1] - e[0]))):
         if not kept or edit[0] >= kept[-1][1]:
             kept.append(edit)
-    issued = frozenset([*texts.values(), *numbers.values()])
-    return OutsideScan(tuple(kept), issued, frozenset(numbers))
+    issued = frozenset([*texts.values(), *keyed.values()])
+    return OutsideScan(tuple(kept), issued, frozenset(keyed))
 
 
 def outside_leftovers(scrubbed: bytes, scan: OutsideScan) -> list[str]:
@@ -3858,8 +3868,8 @@ def outside_leftovers(scrubbed: bytes, scan: OutsideScan) -> list[str]:
     if kept:
         problems.append(f"{APP_ID_LABEL} x{kept}")
     elsewhere = sum(
-        len(re.findall(rb"(?<![0-9.\-])" + re.escape(n) + rb"(?![0-9.])", scrubbed))
-        for n in scan.numbers - scan.stand_ins  # a stand-in is no one's id
+        len(re.findall(rb"(?<![0-9A-Za-z.\-])" + re.escape(n) + rb"(?![0-9A-Za-z.])", scrubbed))
+        for n in scan.keyed - scan.stand_ins  # a stand-in is no one's id
     )
     if elsewhere:
         problems.append(f"{APP_ID_ELSEWHERE_LABEL} x{elsewhere}")

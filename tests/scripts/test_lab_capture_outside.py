@@ -392,3 +392,15 @@ def test_the_curseforge_capture_is_a_fixed_point_and_passes_every_detector() -> 
     assert outcome.result.edits == ()
     assert re.search(rb"/Users/|\\\\Users\\\\", data) is None
     assert data.count(b'"SyncProfileID":1,') == 1 and data.count(b'"syncProfileID":1}') == 1
+
+
+def test_constructed_a_short_text_id_is_replaced_under_its_key_only(
+    home: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    out = tmp_path / "out"
+    body = b'{"userId": "ab12", "note": "lab12x"}'
+    assert _capture(_app(home, "a.json", body), out) == 0
+    assert _written(out, "a.json") == b'{"userId": "' + STAND_IN + b'", "note": "lab12x"}'
+    elsewhere = b'{"userId": "ab12", "path": "/u/ab12/"}'
+    assert _capture(_app(home, "b.json", elsewhere), out) == 1
+    assert "app or account id found outside its key x1" in capsys.readouterr().err
