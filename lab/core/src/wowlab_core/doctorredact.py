@@ -387,6 +387,14 @@ DOCTOR_FIELDS: dict[str, Treatment] = {
     "flavors.crew_databases.account": REDACT,
     "flavors.crew_databases.path": REDACT,
     "flavors.crew_databases.reason": REDACT,
+    # The hotfix cache over the cached game tables (M22-23): the cache's
+    # path relative to the flavor folder, the tables' build, table names
+    # and wowlab's reason, all text; the counts are numbers. No row is in
+    # the model.
+    "flavors.hotfix_cache.file": REDACT,
+    "flavors.hotfix_cache.tables_build": REDACT,
+    "flavors.hotfix_cache.refused": REDACT,
+    "flavors.hotfix_cache.tables.table": REDACT,
     "other_dirs": REDACT,
     "not_taken.name": REDACT,
     "not_taken.reason": AS_IS,

@@ -984,6 +984,92 @@ DBM's `DBM-VPVEM` carries a commit id), so `addonsource.versions_agree`
 compares them by the rule in that module's docstring; the folders whose
 TOC `## X-Wago-ID:` is the record's `externalId` (DBM-Core's is,
 `qv633o6b`) are the ones judged when there are any.
+## 16. The hotfix cache: `Cache/ADB/<locale>/DBCache.bin` (M22-23)
+
+Reference: wowsims/forever (MIT) `tools/db2tool/wdc/hotfix.go` at commit
+a8bd7fd83a3a7c5102012ed87d86a71d175b3a89, a Go translation of DBCD's
+hotfix reader and of wow.tools.local's table hash, read on GitHub and not
+copied; checked on the owner's file at build 71037 (2026-11-24, derived
+fixture `macos-71037/derived/hotfix-items.json`). Little-endian
+throughout.
+
+- **Header, 44 bytes:** `XFTH`, the format version (int32; 9 on Forever,
+  the only one the Lab reads), the build (int32; 71037), then 32 bytes
+  (a hash, per the reference) the Lab does not read. The build is that of
+  the client that last wrote the file, not of every record in it: the
+  client's leftover `DBCache.bin62613.tmp` (header build 70959) and the
+  71037 file share 91,018 identical records, so records are carried over a
+  build change with only the header rewritten (domain review of M22-23).
+  Whether the client drops rows whose table layout changed with the build
+  is **[verify]**; the Lab's exact-length decode is the only guard against
+  a carried row in an older layout (WoWDBDefs gives every 1.60.1 build the
+  same `Item` and `ItemSparse` layouts). The client saves the file through
+  a temp file it renames (orphaned `DBCache.bin<pid>.tmp` files lie beside
+  it); when it saves is **[verify]**, so the Lab reads it as the game last
+  saved it.
+- **Records, to the end of the file,** each a 32-byte header then its
+  data: `XFTH`; region id, push id, unique id (int32 each); the table hash
+  (uint32); the row id (int32); the data size (int32); a status byte; three
+  zero bytes. Every record of the owner's file had region 91 and zero
+  padding. Push id -1 is a row the client cached on demand (98
+  `ItemSparse` records, all status 3); ids from 0x01000000 up are
+  synthetic ones the client gives such rows (the reference; 32,178 records
+  in the owner's file, each id used once and equal to its record's unique
+  id). On demand means when the client first needed a row it did not ship
+  with, such as an item it showed: 5,363 of the 8,433 `Item` and
+  `ItemSparse` rows of the owner's file are on-demand rows, so the cache
+  holds the items this game has been shown, not every item the server
+  has. The file is appended in time order: server pushes first, then one
+  block of on-demand rows, then new pushes and push -1 records
+  alternating; server push ids never go down in file order but for six
+  small steps, none for a row whose data conflicts.
+- **Table hash:** SStrHash of the table's name in capitals (`ITEM` →
+  `0x50238EC2`, `ITEMSPARSE` → `0x919BE54E`).
+- **Status:** 1 a row (data present; 0 bytes in no `Item` or `ItemSparse`
+  record of the owner's file). What 2, 3 and 4 mean is **[verify]**: no
+  source read establishes it. TrinityCore's names, from memory, are 1
+  Valid, 2 RecordRemoved, 3 Invalid, 4 NotPublic (**[verify]**); the
+  reference removes the row on every status but 1 (except for two tables);
+  the Lab takes 2 and 3 as the row removed and leaves 4, and a status 1
+  with no data, alone. On the owner's file at 71037 the two rules differ
+  on two non-gear rows only (status 4: 244231 and 288185), and the only
+  status-3 removals that touch an exported `ItemSparse` row are two NPC
+  weapons (217336, 190325). The server answers repeated on-demand
+  requests with status 3 for the same row (22 times for 17712), which
+  reads more like "no data" than "deleted". The owner's file: 43,714
+  status 1, 37,494 status 3, 12,709 status 2, 12,490 status 4, of 106,407
+  records.
+- **Order:** a row id can appear in several records (1,379 `Item` ids).
+  The Lab applies them in file order, a later record winning
+  (**[verify]** against what the client shows). The reference and DBCD
+  sort by push id instead, which puts every on-demand row (ids from
+  0x01000000) after every server push and every -1 row before them: on the
+  owner's file that keeps an older copy of 15 `ItemSparse` rows over the
+  server's later push (Grovekeeper and Spiritcaller pieces 273888 to
+  273935, pushes 114069 → 114318 changing their stat shares; Filcher's Cowl
+  219343, push 114312 changing `RequiredLevel` from 50 to 0, in the
+  derived fixture; four more with prices and `Flags_1`).
+- **Row data:** not bit-packed. The fields of the table's layout in order,
+  at their declared widths, byte-aligned; strings inline, UTF-8, ending in
+  a zero byte; the ID is not in the data (the header carries it). For the
+  layouts of `Item` (WoWDBDefs layout 9A2A4834, 43 bytes) and `ItemSparse`
+  (6FCC3191: the five strings first, then 302 bytes of fixed fields) every
+  one of the 8,433 status-1 records of each table decoded to its exact
+  length, and the 8,432 `Item` and 1,702 `ItemSparse` rows also in
+  wago.tools' 71037 export matched it column for column except where the
+  hotfix differs from the shipped table (a handful of names, flags and
+  prices) and in float text: wago writes a float32 with eleven decimals,
+  trailing zeros dropped (`0.20000000298`, `1`), which the Lab writes the
+  same way.
+- **Inline IDs:** a table whose ID is inline in WoWDBDefs (`$id$` without
+  `noninline`), such as `TraitNodeEntry`, holds the ID in the row data as
+  its first field; in the owner's file all 33 `TraitNodeEntry` records (17
+  bytes) held their record's row id there. The Lab refuses a row whose
+  inline ID differs from the record's.
+- **Not read:** any record of another table. The cache also holds the
+  client's encryption keys (`TactKey`, 12,293 records in the owner's file);
+  the Lab steps over them by their size and never looks at their bytes
+  (ADR-0033 and its note of 2026-11-23).
 
 ## Amendments
 
