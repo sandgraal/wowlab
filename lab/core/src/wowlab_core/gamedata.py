@@ -12,8 +12,10 @@ The rules this module exists to hold:
   that is, or resolves through a symlink to, somewhere inside an install is
   refused, at construction and again before every directory creation and
   write.
-- **ADR-0012.** This is the only network client in the library and no test
-  exercises it live; tests inject a transport that replays recordings.
+- **ADR-0012.** This is the library's client of game tables, and no test
+  exercises it live; tests inject a transport that replays recordings. (The
+  one other network client is `bnet`, Blizzard's profile API, asked only on a
+  command or a click with the player's own API client, ADR-0040 (2).)
 
 The client's hotfix cache (`hotfix`, M22-23) is laid over cached tables by
 `overlay_hotfixes` and `flavor_hotfixes` only when its build is the

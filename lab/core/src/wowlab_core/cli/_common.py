@@ -505,6 +505,17 @@ spy_app = typer.Typer(
     no_args_is_help=True,
 )
 app.add_typer(spy_app, name="spy", short_help="The players the Spy addon saw (read only).")
+blizzard_app = typer.Typer(
+    help="Public character profiles from Blizzard's own API: item level, gear, guild and "
+    "portrait, asked only when you run a command or press a button, with the API client "
+    "you create at develop.battle.net. Without one, nothing is asked.",
+    no_args_is_help=True,
+)
+app.add_typer(
+    blizzard_app,
+    name="blizzard",
+    short_help="Public character profiles from Blizzard's API (your own API client).",
+)
 
 # The modules of this package in the order they register their commands when
 # all are imported, which is the order `wowlab --help` lists them in. Each
@@ -536,6 +547,7 @@ _PART_NAMES = (
     "_cmd_lookup",
     "_cmd_live",
     "_cmd_spy",
+    "_cmd_blizzard",
     "_cmd_ui",
 )
 # The modules to import before a root command or group is looked up (M15-22):
@@ -567,6 +579,7 @@ _COMMAND_MODULES: dict[str, tuple[str, ...]] = {
     "lookup": ("_cmd_lookup",),
     "live": ("_cmd_live",),
     "spy": ("_cmd_spy",),
+    "blizzard": ("_cmd_blizzard",),
 }
 
 

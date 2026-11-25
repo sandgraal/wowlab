@@ -1040,7 +1040,12 @@ def test_the_tab_offers_no_edit_control_and_says_so() -> None:
     # folder, through the confirm step (test_ui_links.py). Since M21-07,
     # Download the talent tables, which runs `db2 fetch`: it writes only
     # wowlab's game-table cache, never the game folder (test_ui_talents.py).
+    # Since M22-11, the Blizzard profile panel's two buttons, which run
+    # `blizzard show` and `blizzard fetch` and change nothing in the game
+    # folder (test_ui_bnet.py).
     assert named == [
+        ("button", "bnet-char-fetch", "button"),
+        ("button", "bnet-char-show", "button"),
         ("button", "char-back", "button"),
         ("button", "char-saved-confirm", "button"),
         ("button", "char-saved-ft-build-forget", "button"),

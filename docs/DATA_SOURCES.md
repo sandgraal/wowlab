@@ -152,14 +152,49 @@ marked `@pytest.mark.live`.
 - **Terms:** data is Blizzard's, extracted by the community; personal,
   non-commercial use. Do not mirror tables publicly.
 
+## Blizzard's profile API
+
+Added 2026-11-24 (M22-11, ADR-0040 (2)). `wowlab blizzard fetch` (and the
+Blizzard profile panels of `wowlab ui`) asks it for one character's public
+profile, equipment, character media and guild, with the player's own API
+client from develop.battle.net (client-credentials token from
+`oauth.battle.net/token`; the API at `<region>.api.blizzard.com`), only on
+a command or a click. `wowlab_core.bnet` uses stdlib `urllib`, https only,
+no redirect to another host, and saves each fetch under the user data
+directory.
+
+- **Forever is [verify].** Blizzard documents nothing for it. The namespace
+  `profile-forever-<region>`, the path `/profile/wow/character/<first>-<second>`,
+  `surname` and `ruleset` in the profile and no realm come from community
+  forum threads 59774 and 60334 (read 2026-11-23), and are data in
+  `lab/core/src/wowlab_core/bnet_games.toml`. The same threads report that
+  character media often 404s for hours after a character appears, and that a
+  character below level 10 returns 404. The retail armory gives
+  `"ruleset":{"slug":…}` (seen by M21-03's domain review, 2026-11-24);
+  `bnet` keeps the slug as `ruleset_slug`, the key the Raider.IO link takes.
+  Whether Forever's profile carries it, and the guild's address, are not
+  known.
+- **No recorded reply yet.** The owner had not made the API client
+  (M22-09) when the client was built, so its tests run on constructed
+  replies (`lab/core/tests/test_bnet.py`, provenance in its docstring). The
+  owner's `@live` test (`lab/core/tests/test_bnet_live.py`) is the check.
+- **Terms:** the player's own API client and Blizzard's API terms; the Lab
+  asks for public profiles only and never on a timer.
+
 ## Addon managers' records
 
 - **WowUp** (M22-16, 2026-11-23): the WowUp app's `addons.json` and, of
   its `preferences.json`, each managed game folder's `id` and `location`,
   in its user-data folder, outside the install (`docs/LAB_FORMATS.md` §15).
   Read only, offline, by `wowlab addons list`; `sensitive.json` beside them
-  is never opened, and nothing is fetched from the sites they name. The
-  CurseForge app's records are not read (format unknown, **[verify]**).
+  is never opened, and nothing is fetched from the sites they name.
+- **CurseForge** (M22-25, 2026-11-24): the CurseForge app's
+  `agent/GameInstances/AddonGameInstance.json` in its user-data folder,
+  outside the install (`docs/LAB_FORMATS.md` §17): its game instances
+  (`guid`, `installPath`) and the addons it installed into each. Read only,
+  offline, by `wowlab addons list`, beside WowUp's; the app's cookies,
+  local storage and `app.db` are never opened. On Windows its folder is
+  **[verify]**.
 
 ## Format references
 
@@ -294,3 +329,4 @@ failures above before the first Windows release.
 | 2026-11-24 | Local install (Forever launch client, US) | The hotfix cache read for the first time (M22-23). `_forever_/Cache/ADB/enUS/DBCache.bin`: `XFTH` version 9, build 71037, 106,407 records (8.2 MB; 104,618 a day earlier: the file grows as the server sends more). By status: 43,714 rows (1), 37,494 status 3, 12,709 status 2, 12,490 status 4. `Item` 9,434 records and `ItemSparse` 9,532, 8,433 rows each; every row decoded to its exact length with WoWDBDefs' layouts 9A2A4834 and 6FCC3191. A row id can appear under several pushes (1,379 `Item` ids). Laid over wago.tools' 71037 tables: `ItemSparse` gains 5,366 rows and 1,699 are replaced (a handful differ from the export: names such as Totem of the Storm → Totem of the Maelstrom, flags, prices); 974 `Item` rows are removed by status 3 (2 of them had an `ItemSparse` row in the export, which the cache removes too; none has one after the overlay). The cache also holds 12,293 `TactKey` records (encryption keys), never read | `lab/core/tests/fixtures/macos-71037/derived/hotfix-items.json` | `gamedata` lays the cache over `Item`, `ItemSparse` and `TraitNodeEntry` only when its build is the tables' build; status 1 with data adds or replaces, 2 and 3 remove, 4 (and a status 1 with no data) is left alone, **[verify]** (wowsims/forever removes on every non-row status); the order is the next entry's; the twink panel marks each item read from the cache |
 | 2026-11-24 | Local install (Forever launch client, US) | Domain review of M22-23, on the same `DBCache.bin`. (1) **Order.** The client appends records in time order: server pushes first (records 0 to 56,833), then one block of 32,178 on-demand rows (push ids from 0x01000000, each used once and equal to the record's unique id), then new pushes and push -1 records alternating. Server push ids never go down in file order but for six small steps, none for a row whose data conflicts. Sorting by push id, as wowsims/forever's `hotfix.go` and DBCD do, puts every on-demand row after every server push, and keeps an older copy of 15 `ItemSparse` rows over the server's later push: Grovekeeper and Spiritcaller pieces (273888 to 273935, pushes 114069 → 114318 changed their stat shares), Filcher's Cowl 219343 (push 114312 changed `RequiredLevel` from 50 to 0), and four more with prices and `Flags_1`. (2) **What the cache holds.** 5,363 of the 8,433 `Item` and `ItemSparse` rows are on-demand rows, which the client fetched when it first needed them (an item it showed; community documentation, consistent with the file): the cache holds the items this game has been shown, not every item the server has. The file grew by 1,789 records in a day. (3) **Builds.** The client's leftover `DBCache.bin62613.tmp` (header build 70959) and the 71037 file share 91,018 identical records: records are carried over a build change with only the header rewritten. (4) **Statuses.** The two removal rules (2 and 3, or every status but 1) differ on two non-gear rows only (status 4: 244231, 288185) | `lab/core/tests/fixtures/macos-71037/derived/hotfix-items.json` (219343's three records in file order) | `gamedata` applies records in file order, a later one winning, **[verify]** against what the client shows (an in-game check for the owner's batch); this departs from wowsims/forever and DBCD on purpose. The twink panel and the GLOSSARY say the cache holds what the game has been sent, at login or when it first showed an item, and that an item never shown may be missing. The header's build is read as the build of the client that last wrote the file; the exact-length decode is the guard against a carried row in an older layout |
 | 2026-11-24 | Purist (purist.pages.dev, M21-06) | Its share-link format read by the M21-06 agent, by hand, from the site's own scripts (no robots.txt, no terms page; the site serves its index for any unknown path; never fetched by a test or by wowlab). `/lib/look.js` line 9 and `encode` (lines 33-47): the address is the page's (`/`, `/pages/index.js` line 2651) with the hash `2\|<name>\|<race>.<sex>.<classic>.<sheathed>.<class>.<game>[.<client>]\|<companion>.<petFamily>.<pet>\|<option>:<choice>,…\|<item>,…`, then optional glows, `mount:<id>` and tabard parts. The name is letters and spaces (line 34); sex 0 male, 1 female (line 130); classic 1 is the classic models and sheathed 1 the default (lines 14, 28, 35); race and class are the game's ids (`/lib/races.js` lines 1-20); `forever` is the game key (`/lib/games.js` lines 7-10); `client` is written only when it is not `live` (line 11). `decode` (lines 63-86) undoes up to three layers of percent-encoding, drops a pair with a zero and an item id of 0 or less, and reads an empty customization or item part as none, so a record with neither still opens. The choices come out of a JavaScript object, so Purist writes them in ascending option order; its own links list the items by its display slot (`state.items`, line 2809; `/lib/slots.js` lines 12-32: the client's inventory slot to the site's display slot, none for the neck, rings and trinkets). Purist's own `decode` and `encode`, run under Node on the agent's machine, read the example built from the owner's Sandgraal Rizzen (macos-70888) as race 5, sex 0, class 9, Forever, the seven barber-shop pairs and eleven items, and wrote it back byte for byte (the space as a space, which the browser writes `%20`). | `lab/core/src/wowlab_core/link_sites.toml` `[look]` and `[[look.example]]` ([verify]: the owner opens it, M21-O2) | The format as data, each field with the script line it came from; re-read on each Purist update |
+| 2026-11-24 | CurseForge app (`AddonGameInstance.json`) | First reading (M22-25). The app keeps one file for every game folder it manages: a list of game instances, each naming the flavor folder itself (`installPath`, with a trailing `/`; one game folder seen), not the client inside it as WowUp does. The owner's has one instance, the launch client's `_forever_` (label "Forever"), with 22 records, almost all of its 1.2 MB the full path of every installed file. No version is recorded, only the installed file's name (`Auctionator-352.zip`; `LFGForever.zip` carries none), and an update is said only when `latestFile.id` differs and its `fileDate` is later (**[verify]**: never seen to differ). `QuestieTrace` is a module of two records, its own and Questie's, and the folder is Questie's copy: its TOC says 1.14.0, Questie's module fingerprint (4076180991) differs from QuestieTrace's own (3113565245), Questie's file is dated 2026-11-23 against QuestieTrace's 2026-11-11, and both folders last changed at 15:34 local, when Questie was updated; so QuestieTrace's own record (`v1.10.0`) no longer matches the folder. The account's SavedVariables sync id (`SyncProfileID`) and the game instance's GUID are in the file, and its SavedVariables sync is on (what it writes is **[verify]**) | `lab/core/tests/fixtures/curseforge/macos/AddonGameInstance.json` | Records join only the flavor folder their instance names; a version is compared with the file name between separators, and a name with no digit is not compared. The capture tool's single-file mode replaces the sync id, the instance GUID and the home folder |

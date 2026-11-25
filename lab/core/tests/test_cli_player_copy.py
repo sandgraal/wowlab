@@ -356,6 +356,9 @@ def sandbox(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, overlay: str) -> Pa
         shutil.copytree(FIXTURES / overlay / "forever", root / FLAVOR, dirs_exist_ok=True)
     user = tmp_path / "userdata" / "wowlab"
     monkeypatch.setattr(platformdirs, "user_data_path", lambda *a, **k: user)
+    # M22-11: `blizzard logout` and `login` reach the config folder.
+    config = tmp_path / "userconfig" / "wowlab"
+    monkeypatch.setattr(platformdirs, "user_config_path", lambda *a, **k: config)
     process = _NoClient(str(tmp_path / "elsewhere" / "python3"))
     monkeypatch.setattr(psutil, "process_iter", lambda *a, **k: iter([process]))
 
@@ -528,6 +531,14 @@ def read_commands(root: Path, tmp_path: Path) -> list[list[str]]:
             ["looks", "import-char", f"char{i}", "--character", c, "--build", TABLE_BUILD]
             for i, c in enumerate(chars)
         ],
+        # M22-11: the sandbox keeps no Blizzard API client, so each says how to
+        # add one and asks Blizzard nothing (test_cli_blizzard.py runs them
+        # on constructed replies); login, given no input, saves nothing.
+        ["blizzard", "status"],
+        ["blizzard", "show", "Sandgraal-Rizzen", "--region", "us"],
+        ["blizzard", "fetch", "Sandgraal-Rizzen", "--region", "us"],
+        ["blizzard", "login"],
+        ["blizzard", "logout"],
         ["snap", "diff", "{A}", "{B}"],
         # M16-04: the archive is written outside the install, then read back
         # (the store already holds it, so the import adds nothing).

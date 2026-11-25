@@ -57,16 +57,26 @@ not a pseudonym. If you find one of these in a fixture, do this:
 - **The client.** No process memory access, injection, packet handling or
   input automation (ADR-0023). `psutil` lists processes and nothing else.
   Code that crosses that line is a vulnerability, whatever its intent.
-- **Nothing leaves the machine.** The only network traffic is downloading
-  public game tables, and a link you click opens in your own browser,
-  carrying a character's name, realm, region and guild, and game ids to that
-  site. Anything that transmits data read from an install is a
-  vulnerability, with one exception: that link. A link's address (ADR-0019
-  and ADR-0031, amendments of 2026-10-19 and 2026-11-23) never holds a path,
-  the token, a Battle.net account folder name, an email or a BattleTag;
-  wowlab never requests it, and only the player's click sends it, from the
-  player's own browser.
-- **Secrets.** The project needs no credentials. gitleaks runs on every
+- **Nothing leaves the machine.** The network traffic is downloading
+  public game tables, the Blizzard profile fetch (`wowlab blizzard fetch` or
+  the UI's Fetch button; ADR-0040 (2)), and a link you click opens in your
+  own browser, carrying a character's name, realm, region and guild, and
+  game ids to that site. Anything that transmits data read from an install
+  is a vulnerability, with two exceptions: that link and the Blizzard
+  profile fetch. A link's address (ADR-0019 and ADR-0031, amendments of 2026-10-19
+  and 2026-11-23) never holds a path, the token, a Battle.net account folder
+  name, an email or a BattleTag; wowlab never requests it, and only the
+  player's click sends it, from the player's own browser. The fetch runs
+  only on a command or a click, with the player's own API client from
+  develop.battle.net, over https to Blizzard's own hosts with no redirect to
+  another host; it names the region, the game and the character's names,
+  and sends the client ID and secret only to Blizzard's sign-in address.
+  Anything else it sends, any other host it reaches, or a request made
+  without the player asking, is a vulnerability.
+- **Secrets.** The project needs no credentials of its own. The player's
+  Blizzard API client is kept 0600 in wowlab's settings folder (never in the
+  install or the repository); the secret appearing in any output, log,
+  report, saved fetch or error message is a vulnerability. gitleaks runs on every
   commit and on full history in CI; push protection is enabled.
 - **CI.** Workflow permissions are least-privilege; secrets are unavailable
   to fork and Dependabot runs.

@@ -1,0 +1,28 @@
+# Where Blizzard's profile API keeps a game's characters, for
+# `wowlab blizzard` (M22-11; ADR-0040 (2)). Read by `wowlab_core.bnet`.
+#
+# Data, not code (L6): nothing here names a flavor folder, a product code or a
+# build. The game is chosen by the client's version, which `wowlab install
+# show` discovers in `.build.info`, through `from` (included) and `below`
+# (excluded), compared part by part as numbers; a version no entry covers gets
+# no profile, and nothing is asked.
+#
+# `namespace` is the API's `namespace` query value, `{region}` replaced by the
+# region (`us`, `eu`, `kr`, `tw`, `cn`). `character` is the path of the
+# character's profile; `{first}` and `{second}` are the character's first and
+# second name, lowercased and URL-encoded by the reader. The equipment and
+# portrait are that path with `/equipment` and `/character-media` added.
+#
+# "forever": from community forum threads 59774 and 60334, read 2026-11-23;
+# Blizzard documents none of it. The namespaces `profile-forever-{region}`,
+# `dynamic-forever-{region}` and `static-forever-{region}`; the character at
+# `/profile/wow/character/{first}-{second}`, with no realm; replies carry
+# `surname` and `ruleset`. Whether this is right is [verify]: the owner's
+# `@live` test (`test_bnet_live.py`) is the check.
+
+[[game]]
+label = "forever"
+namespace = "profile-forever-{region}"
+character = "/profile/wow/character/{first}-{second}"
+from = "1.60"
+below = "2"
