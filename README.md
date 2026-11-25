@@ -2,7 +2,7 @@
   <a href="https://github.com/sandgraal/wowlab/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/sandgraal/wowlab/actions/workflows/ci.yml/badge.svg"></a>
   <img alt="Python 3.12" src="https://img.shields.io/badge/python-3.12-3776AB?logo=python&logoColor=white">
   <img alt="Local only, uploads nothing" src="https://img.shields.io/badge/local--only-uploads%20nothing-2ea44f">
-  <a href="https://github.com/sandgraal/wowlab/releases/tag/v0.3.0"><img alt="Current release, v0.3.0" src="https://img.shields.io/badge/release-v0.3.0-2ea44f"></a>
+  <a href="https://github.com/sandgraal/wowlab/releases/tag/v0.4.0"><img alt="Current release, v0.4.0" src="https://img.shields.io/badge/release-v0.4.0-2ea44f"></a>
   <a href="LICENSE"><img alt="License Apache-2.0" src="https://img.shields.io/badge/license-Apache--2.0-blue"></a>
 </p>
 
@@ -32,12 +32,13 @@ The same backup from the command line is `wowlab snap create`. Take one before p
 
 - 📈 **Each character over time.** 🆕 `wowlab char history` reads your snapshots back, one row per snapshot you took: level, item level and spec, and the gear and currencies that changed.
 - 🧩 **A patch-day check.** 🆕 `wowlab addons check` lists every addon against your game version: out of date, missing an addon it needs, and which characters have it turned on. In `wowlab ui`, a card at the top of Characters says how many of your addons load on this game version and whether anything needs fixing, and Addons lists the addons with a problem and the saved data that no installed addon claims or that wowlab cannot read.
+- ⚔️ **The players you meet.** 🆕 `wowlab crew list` lists the players you grouped with or fought, from the lab-addon's crew book (off until you turn it on in game with `/wowlab crew on`) and your combat logs: their record against you, your nemeses and rival teams, the matches you played, and links to their profiles. In `wowlab ui` it is the Crew tab, with what the Spy addon saw beside it.
 - 🎹 **A keybind coach.** `wowlab binds coach` reads your own combat log and shows the spells you cast most on awkward keys. It needs combat logging turned on in the game and the lab-addon's record of your action bars.
 
 Level, class, gear and the rest appear once wowlab's small in-game addon has recorded them: run `wowlab addon install lab`, then log out or `/reload` once. Action bars and talents are kept on Blizzard's servers, not in your game folder, so a snapshot cannot put those back, and a bar button that holds a macro runs whichever macro is now at that place in your macro list.
 
 > [!NOTE]
-> The install lines below install v0.3.0, the current release. Everything marked 🆕 on this page is new since v0.1.0. If you would rather not use a terminal, v0.3.0 also comes as a Mac app for Apple silicon ([download the zip](https://github.com/sandgraal/wowlab/releases/download/v0.3.0/wowlab-0.3.0-macos-arm64.zip), [the install guide](docs/INSTALL.md#the-mac-app-apple-silicon-no-terminal-needed)) and a Windows app, which nobody has yet tried on a real Windows install ([download the zip](https://github.com/sandgraal/wowlab/releases/download/v0.3.0/wowlab-0.3.0-windows-x64.zip), [the install guide](docs/INSTALL.md#the-windows-app-64-bit-no-terminal-needed)). Installed v0.1.0 (`wowlab-core`)? Run `uv tool uninstall wowlab-core` first.
+> v0.4.0 is the current release, and the two PyPI lines below install it; the line that installs the release's own file from GitHub names v0.3.0 until v0.4.0's fingerprint is added to it. Everything marked 🆕 on this page is new since v0.1.0. If you would rather not use a terminal, v0.4.0 also comes as a Mac app for Apple silicon ([download the zip](https://github.com/sandgraal/wowlab/releases/download/v0.4.0/wowlab-0.4.0-macos-arm64.zip), [the install guide](docs/INSTALL.md#the-mac-app-apple-silicon-no-terminal-needed)). Windows is not supported for now, and v0.4.0 has no Windows app. Installed v0.1.0 (`wowlab-core`)? Run `uv tool uninstall wowlab-core` first.
 
 **📦 Install** (you need [uv](https://docs.astral.sh/uv/); it brings Python 3.12):
 
@@ -80,11 +81,12 @@ wowlab snap create   # back up your setup before patch day or an addon update
 - **It never touches the game itself:** no game memory, no `Data/` or program files, no key presses. Addon data is read as data, never run.
 
 <!-- network:begin -->
-**What leaves your machine. Nothing is uploaded: these three are wowlab's only network traffic, and no other command makes a request.**
+**What leaves your machine. Nothing is uploaded: these four are wowlab's only network traffic, and no other command makes a request.**
 
 - `wowlab doctor --check-builds` downloads the public list of game versions from wago.tools, a community-run public site of game data, and looks for your installed versions in it; nothing from your install is sent. Without `--check-builds`, `doctor` makes no network request.
-- `wowlab db2` and `wowlab looks` download public game data from wago.tools: its list of game versions, and tables for one version at a time. A table request names that version: your installed one, or the one you give with `--build`. `wowlab names fetch` downloads the tables that name races, classes, specs and professions the same way, for each version you have installed, and only the ones not already downloaded. `wowlab char model` downloads the tables it needs for your installed version, once.
-- A dressing-room link opens in your own browser, and only when you click it, carrying your character's race, body type, class, level and equipped item and bonus ids to that site: public game ids only, never a name. wowlab itself makes no request to it.
+- `wowlab db2` and `wowlab looks` download public game data from wago.tools: its list of game versions, and tables for one version at a time. A table request names that version: your installed one, or the one you give with `--build`. `wowlab names fetch` downloads the tables that name races, classes, specs and professions the same way, for each version you have installed, and only the ones not already downloaded. `wowlab char model` downloads the tables it needs for your installed version, once. `wowlab lookup --fetch` downloads the item and zone tables (ItemSparse and AreaTable) for your installed version, only the ones not already downloaded; without `--fetch`, `wowlab lookup` makes no network request.
+- `wowlab blizzard fetch`, and the Blizzard profile panel's Fetch button, ask Blizzard's own API for one character's public profile, gear, guild and portrait address, only when you run it or press it, and only with the API client you created at develop.battle.net and gave to `wowlab blizzard login`: the request names your region, the game and the character's names; the client ID and secret go only to Blizzard's sign-in address; nothing else from your install is sent. Without an API client nothing is asked.
+- A link to another site, such as a dressing room or a character's profile, opens in your own browser, and only when you click it, carrying what that page needs: a character's name, realm, region and guild, and game ids such as race, body type, class, level and equipped item and bonus ids. wowlab itself makes no request to it.
 <!-- network:end -->
 
 **🖥️ `wowlab ui`** opens your browser on a page only this computer can reach, and keeps working until you stop it with Ctrl-C. If no browser opens, paste the link it prints. When your game is not in the usual place, set `WOWLAB_WOW_ROOT` first ([the install guide](docs/INSTALL.md) shows how).
@@ -146,6 +148,8 @@ Features marked 🆕 are new since v0.1.0.
 | 🖥️ | **The explorer in your browser.** A local page, served only to this machine, that shows every file in your install with whether each is safe to touch. It also runs wowlab's commands, and a command that changes files gets a plan-then-Confirm step 🆕. Exactly which commands, and how that step works, is spelled out under **`wowlab ui`**, near the top of this page. | `wowlab ui` |
 | 🩺 | **Health check and first run.** Finds your install, its flavors and versions, whether the game is running, and your server-sync settings. On a first run it says what wowlab will and won't do and offers a first snapshot. `--redact` prints output safe to paste into an issue. | `wowlab doctor` · `wowlab doctor --redact` |
 | 🧩 | **Patch-day check** 🆕. Every addon against your game version: out of date, missing an addon it needs, loaded on demand, and which characters have it turned on. | `wowlab addons check` |
+| 📦 | **Where each addon came from** 🆕. Which app installed each addon folder, as the WowUp and CurseForge apps recorded it: the site, the version, an update the app knew of, and whether the record still matches the folder. Their files are only read. | `wowlab addons list` |
+| 🗃️ | **The game's own files** 🆕. Whether one of the game's files is on this computer, by its file data id, and a copy of a local one in wowlab's own folder. wowlab never downloads a game file. | `wowlab casc stat` · `casc cat` |
 | 📜 | **Read your saved data.** Addon SavedVariables, CVars, keybinds, macros and your addon list, as readable text or JSON. | `wowlab sv dump` · `cvar` · `binds` · `macros` · `addons` |
 | 📚 | **Game data.** Any game table for your exact build, from [wago.tools](https://wago.tools), cached forever and keyed by build. | `wowlab db2 fetch TABLE` |
 | ⚔️ | **Combat log.** A streaming combat-log reader and a live `tail` that follows the game as it writes, even across new log files. | `wowlab log tail --follow` |
@@ -164,16 +168,32 @@ Features marked 🆕 are new since v0.1.0.
 
 | | Feature | Command |
 |---|---|---|
-| 🧩 | **The lab-addon.** wowlab's own small in-game addon records a character's gear, talents, customization, collections, currencies and professions (never a name) when you log out or `/reload`, and wowlab reads them back offline. | `wowlab addon install lab` · `wowlab char show` |
+| 🧩 | **The lab-addon.** wowlab's own small in-game addon records a character's gear, talents, customization, collections, currencies and professions when you log out or `/reload`, and wowlab reads them back offline. | `wowlab addon install lab` · `wowlab char show` |
 | 🏰 | **Characters** 🆕. The home screen of the browser view: a card for every character you have played on this computer, in every game version you have installed, as of its last logout, with level, race and class, item level, professions, when you last played it and what it gained this week. Below the cards, a table of the same characters with their spec too: sort by any column, filter by game version or class. Click a character to open it. Also on the command line. | `wowlab ui` · `wowlab char list --summary` |
 | 🔤 | **Names, not numbers** 🆕. One download, made only when you ask, that shows races, classes, specs and professions by name. It fetches from [wago.tools](https://wago.tools) only the tables not already downloaded, for each game version you have installed, and never replaces one. Until then races and professions show as numbers, and the class by its English name. **Download names** on Characters does the same. | `wowlab names fetch` |
 | 📈 | **A character over time** 🆕. One row per snapshot you took: level, item level and spec, and the gear and currencies that changed since the one before. | `wowlab char history` |
 | 🧙 | **The character page** 🆕. Click a character in the browser view to see its gear with item-quality colours, its progress and what changed between saves, its professions and action bar, and a **See it dressed on Wowhead** link that opens an outside dressing room in your own browser. Its keys and macros are under Keybinds. Read-only: it never changes a file. | `wowlab ui` |
 | 🗄️ | **Characters kept in a backup** 🆕. A character no longer in your game folder (a closed beta, a deleted folder) that one of your backups still holds: its newest save there, and with `--character` its gear from that save and every save your backups hold. The browser view shows them dimmed on Characters. Read-only: it restores nothing. | `wowlab char kept` |
 | 🎒 | **Gear, keys and macros from the command line** 🆕. The same three views as text or JSON. | `wowlab char gear` · `char binds` · `char macros` |
-| 🧹 | **Macro checker.** Broken spell names, overlong and duplicate macros, macros on no action bar. | `wowlab macros check` |
+| 🧹 | **Macro checker.** Broken spell names, overlong and duplicate macros, macros on no action bar, a `/command` the game does not know 🆕, and a `#showtooltip` line moved to the top for you 🆕. | `wowlab macros check` · `macros fix` |
 | 🎹 | **Keybind coach.** From your own combat log: spells cast often on awkward keys, spells cast with no bind, and binds never used. Read-only, with an editable "awkward key" table. It needs combat logging turned on in the game and the lab-addon's record of your action bars. | `wowlab binds coach` |
+| 🎯 | **Twink gaps** 🆕. For a battleground level bracket, each slot's worn item beside the best items the character could wear there, scored with stat weights you can edit. The first run for a game version downloads its item tables from wago.tools. | `wowlab char twink` |
+| 🔗 | **Links out** 🆕. From the character page: its armory and Journey Companion pages, its talents on WoW Forever Builds, its look on Purist, each item's Wowhead page, and the ForeverTwinking or Warcraft Logs pages you paste. A link opens only when you click it. | `wowlab char gear` · `char link set` |
+| 📋 | **Copy for WoWSims** 🆕. One character as the text WoWSims' Addon Import reads. | `wowlab char sim-export` |
+| 🧊 | **A 3D model** 🆕. One character, its look and its gear, as a glTF file drawn from the game's own files on this computer. | `wowlab char model` |
+| 🗺️ | **Look up** 🆕. Where an item drops or which quest gives it, who sells it, and where an NPC or quest is, from the QuestieDB addon (read as data) and the game's tables. | `wowlab lookup TEXT` |
+| 🛡️ | **Public profiles from Blizzard** 🆕. A character's public profile, gear and guild from Blizzard's own API (WoW Forever characters only, for now), with an API client you create yourself; asked only when you run the command or press the button. | `wowlab blizzard login` · `blizzard fetch` |
 | 🎨 | **Customization looks.** Browse every race's customization options from the game's own tables, save and compare looks, import one from a character, and open it all as a local web page (inside the browser view too 🆕). Data only: it never touches the game. | `wowlab looks races` · `save` · `compare` · `page` |
+
+### ⚔️ The players you meet
+
+| | Feature | Command |
+|---|---|---|
+| 👥 | **The crew book** 🆕. The players you grouped with, kept by the lab-addon once you turn it on in game, with your rating and note; the Crew tab of the browser view. | `wowlab crew list` · `crew show` · `crew rate` · `crew note` · `crew forget` |
+| ⚔️ | **Matches and open-world fights** 🆕. The battlegrounds and arenas you played, from the crew book, and the players who fought you in the open world, from your combat logs; the open world is told apart by the game's own map table. | `wowlab crew matches` · `crew scan-log` |
+| 😠 | **Nemeses and rival teams** 🆕. Your record against each player: who killed you most, and whose side beat yours most. | `wowlab crew list --nemeses` · `crew list --rivals` |
+| 🕵️ | **Seen by Spy** 🆕. What the Spy addon saved about the players it saw, read only. | `wowlab spy list` · `spy show` |
+| 📺 | **Live, for a second screen** 🆕. The latest match from your combat log, and your last save against an earlier one, refreshed by itself while you play. | `wowlab live recap` |
 
 <details>
 <summary><b>See it in action</b> (output from a test copy of a Forever install; `…` marks what is left out)</summary>
