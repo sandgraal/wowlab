@@ -7772,6 +7772,61 @@ in the table, "a place the game's map table does not hold", never a match
 battleground's and a raid's zone line (no log enters one); `InstanceType`
 4; whether map 2996 can be entered.
 
+*As built (2026-11-24, M22-02; with the amendment of 2026-11-24 on Spy-only
+rows).* **What a sync takes from Spy.** `crew sync`, and `crew list` and
+`crew show`, which sync first, read every character's `Spy.lua` of the
+book's game account through `spy.survey` (read-only, L1; Spy's files are
+never written) and take it into the database with `crewdb.sync_spy`, after
+the book's own sync and only when the book is not `not_turned_on`
+(ADR-0039: nothing is recorded before the book is turned on). One
+transaction under the write lock, after today's copy; a sync that would
+change nothing writes nothing (state `unchanged`), so a re-sync is
+idempotent; with no character's Spy data, nothing is read or made (`none`).
+**Store:** schema 8, after the `.before-schema-7` copy, three tables, each
+keyed by the player and the character whose file it came from (`seen_by`,
+`<digits or realm folder>/<character folder>`): `spy_sightings` (one row
+per Spy `time` a sync saw: zone, subzone, map id and position, level and
+whether Spy guessed it, class, race, faction, guild, `isEnemy`; a new time
+adds a row, the same time with other values updates it), `spy_players`
+(whether the character's list holds them now, the kill-on-sight mark from
+`KOSData` with its time, and Spy's `wins` and `loses`, added up across
+syncs beside the value last shown, as the book's counters are, never
+lowered; a player a read character's list no longer holds is marked off it
+and off its kill-on-sight list, its counts kept), and `spy_fights` (one row
+per `Encounters` entry, told apart by character, time, player and result).
+**Key:** the row's `name`, else its table key; a key that is not
+Name-Realm, text over 256 bytes, a level over 1,000, a time out of range, a
+count over 10,000,000, or a fight with no name, time or known result is
+left out and counted (`left_out`), and a player past `MAX_PLAYERS` is left
+out with all Spy saw of them. **A Spy-only player** gets a players row
+(never in the game's list, no group, no match), named by Spy's key
+(`names_from` `spy`, after `game`, `log` and `borrowed`; on a second-name
+flavor its two parts are the first and second name) and placed in the
+book's recorded region (`region_from` `book`), else the settings'. No query
+that removes or hides a player "held by nothing else" removes or hides one
+Spy saw (`recheck_world`, the set-aside rule, `doctor`'s counts). **The
+record:** Spy's fights are a third source, `spy`: a win is your killing
+blow, a loss theirs, a probable win neither; a Spy fight within 60 s
+(`SPY_SAME_FIGHT_SECONDS`) of an open-world encounter a combat log kept
+with that player as a foe is that encounter and is not counted again.
+Spy's `wins` and `loses` are shown as Spy's own counts and are not added to
+the record (they count the same fights as `Encounters`, with no time to
+tell them apart). **Reading:** each row carries `spy` (`CrewSpy`, `source`
+`spy`): the latest sighting and its place, how many sightings are kept,
+the kill-on-sight mark, Spy's counts, and whether Spy's list still holds
+them. `crew list --spy` (the view's own order is `--sort spy`, latest seen
+first); the row's "seen by Spy DATE in PLACE" and "kill on sight in Spy";
+`crew show`'s Spy lines; `--json` gains `spy_sync` (list, show) and `spy`
+(sync). **Forget:** `crew forget` deletes the key's rows in all three
+tables of the database and every copy and, when Spy's own files still hold
+the player, says that the next sync takes them again unless they are
+removed in Spy (`spy_keeps` in `--json`). **UI:** the Crew tab's Matches
+box gains "Seen by Spy", the Order box "Latest seen by Spy first", the
+table a "Last seen by Spy" column and a "Kill on sight" badge. Not yet
+confirmed: Spy's `wins`, `loses`, `reason` and `Encounters` (none in the
+capture); whether a Spy fight in a battleground overlaps a match (Spy's map
+id is the UI map, not the instance id, so the two are not compared).
+
 ### 21.4 The terms of ADR-0036, for the new store
 
 | Term | What holds it | Proof |

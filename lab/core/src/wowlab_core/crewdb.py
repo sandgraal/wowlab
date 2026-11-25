@@ -381,7 +381,7 @@ _SQL_CREATE: tuple[str, ...] = (
 # - `spy_players`: per player and character, whether Spy's list holds them
 #   now (`in_spy`), whether they are on its kill-on-sight list (`kos`, with
 #   when they were added), and Spy's own counts of your killing blows on
-#   them (`wins`) and the deaths it put on them (`losses`), each added up
+#   them (`wins`) and your deaths it put down to them (`losses`), each added up
 #   across syncs beside the value Spy showed at the last one (`*_seen`), as
 #   the crew book's counters are.
 # - `spy_fights`: one row per fight Spy's `Encounters` list kept (its time,
@@ -630,7 +630,7 @@ class CrewSpy(_Model):
     Across the account's characters: `kos`, on a kill-on-sight list in Spy
     at the last sync (`kos_added`, the earliest time one of them was
     added); `wins` and `losses`, Spy's own counts of your killing blows on
-    them and of the deaths it put on them (some guessed from who had you
+    them and of your deaths it put down to them (some guessed from who had you
     targeted), added up across syncs and never lowered; `in_spy`, whether
     a Spy list read at the last sync still holds them (Spy drops a player
     not seen for 90 days by default, and one seen as friendly)."""
@@ -4673,9 +4673,12 @@ def _spy_plan(conn: sqlite3.Connection, taken: _SpyTaken) -> _SpyPlan:
         plan.new_players.append(key)
         room -= 1
     plan.players_left_out = len(out)
+    planned: set[tuple[str, str, int]] = set()
     for sight in taken.sights:
-        if sight.key in out:
-            continue
+        one = (sight.key, sight.seen_by, sight.at)
+        if sight.key in out or one in planned:
+            continue  # two of Spy's rows giving one key and time: the first is kept
+        planned.add(one)
         held = conn.execute(_SQL_SPY_SIGHTING_OF, (sight.key, sight.seen_by, sight.at)).fetchone()
         if held is None:
             plan.sight_inserts.append(sight)
@@ -4720,11 +4723,11 @@ def _spy_plan(conn: sqlite3.Connection, taken: _SpyTaken) -> _SpyPlan:
             plan.marks.append((key, seen_by, *gone))
     seen: set[tuple[str, int, str, str]] = set()
     for f in taken.fights:
-        one = (f.seen_by, f.at, f.key, f.result)
-        if f.key in out or one in seen:
+        fight = (f.seen_by, f.at, f.key, f.result)
+        if f.key in out or fight in seen:
             continue
-        seen.add(one)
-        if not conn.execute(_SQL_SPY_FIGHT_HELD, one).fetchone()[0]:
+        seen.add(fight)
+        if not conn.execute(_SQL_SPY_FIGHT_HELD, fight).fetchone()[0]:
             plan.fights.append(f)
     return plan
 

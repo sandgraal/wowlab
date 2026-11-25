@@ -1080,8 +1080,8 @@ def _crew_spy_lines(seen: crewdb.CrewSpy | None) -> list[str]:
     lines.append(f"  On Spy's kill-on-sight list: {kos}")
     if seen.wins or seen.losses:
         lines.append(
-            f"  Spy's own counts: your killing blows on them {seen.wins}, deaths it put on "
-            f"them {seen.losses}"
+            f"  Spy's own counts: your killing blows on them {seen.wins}, your deaths it put "
+            f"down to them {seen.losses}"
         )
     if not seen.in_spy:
         lines.append("  In Spy's list now: no; Spy dropped them, and wowlab keeps what it saw")

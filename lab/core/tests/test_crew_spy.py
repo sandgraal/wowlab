@@ -343,7 +343,10 @@ def test_kill_on_sight_and_spys_counts_constructed(make: Any) -> None:
     assert rows[SPY_B]["names_from"] == "spy"
     lines = _show(env, SPY_A)["lines"]
     assert "  On Spy's kill-on-sight list: yes, since " + _day(TS + 5) in lines
-    assert "  Spy's own counts: your killing blows on them 2, deaths it put on them 1" in lines
+    assert (
+        "  Spy's own counts: your killing blows on them 2, your deaths it put down to them 1"
+        in lines
+    )
     line = next(x for x in env.run("crew", "list").stdout.splitlines() if SPY_A + ":" in x)
     assert "kill on sight in Spy" in line
 
@@ -586,3 +589,13 @@ def test_the_sync_sentence_quotes_no_name_capture(make: Any) -> None:
     assert spy_line.startswith("Took Spy's saved data into wowlab's crew database: 24 new")
     for key in (GORUTHUZ, SONJA, TALA):
         assert key not in result.stdout
+
+
+def test_two_rows_naming_one_player_at_one_time_sync_once_constructed(make: Any) -> None:
+    env = make(_book3())
+    # Two table keys whose `name` is the same player, seen at the same time.
+    rows = {SPY_A: _row(SPY_A), SPY_A.lower(): _row(SPY_A, zone="Invented Hold")}
+    _put(env, SANDGRAAL, _spy_file(rows))
+    report = _sync(env)["spy"]
+    assert report["state"] == "synced" and report["sightings_added"] == 1
+    assert _db_rows(env, "SELECT count(*) FROM spy_sightings") == [(1,)]
