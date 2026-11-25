@@ -182,7 +182,7 @@ Features marked 🆕 are new since v0.1.0.
 | 📋 | **Copy for WoWSims** 🆕. One character as the text WoWSims' Addon Import reads. | `wowlab char sim-export` |
 | 🧊 | **A 3D model** 🆕. One character, its look and its gear, as a glTF file drawn from the game's own files on this computer. | `wowlab char model` |
 | 🗺️ | **Look up** 🆕. Where an item drops or which quest gives it, who sells it, and where an NPC or quest is, from the QuestieDB addon (read as data) and the game's tables. | `wowlab lookup TEXT` |
-| 🛡️ | **Public profiles from Blizzard** 🆕. A character's public profile, gear and guild from Blizzard's own API, with an API client you create yourself; asked only when you run the command or press the button. | `wowlab blizzard login` · `blizzard fetch` |
+| 🛡️ | **Public profiles from Blizzard** 🆕. A character's public profile, gear and guild from Blizzard's own API (WoW Forever characters only, for now), with an API client you create yourself; asked only when you run the command or press the button. | `wowlab blizzard login` · `blizzard fetch` |
 | 🎨 | **Customization looks.** Browse every race's customization options from the game's own tables, save and compare looks, import one from a character, and open it all as a local web page (inside the browser view too 🆕). Data only: it never touches the game. | `wowlab looks races` · `save` · `compare` · `page` |
 
 ### ⚔️ The players you meet
@@ -190,7 +190,7 @@ Features marked 🆕 are new since v0.1.0.
 | | Feature | Command |
 |---|---|---|
 | 👥 | **The crew book** 🆕. The players you grouped with, kept by the lab-addon once you turn it on in game, with your rating and note; the Crew tab of the browser view. | `wowlab crew list` · `crew show` · `crew rate` · `crew note` · `crew forget` |
-| ⚔️ | **Matches and open-world fights** 🆕. The battlegrounds and arenas you played, and the players who fought you in the open world, read from your combat logs; the open world is told apart by the game's own map table. | `wowlab crew matches` · `crew scan-log` |
+| ⚔️ | **Matches and open-world fights** 🆕. The battlegrounds and arenas you played, from the crew book, and the players who fought you in the open world, from your combat logs; the open world is told apart by the game's own map table. | `wowlab crew matches` · `crew scan-log` |
 | 😠 | **Nemeses and rival teams** 🆕. Your record against each player: who killed you most, and whose side beat yours most. | `wowlab crew list --nemeses` · `crew list --rivals` |
 | 🕵️ | **Seen by Spy** 🆕. What the Spy addon saved about the players it saw, read only. | `wowlab spy list` · `spy show` |
 | 📺 | **Live, for a second screen** 🆕. The latest match from your combat log, and your last save against an earlier one, refreshed by itself while you play. | `wowlab live recap` |
