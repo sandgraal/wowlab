@@ -544,6 +544,7 @@ _PART_NAMES = (
     "_cmd_casc",
     "_cmd_charmodel",
     "_cmd_crew",
+    "_cmd_crewsend",
     "_cmd_lookup",
     "_cmd_live",
     "_cmd_spy",
@@ -575,7 +576,7 @@ _COMMAND_MODULES: dict[str, tuple[str, ...]] = {
     "looks": ("_cmd_looks",),
     "char": ("_cmd_char", "_cmd_charlink", "_cmd_charmodel"),
     "casc": ("_cmd_casc",),
-    "crew": ("_cmd_crew",),
+    "crew": ("_cmd_crew", "_cmd_crewsend"),
     "lookup": ("_cmd_lookup",),
     "live": ("_cmd_live",),
     "spy": ("_cmd_spy",),
@@ -1432,6 +1433,8 @@ EXPECT_FIELDS: dict[tuple[str, ...], tuple[str, ...]] = {
     ),
     ("crew", "rate"): ("target_sha256", "written_sha256", "row_sha256"),
     ("crew", "note"): ("target_sha256", "written_sha256", "row_sha256"),
+    # M22-04: the records for the in-game tooltip, in WowLab.lua.
+    ("crew", "send-records"): ("target_sha256", "written_sha256"),
 }
 """For each command that confirms through `_confirm` and declares `--expect`:
 the fields of its `--json` report whose values, joined by `:` and passed

@@ -1235,6 +1235,12 @@ _PIN_CHECKS: Mapping[tuple[str, ...], str] = {
         "than this plan, or the player's rating or note in wowlab's crew database has changed, "
         "it is refused (exit 3) and nothing is written"
     ),
+    # `crew send-records` (M22-04): WowLab.lua as read, and the bytes the
+    # records would write.
+    ("target_sha256", "written_sha256"): (
+        "if WowLab.lua has changed by then, or the records would now be other bytes than "
+        "this plan's, it is refused (exit 3) and nothing is written"
+    ),
     # `crew forget`: the same for the file and for the game's backup of it,
     # pinned even when the backup is left alone or there is none.
     ("target_sha256", "written_sha256", "backup_sha256", "backup_written_sha256"): (
