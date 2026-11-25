@@ -585,6 +585,12 @@ def test_the_explorer_runs_only_listed_read_commands(server: Any) -> None:
         # show`, which only read (graded in test_ui_spy.py).
         ("spy", "list"),
         ("spy", "show"),
+        # M22-11: the Character page's and a crew player's armory profile
+        # panels run `blizzard show` (reads wowlab's data folder) and, on
+        # Fetch, `blizzard fetch`, which asks Blizzard's API and writes only
+        # into wowlab's data folder, each on a click (graded in test_ui_bnet.py).
+        ("blizzard", "show"),
+        ("blizzard", "fetch"),
     }, used
     for path in used:
         assert path in offered, path

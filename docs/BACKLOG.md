@@ -3868,7 +3868,7 @@ Facts the research established (2026-11-23), for every ticket below:
 - forevertwinking.com allows linking to any page and forbids scraping, reuse of its data and AI-agent collection (its terms of 2026-11-05; its robots.txt blocks Claude agents). wowlab only ever links to it; no agent opens it; its address formats come from the owner (M21-O1). Its armory lists only characters registered there at twink levels (10, 19, 29, 39, 49, 59), so its link sits beside the armory's, never instead of it.
 - No outside script, frame or image enters the page: Wowhead's `tooltips.js` stays out (a remote script in a page that can run wowlab commands). The CSP (`ui/__init__.py` around line 440) is unchanged by every ticket here.
 
-## [ ] M21-01 — The name limits lifted in code and text
+## [x] M21-01 — The name limits lifted in code and text
 **Size:** S · **Depends on:** — · **Sources:** ADR-0019, ADR-0031, ADR-0032 amendments and ADR-0036 note of 2026-11-23
 
 - `disclosure.py` (around line 42) and `docs/INSTALL.md` (line 34): the dressing-room sentence no longer says "public game ids only, never a name"; it says what links now carry (names, realm, region, guild, game ids), that they open only when clicked, and that wowlab itself makes no request. `README.md` follows at the next release (it describes the latest release).
@@ -3879,7 +3879,7 @@ Facts the research established (2026-11-23), for every ticket below:
 
 ---
 
-## [ ] M21-02 — The region
+## [x] M21-02 — The region
 **Size:** S · **Depends on:** — · **Sources:** `docs/LAB_FORMATS.md` (Config.wtf, `portal`); `redact.py:37`
 
 Read `portal` from the flavor's `WTF/Config.wtf` through the existing WTF reader (read-only, L1). `region` (`us`, `eu`, `kr`, `tw`; anything else, `test` included, is `None`) joins `CharSummaryRow`, `CharGearReport` and the crew rows of `crew list`/`crew show`/`crew matches` (for a crew player: the `-Region` part the combat log gave, else the player's own region, since Forever has no cross-region play [verify]). Forever's first and second names: the folder form `<First>-<Second>` and the in-game form are both kept, and each report says which is which.
@@ -3890,7 +3890,7 @@ Read `portal` from the flavor's `WTF/Config.wtf` through the existing WTF reader
 
 ---
 
-## [ ] M21-03 — `links`: one builder for every outside link
+## [x] M21-03 — `links`: one builder for every outside link
 **Size:** M · **Depends on:** M21-02 · **Sources:** `dressing.py`, `dressing_sites.toml`; ADR-0019 amendment of 2026-11-23
 
 `wowlab_core.links`: a pure function per link kind, no network, every site's address template, slug rules (case, spaces, apostrophes, accents, hyphens) and origin in a packaged `link_sites.toml`, each template with at least one recorded example URL that the tests rebuild byte for byte. `dressing.py` keeps its public API and moves onto the shared plumbing (origin, limits, examples), or stays beside it; the implementer chooses and says why.
@@ -3907,16 +3907,18 @@ Link kinds, this ticket: **profile** (Blizzard armory character and guild; wofwf
 
 ---
 
-## [ ] M21-04 — Character tab: profiles, guild and gear links
+## [x] M21-04 — Character tab: profiles, guild and gear links
 **Size:** S · **Depends on:** M21-03
 
 The hero panel (`page.html` around lines 86–154) gains a "Profiles" row: Armory, ForeverTwinking (once its template exists), Journey; the guild name links to the armory's guild page; each gear row's item name becomes a Wowhead link (the name stays the link's own text; nothing is fetched); the spellbook view links spells the same way. `char show`/`char gear --json` carry the URLs.
 
 **Acceptance:** UI tests on a constructed character: each link's `href`; a character with no region shows the row without profile links and says why. Reviewed by `code-reviewer` and `security-reviewer`. User-facing: yes (wiki's Character page).
 
+
+*Amendment 2026-11-24 (conductor, from the code review):* the clause "the spellbook view links spells" is not built: no spellbook view exists in the UI. `links.wowhead_spell` is ready for whichever ticket adds one. The URLs are on `char gear` and `char list --summary`, not `char show`, which prints the raw record.
 ---
 
-## [ ] M21-05 — Crew and PvP rows link out
+## [x] M21-05 — Crew and PvP rows link out
 **Size:** S · **Depends on:** M21-03
 
 Every player row of the Crew tab (the list, `crew show`, both teams of `crew matches`, and `--world` open-world encounters, foes and allies) gets the same profile links as M21-04; `crew list/show/matches --json` carry them; the plain CLI prints the armory URL on `crew show`.
@@ -3925,7 +3927,7 @@ Every player row of the Crew tab (the list, `crew show`, both teams of `crew mat
 
 ---
 
-## [ ] M21-06 — Purist: "See my look"
+## [x] M21-06 — Purist: "See my look"
 **Size:** S · **Depends on:** M21-03
 
 A Purist link beside the dressing-room button, built in `links` from the record: hash `#2|<label>|<race>.<sex>.1.1.<class>.forever|0.0.0|<option>:<choice>,…|<item>,…` (format version 2; field 3 is race id, sex 0/1, classic models, sheathed, class id, game; customization pairs from `labaddon.py` around lines 847–863; equipped item ids in slot order, no bonus ids). The label is the character's name. Purist's format was read from its `/lib/look.js` on 2026-11-23 [verify on each Purist update]; the oracle is the owner's own bookmark (`#2|Nymbil%20Stinkfinger|7.0.1.1.4.forever|0.0.0|9430:78207,…|49,2108,…`), which the builder must rebuild from a constructed record holding the same values.
@@ -3934,16 +3936,18 @@ A Purist link beside the dressing-room button, built in `links` from the record:
 
 ---
 
-## [ ] M21-07 — Talents: "Open my talents" on wowforeverbuilds
+## [x] M21-07 — Talents: "Open my talents" on wowforeverbuilds
 **Size:** M · **Depends on:** M21-03 · **Sources:** ADR-0022 (gamedata)
 
 `gamedata` gains `Talent` and `TalentTab` (cached per build, never overwritten). From the record's Legacy talents, build `https://wowforeverbuilds.com/talents/{class-slug}?b={ranks}&race={race-slug}`: per tree (tab order), talents sorted by row then column, one rank digit each, trailing zeros stripped, trees joined with `-`, empty trailing trees dropped (the site checks `^[0-9]{0,40}(-[0-9]{0,40}){0,2}$` and refuses an illegal build). The site's format was read from its source on 2026-11-23; the oracle is one build URL the owner copies (M21-O2) and the recorded tables of a real build.
 
 **Acceptance:** the oracle rebuilt; a character with no talent record or an unknown talent id gets no link and says why; recorded table fixtures with provenance rows. Reviewed by `code-reviewer` and `domain-reviewer`. User-facing: yes.
 
+
+*Amendment 2026-11-24 (conductor, from the implementation and the domain review):* the `Talent` and `TalentTab` tables at 1.60.1.70888 are classic's 1.x layout, not Forever's. The three-tree layout is read from `TraitNode`, `TraitNodeGroup` and `TraitNodeGroupXTraitNode` instead (the tree split is wowlab's inference, checked against the site for nine classes, [verify]). The site prunes an illegal build in an address rather than refusing it, so the owner's M21-O2 check is: after the page loads, the address still reads `b=022` and the panel shows 2/5 Suppression and 2/5 Improved Corruption.
 ---
 
-## [ ] M21-08 — "Copy for WoWSims"
+## [x] M21-08 — "Copy for WoWSims"
 **Size:** M · **Depends on:** — · **Sources:** wowsims/forever (MIT) `proto/` and its import format
 
 `wowlab char sim-export [--out PATH]` writes the character in the JSON wowsims/forever's individual sim imports (race, class, level, talents, each slot's item id, enchant, gems and random suffix), to stdout or a file under the user data directory; the Character tab gets a button that shows it with a copy control. The schema is read from the pinned commit of wowsims' `proto/` named in the module's docstring; nothing is fetched at run time.
@@ -3952,7 +3956,7 @@ A Purist link beside the dressing-room button, built in `links` from the record:
 
 ---
 
-## [ ] M21-09 — The addon's API reference at the launch build
+## [x] M21-09 — The addon's API reference at the launch build
 **Size:** S · **Depends on:** — · **Sources:** Ketho/BlizzardInterfaceResources `forever` branch; Gethe/wow-ui-source `forever` branch (1.60.1.71037)
 
 A dev-time script (`scripts/`, stdlib only) fetched by hand, never in CI, from a pinned commit of Ketho/BlizzardInterfaceResources' `forever` branch: it regenerates the luacheck globals `make lint-lua` uses and the API list `lab/addon/README.md` cites, replacing forever-addon-kit's 69893 lists. The idea comes from mparke/forever-addons (GPL; nothing copied). The README's [verify] notes are checked against that list and forever-addons' field guide (combat-log restrictions on Forever, the beta's SavedVariables cold-start bug), each with a dated line.
@@ -3979,7 +3983,7 @@ Click each new link on one of your characters and on one opponent; copy one wowf
 *Owner, 2026-11-24:* done in one session with M22-O1's batched check, once v0.4 is ready.
 ---
 
-## [ ] M21-11 — Addon fixes from the launch-build API list
+## [x] M21-11 — Addon fixes from the launch-build API list
 **Size:** S · **Depends on:** M21-09 · **Sources:** M21-09's README findings and its domain review (2026-11-23)
 
 In `lab/addon/WowLab`: (1) macro slots: read `Constants.MacroConsts.MAX_ACCOUNT_MACROS` (guarded) before the 120 fallback, record where the value came from, and correct the false "loaded once the macro window has been opened" reason in `Actions.lua`, the owner-facing text in `labaddon.py` (around line 4007, with its tests) and `docs/LAB_PLAN.md` (around line 2601); (2) the scoreboard probe in `Crew.lua` stops taking `GetBattlefieldScore`'s sixth value as the side when the first is nil and `C_PvP.GetScoreInfo` gave no row (the 12.0.1 deprecation shim returns `faction = 0` for no row); (3) stop asking for `ACCOUNT_BINDINGS`/`CHARACTER_BINDINGS`, which no 71037 UI file defines, and record `Enum.BindingSet` where it helps; (4) read the combat log's state and advanced flag with the documented `C_ChatInfo.IsLoggingCombat`; (5) drop the registration of `BARBER_SHOP_SUCCESS`, which is not in the client's event list. (6) *Added 2026-11-23 (domain review of M21-02):* on Forever, `UnitFullName("player")`'s second value is very likely the character's second name, not a realm, so `homeRealm()` in `Crew.lua` and `realm_from = "full_name"` in `Identity.lua` mislabel it; check with the owner's batched `/dump UnitFullName("player")` and `/dump GetNormalizedRealmName()` (M22-O1) and record the second name as such.
@@ -4025,7 +4029,7 @@ What Spy saves, from the owner's install, read on 2026-11-23:
 - Each `PlayerData` row has `name` ("First-Second"), class, race, level, guild, faction, `isEnemy`, `isGuess`, zone, subZone, `mapID`, mapX/mapY and `time`.
 - Win and loss fields appear in Spy's code (`wins`/`loses` [verify]), but are absent from the owner's 24 rows so far.
 
-## [ ] M22-01 — Read Spy's saved data
+## [x] M22-01 — Read Spy's saved data
 **Size:** M · **Sources:** the facts above; ADR-0036 and ADR-0040; L3, L4, L8
 
 `wowlab_core.spy` reads `SpyDB` and `SpyPerCharDB` through `luadata` (L3; nothing executed).
@@ -4058,9 +4062,11 @@ The Crew tab gains:
 
 **Acceptance:** tests on the M22-01 capture and constructed databases; a re-sync is idempotent; `crew forget` also drops a player's Spy-sourced rows (Spy's own file is never written). Reviewed by `code-reviewer`. User-facing: yes.
 
+
+*Amendment 2026-11-24 (conductor, from M21-12's domain review):* Spy-only rows take their region from the crew book's recorded region, then the settings, with `region_from`, and get their own `names_from` value (`spy`). Spy keys every player by `<First>-<Second>`; build on M21-12's naming rules (game > log > borrowed > key) and its GUID aliases.
 ---
 
-## [ ] M22-03 — Nemesis: the record against each opponent
+## [x] M22-03 — Nemesis: the record against each opponent
 **Size:** M · **Depends on:** M22-02
 
 For each player, from battleground matches, open-world encounters (`scan-log`) and Spy, compute:
@@ -4100,7 +4106,7 @@ Reviewed by `code-reviewer`, `security-reviewer` (a new write) and `domain-revie
 
 ---
 
-## [ ] M22-05 — Live companion and session recap
+## [x] M22-05 — Live companion and session recap
 **Size:** L · **Sources:** `docs/LAB_PLAN.md` §21 (logs), the snapshot store
 
 `wowlab ui` gains a **Live** view, meant for a second monitor.
@@ -4121,7 +4127,7 @@ The page polls the local server; nothing leaves the machine.
 
 ---
 
-## [ ] M22-06 — Twink gap view
+## [x] M22-06 — Twink gap view
 **Size:** L · **Sources:** game tables through `gamedata` (ADR-0022); ItemSparse, ItemBonus, the random-suffix lists (M21-08)
 
 The Character tab gets a **Twink** panel. The player picks a bracket (19, 29, 39, 49 or 59), defaulting to the next one above their level that has a twink cap.
@@ -4158,7 +4164,7 @@ For each command the UI cannot run, add a control, or say why it stays CLI-only 
 
 ---
 
-## [ ] M22-08 — Lookups from the player's own addons and the game tables
+## [x] M22-08 — Lookups from the player's own addons and the game tables
 **Size:** M · **Depends on:** M22-01 (the reader pattern)
 
 A search box in the UI answers: where an item drops or which quest gives it; who sells it; and where an NPC or quest is.
@@ -4261,7 +4267,7 @@ One session, from a checklist the conductor writes. It covers:
 
 ---
 
-## [ ] M22-16 — Where each addon came from (WowUp's records)
+## [x] M22-16 — Where each addon came from (WowUp's records)
 **Size:** S · **Sources:** `docs/handoffs/wow-bookmarks-2026-11-23.md` (WowUp); LAB_IDEAS **addon-provenance**
 
 Read, read-only, the WowUp app's `addons.json` under its user-data folder (on macOS `~/Library/Application Support/WowUp/`; on Windows its AppData folder [verify]; never `sensitive.json`): per addon `providerName`, `externalId`, `externalUrl`, `installedVersion`, `latestVersion`, `installedFolders`, `clientType`, `installedAt`. Join it to the installed `Interface/AddOns` folders: each addon shows its source (Wago, CurseForge, GitHub, …), version and an update-available mark; a folder no manager claims is flagged. The owner's file (6 Wago addons, last written 2026-09-26) is older than the install, so stale records must show as stale. CurseForge's own records are [verify] (format unknown) and come later. The Addons view in the UI shows it (UI-first); `wowlab addons list --json` carries it.
@@ -4281,7 +4287,7 @@ Build the sim's share link from the record: the page `https://wowsims.com/foreve
 
 ---
 
-## [ ] M22-18 — Slash commands, binding commands and the talent string from Blizzard's UI source
+## [x] M22-18 — Slash commands, binding commands and the talent string from Blizzard's UI source
 **Size:** S · **Depends on:** — · **Sources:** Gethe/wow-ui-source `forever` (71037); M21-09's `scripts/forever_api.py`
 
 Extend the dev-time script to also emit, from the same pinned commit, read only and committed as names only: the slash-command list (`Blizzard_ChatFrameBase/Shared/SlashCommands.lua`, `SlashCommandsRegistry.lua`), the binding command names and headers (`Bindings.xml` files, `Keybindings.xml`), and the documented `C_EncodingUtil` limits. The macros view then marks an unknown `/command` in a macro, and the binds view names "unexplained" binding commands (LAB_FORMATS item 8). Write the Forever talent loadout string format (`Blizzard_ClassTalentImportExport.lua`) into `docs/LAB_FORMATS.md` for M21-07 and char-planner.
@@ -4308,7 +4314,7 @@ Turn its recorded combat-log traps into grader cases for wowlab's log reader: `S
 
 ---
 
-## [ ] M22-21 — Read the header of an oversized addon TOC
+## [x] M22-21 — Read the header of an oversized addon TOC
 **Size:** S · **Sources:** M22-08's domain review (QuestieDB's 18.8 MB TOC)
 
 `layout`'s 1 MiB TOC cap makes `addons list` and `addons check` skip QuestieDB's TOC entirely. Read only the leading `##` directives of an oversized TOC (up to the first file line, within the cap), mark the result partial, and report Interface, Title, Version and Dependencies from it; `addons list` says when a TOC was not read whole. Do not raise the cap.
@@ -4317,7 +4323,7 @@ Turn its recorded combat-log traps into grader cases for wowlab's log reader: `S
 
 ---
 
-## [ ] M22-22 — Open world by the game's map table, not by difficulty
+## [x] M22-22 — Open world by the game's map table, not by difficulty
 **Size:** M · **Depends on:** M21-02 (worldpvp) · **Sources:** the owner's real Forever log of 2026-11-23 (domain review of M22-05); owner decision 2026-11-23 ("Use the map table")
 
 The owner's launch-client log writes `ZONE_CHANGE,33,"Shadowfang Keep",0`: a dungeon with difficulty 0, the value `worldpvp` takes as "open world" (LAB_PLAN §21, scan-log). So dungeon fights, and very likely battleground fights [verify], are counted as open-world encounters by `crew scan-log`, the nemesis record and the live view. Replace the rule everywhere it lives (`worldpvp.in_open_world`, shared with M22-05's `live`): a stay is open world when its instance id (the `ZONE_CHANGE` first field) is a map whose `InstanceType` in the build-keyed `Map` table (ADR-0022, fetched through `gamedata` like the other tables; offered as a one-click download in the UI when missing) is the world (0 [verify]); dungeons, raids, battlegrounds and arenas are not. With no Map table cached, the rule falls back to today's reading and says so. A crewdb migration re-checks stored world encounters against the new rule and removes those that were inside an instance (keeping a `.before-schema-N` copy, idempotent, with one `crew scan-log` line saying how many were removed). Record in `docs/LAB_FORMATS.md` §8, dated: the dungeon difficulty-0 line, and that a switch-on within a session appends a new `COMBAT_LOG_VERSION` header plus zone lines to the same file (the 13:30 log holds three headers), answering the addon README's [verify].
@@ -4326,7 +4332,7 @@ The owner's launch-client log writes `ZONE_CHANGE,33,"Shadowfang Keep",0`: a dun
 
 ---
 
-## [ ] M22-23 — Hotfix cache: item stats wago.tools leaves out
+## [x] M22-23 — Hotfix cache: item stats wago.tools leaves out
 **Size:** M · **Sources:** ADR-0033 note of 2026-11-23 (owner decision); ADR-0022; GLOSSARY "Hotfix cache"; the domain review of M22-06; wowsims/forever (MIT) `tools/db2tool/wdc/hotfix.go` as the format reference
 
 The owner's `_forever_/Cache/ADB/enUS/DBCache.bin` (header `XFTH`, version 9, build 71037, 104,618 records) holds 8,401 valid ItemSparse and Item rows; they cover 5,265 of the 11,158 weapons and armour wago.tools' 71037 CSV lacks (4,108 of the 4,944 classic-range ones), including the owner's worn 6537, 6541, 6543, 14113 and dagger 2632. `wowlab_core.hotfix` reads the file read-only, matches table hashes (SStrHash, as wowsims does), and decodes Item and ItemSparse records (strings first, then fixed-width fields, per the build's layout); `gamedata` overlays them on the cached tables only when the cache's build equals the tables' build: status 1 adds or replaces a row, 2 and 3 remove one. Every overlaid row says it came from the hotfix cache. No decryption, no key read. `docs/LAB_FORMATS.md` gains a DBCache.bin section. M22-06's twink panel and M21-08's export use the overlay. A `doctor` line names the cache's build and how many rows it adds.
@@ -4335,7 +4341,7 @@ The owner's `_forever_/Cache/ADB/enUS/DBCache.bin` (header `XFTH`, version 9, bu
 
 ---
 
-## [ ] M22-24 — Pause Windows: no Windows build, no Windows suite
+## [x] M22-24 — Pause Windows: no Windows build, no Windows suite
 **Size:** S · **Sources:** ADR-0031 amendment of 2026-11-24 (owner decision)
 
 Turn off the Windows workflows (`windows.yml` nightly, `windows-app.yml`) and the Windows jobs of `release.yml` (`windows_app`, `windows_app_smoke`, `windows_app_release`), keeping the files' history clear about why (a comment naming the ADR amendment), and update every test that pins those workflows or jobs (`tests/packaging/test_windows_app.py`, `tests/repo/*`, the release tests) so they pin the paused state instead. README (at the next release), INSTALL.md and the release notes say Windows is not supported for now. Nothing Windows-specific is deleted from the library. Record the paused suite's last failures (crew-database WinError 32 since 2026-11-20) in DATA_SOURCES for when it resumes.
@@ -4355,8 +4361,17 @@ Turn off the Windows workflows (`windows.yml` nightly, `windows-app.yml`) and th
 
 ---
 
+## [ ] M22-26 — The file map names CurseForge's SavedVariables sync
+**Size:** S · **Depends on:** M22-25 · **Sources:** M22-25's domain review; LAB_FORMATS §16
+
+The CurseForge app's capture has SavedVariables sync and backup switched on. If the app restores SavedVariables from its cloud copy, it is another writer of `WTF/Account/**/SavedVariables/*.lua`. Name it in LAB_FILE_MAP's SavedVariables rows as a possible writer ([verify] what it writes and when), and say so wherever the file map calls those files safe to edit. User-facing: `wowlab explain` and the Explorer's notes.
+
+**Acceptance:** the generated LAB_FILE_MAP and the `explain` text name it; tests updated. Reviewed by `code-reviewer` and `domain-reviewer`.
+
+---
+
 ## [ ] M22-14 — Wave review
-**Size:** S · **Depends on:** M22-01 to M22-13, M22-15 to M22-25, M22-O1
+**Size:** S · **Depends on:** M22-01 to M22-13, M22-15 to M22-26, M22-O1
 
 `docs/handoffs/M22-review.md`; dispatch stops until the owner's next pick.
 
@@ -4368,3 +4383,5 @@ Turn off the Windows workflows (`windows.yml` nightly, `windows-app.yml`) and th
 The lab-addon's combat-log rule (M20-19) also turns logging on in a battleground or arena instance and off on leaving it; dungeons and raids stay off; one quiet chat line per switch, as now. `crew scan-log` reads battleground and arena segments as well (today it skips them): within a match segment it records your killing blows (`PARTY_KILL` by you or your pet) and your deaths (`UNIT_DIED` of your GUID, credited to the hostile player who last damaged you within 30 s, as the open-world rule), joined to the match the scoreboard recorded where one matches by map and time, kept as battleground fights beside world encounters. M22-03's **Nemesis** counts these personal kills and deaths; **Rival team** stays team results only.
 
 **Acceptance:** stub-client tests for the switch on entering and leaving a battleground; scan-log tests on a constructed battleground segment and, once the owner has played one battleground with logging on, a real captured slice (M22-O1); the record traces each battleground kill to its log line. Reviewed by `code-reviewer` and `domain-reviewer`. User-facing: yes (the chat lines, the Nemesis counts, the wiki's addon and crew pages).
+
+*Amendment 2026-11-24 (conductor, from M22-20's domain review):* on the launch client, `SWING_DAMAGE_LANDED` is written one-sided: a creature's melee on a player appears only as `LANDED`, with no `SWING_DAMAGE` before it. `worldpvp.DAMAGE_EVENTS` leaves `LANDED` out, so if an enemy player's melee on the owner is also written that way, the open-world record and Nemesis lose those hits. Check it on a real player-versus-player slice ([verify]; no committed slice has one) and, if so, count `SWING_DAMAGE_LANDED` as the target's damage taken, never twice. Players' spell and ranged damage on creatures was also missing from the 20:04 slice; whether the logging player's own spell damage is written is [verify].

@@ -533,10 +533,25 @@ if TYPE_CHECKING:
         _check_toc_lines as _check_toc_lines,
     )
     from wowlab_core.cli._cmd_addons import (
+        _lists as _lists,
+    )
+    from wowlab_core.cli._cmd_addons import (
+        _Matches as _Matches,
+    )
+    from wowlab_core.cli._cmd_addons import (
+        _record_name as _record_name,
+    )
+    from wowlab_core.cli._cmd_addons import (
         _scope_lines as _scope_lines,
     )
     from wowlab_core.cli._cmd_addons import (
+        _shown_version as _shown_version,
+    )
+    from wowlab_core.cli._cmd_addons import (
         _source_date as _source_date,
+    )
+    from wowlab_core.cli._cmd_addons import (
+        _source_record_words as _source_record_words,
     )
     from wowlab_core.cli._cmd_addons import (
         _toc_words as _toc_words,
@@ -546,9 +561,6 @@ if TYPE_CHECKING:
     )
     from wowlab_core.cli._cmd_addons import (
         _ui_text as _ui_text,
-    )
-    from wowlab_core.cli._cmd_addons import (
-        _wowup_record_words as _wowup_record_words,
     )
     from wowlab_core.cli._cmd_addons import (
         addons_check as addons_check,

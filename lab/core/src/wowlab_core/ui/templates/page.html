@@ -209,6 +209,18 @@
 <div id="char-twink"></div>
 <ul id="char-twink-notes" class="char-notes twink-notes"></ul>
 </section>
+<section id="bnet-char-panel" class="panel char-panel" aria-labelledby="bnet-char-title">
+<h3 id="bnet-char-title">Blizzard profile</h3>
+<p class="bnet-intro">Item level, gear, guild and portrait as Blizzard's armory shows them, each with the time it was fetched. Nothing is asked of Blizzard until you press Fetch.</p>
+<div class="toolbar bnet-tools">
+<button id="bnet-char-show" type="button" disabled>Show the saved profile</button>
+<button id="bnet-char-fetch" type="button" hidden>Fetch from Blizzard</button>
+</div>
+<p id="bnet-char-status" class="bnet-status"></p>
+<div id="bnet-char-portrait" class="bnet-portrait" hidden></div>
+<ul id="bnet-char-lines" class="bnet-lines"></ul>
+<ul id="bnet-char-gear" class="bnet-gear"></ul>
+</section>
 </div>
 <section id="char-keys-panel" class="panel char-panel" aria-labelledby="char-keys-title" hidden>
 <h3 id="char-keys-title">Keys</h3>
@@ -288,6 +300,18 @@
 <div class="crew-actions"><button id="crew-player-matches-show" type="button">Show their matches</button></div>
 <p id="crew-player-matches-words" class="crew-words" hidden></p>
 <ul id="crew-player-matches" class="crew-lines" hidden></ul>
+<section id="bnet-crew-panel" class="bnet-crew" aria-labelledby="bnet-crew-title">
+<h4 id="bnet-crew-title">Blizzard profile</h4>
+<p class="bnet-intro">Item level, gear, guild and portrait as Blizzard's armory shows them, each with the time it was fetched. Nothing is asked of Blizzard until you press Fetch.</p>
+<div class="toolbar bnet-tools">
+<button id="bnet-crew-show" type="button" disabled>Show the saved profile</button>
+<button id="bnet-crew-fetch" type="button" hidden>Fetch from Blizzard</button>
+</div>
+<p id="bnet-crew-status" class="bnet-status"></p>
+<div id="bnet-crew-portrait" class="bnet-portrait" hidden></div>
+<ul id="bnet-crew-lines" class="bnet-lines"></ul>
+<ul id="bnet-crew-gear" class="bnet-gear"></ul>
+</section>
 <div id="crew-actions" class="crew-actions" hidden>
 <div class="crew-action"><label>Your rating <select id="crew-rate-value"></select></label><button id="crew-rate" type="button">Show the plan</button></div>
 <div class="crew-action"><label>Your note <input id="crew-note-text" type="text" autocomplete="off" spellcheck="false"></label><button id="crew-note" type="button">Show the plan</button></div>
@@ -416,7 +440,7 @@
 <p id="sources-status" role="status"></p>
 </div>
 <details class="about"><summary>About this data</summary>
-<p class="patch-day-intro">Addons the game may skip, and saved data no installed addon declares, as wowlab reads them from your files. Reads only. Pick a line to see its file in the Explorer. Where they came from is what the WowUp app recorded when it installed each addon into this game folder, read with <code>wowlab addons list</code>: the site, the version, an update WowUp knew of when it last checked, and whether its record still matches the folders here. WowUp keeps one list for every game folder it manages; a record of another game folder is never counted as this folder's. WowUp's own files are read, never changed, and nothing is fetched. An addon not in WowUp's list was installed by hand or by an app wowlab does not read.</p>
+<p class="patch-day-intro">Addons the game may skip, and saved data no installed addon declares, as wowlab reads them from your files. Reads only. Pick a line to see its file in the Explorer. Where they came from is what the WowUp app and the CurseForge app recorded when they installed each addon into this game folder, read with <code>wowlab addons list</code>: the site, the version, an update the app knew of when it last checked, and whether its record still matches the folders here. Each app keeps one list for every game folder it manages; a record of another game folder is never counted as this folder's. A folder both apps list is shown as such. The apps' own files are read, never changed, and nothing is fetched. An addon in neither list was installed by hand or by an app wowlab does not read.</p>
 </details>
 </section>
 <section id="live-view" role="tabpanel" aria-labelledby="sec-live" hidden>

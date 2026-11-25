@@ -144,6 +144,7 @@ def test_commands_are_registered_in_the_order_they_were_before_the_split() -> No
         "crew",  # M19-02
         "live",  # M22-05
         "spy",  # M22-01
+        "blizzard",  # M22-11
     ]
     snap = root.commands["snap"]
     assert isinstance(snap, typer.core.TyperGroup)

@@ -151,6 +151,10 @@ EXCLUDED: dict[str, str] = {
     "db2 fetch": "downloads a table into wowlab's cache",
     "db2 builds": "asks wago.tools for its list of versions",
     "ui": "its server is started in this process instead, and its read requests made",
+    # M22-11: the Blizzard API client and profiles (status and show run).
+    "blizzard login": "asks for the API client's secret and writes wowlab's data folder",
+    "blizzard logout": "removes the API client from wowlab's data folder",
+    "blizzard fetch": "asks Blizzard's API and writes wowlab's data folder",
 }
 
 
@@ -702,6 +706,8 @@ def run_commands(inst: install.Install, sweep: Sweep) -> None:
     root = inst.root
     sweep.cli("doctor", "--json")
     sweep.cli("install", "show", "--json")
+    # M22-11: reads wowlab's data folder only; asks Blizzard nothing.
+    sweep.cli("blizzard", "status", "--json")
     sweep.cli("filemap", "gaps", "--json")
     sweep.cli("tree", "--install", "--json")
     sweep.hide_rows(_report(sweep.cli("char", "list", "--json")), "characters", "label")
@@ -820,6 +826,8 @@ def run_commands(inst: install.Install, sweep: Sweep) -> None:
         sweep.cli("char", "link", "list", *ch, "--json")
         # M22-05: the Live view's recap reads the logs, the store and the book.
         sweep.cli("live", "recap", *ch, "--json")
+        # M22-11: what earlier fetches saved for this name; asks Blizzard nothing.
+        sweep.cli("blizzard", "show", *fl, "--json", "--", str(row["label"]))
         # M22-06: `char twink` downloads its game tables on a first run, so it
         # runs only when every one is already cached for this version.
         if _cached(twink.TABLES, f.version):
