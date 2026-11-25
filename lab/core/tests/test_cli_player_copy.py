@@ -564,6 +564,7 @@ NOT_RUN = {
     # M19-03: test_cli_crew_write.py runs them on constructed books.
     ("crew", "forget"): "writes into the install",
     ("crew", "rate"): "writes into the install",
+    ("crew", "send"): "writes into the install",
     ("crew", "note"): "writes into the install",
     ("undo",): "writes into the install",
     # M21-03: test_cli_char_link.py runs them and checks their text.

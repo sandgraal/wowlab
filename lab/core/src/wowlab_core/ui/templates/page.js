@@ -4947,8 +4947,8 @@
     mapsFlavor: "", // the flavor whose map table a read said is missing (M22-22)
     key: null, // the stored key of the player shown
     pending: null, // the plan Confirm would run: { command, params, token }
-    sendSeq: 0, // the latest send-records plan or confirmed run (M22-04)
-    sendPending: null, // the send-records plan Confirm would run: { params, token }
+    sendSeq: 0, // the latest send plan or confirmed run (M22-04)
+    sendPending: null, // the send plan Confirm would run: { params, token }
     searchTimer: null,
     // The Matches filter just changed (M22-03): the next read sends no order,
     // so the command uses that view's own, and the Order box then shows it.
@@ -5565,10 +5565,10 @@
   }
 
   // ─── the record on the in-game tooltip (M22-04) ───
-  // `crew send-records`: its plan run, then Confirm with the server's token,
+  // `crew send`: its plan run, then Confirm with the server's token,
   // exactly as a change to one player goes (crewPlan, crewConfirm). The
   // records are what the command adds up; the page only shows its words.
-  const SEND = ["crew", "send-records"];
+  const SEND = ["crew", "send"];
 
   function crewSendSay(text, isError) {
     const node = byId("crew-send-status");

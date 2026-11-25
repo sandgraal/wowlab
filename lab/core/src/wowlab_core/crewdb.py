@@ -134,9 +134,9 @@ _DAILY = re.compile(r"\.daily-([0-9]{4}-[0-9]{2}-[0-9]{2})\Z")
 _BEFORE_SCHEMA = re.compile(r"\.before-schema-[0-9]+\Z")
 # The labels the crew write commands give their write-gate changes:
 # "crew forget (3 players)", "crew rate (1 player)", "crew note (1 player)".
-# Also `crew send-records` with its count (M22-04), which writes only the
+# Also `crew send` with its count (M22-04), which writes only the
 # records for the game's tooltip beside the book and leaves the book as it is.
-_CREW_WRITE = re.compile(r"crew (forget|rate|note|send-records) \([0-9]+ players?\)\Z")
+_CREW_WRITE = re.compile(r"crew (forget|rate|note|send) \([0-9]+ players?\)\Z")
 
 # ─── SQL: constant strings only ──────────────────────────────────────────────
 

@@ -1,4 +1,4 @@
-"""The Crew tab's "Send records to the game" (M22-04): `crew send-records`
+"""The Crew tab's "Send records to the game" (M22-04): `crew send`
 through the server's confirm step, its plan shown before Confirm.
 
 CONSTRUCTED INPUT: every crew book is built at run time by
@@ -29,7 +29,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent / "parser"))
 
 from _crew_build import KEY_A, KEY_C, T2, book, match, player
 
-SEND = ("crew", "send-records")
+SEND = ("crew", "send")
 _TEMPLATES = Path(ui.__file__).resolve().parent / "templates"
 
 
@@ -72,7 +72,7 @@ def test_send_records_plans_then_confirms_with_its_pin_constructed(crew_at: Any)
     assert done["confirm"]["note"] == (
         f"Journaled as {report['transaction']}. `wowlab undo` reverses it."
     )
-    assert crew.history()[-1].label == "crew send-records (1 player)"
+    assert crew.history()[-1].label == "crew send (1 player)"
     assert hashlib.sha256(crew.live.read_bytes()).hexdigest() == shown["written_sha256"]
     assert _table(crew)["players"][KEY_C]["matches"] == 3
     # The same token again runs nothing.
@@ -109,15 +109,15 @@ def test_the_button_shows_the_plan_and_confirm_writes_constructed(
     (body,) = _bodies(again)
     assert "confirm" not in body
     assert "Nothing to send: the game already holds these records." in again["text"]
-    assert [r.label for r in crew.history()] == ["crew send-records (1 player)"]
+    assert [r.label for r in crew.history()] == ["crew send (1 player)"]
 
 
 def test_the_page_runs_send_records_only_through_the_step() -> None:
     """Labelled source scan: the page names the command in one constant and
     posts it only in its plan run and its confirmed run."""
     script = (_TEMPLATES / "page.js").read_text(encoding="utf-8")
-    assert script.count('const SEND = ["crew", "send-records"];') == 1
-    assert script.count('"send-records"') == 1
+    assert script.count('const SEND = ["crew", "send"];') == 1
+    assert script.count('"send"') == 1
     assert script.count("postRun({ command: SEND, params: params })") == 1
     assert script.count("postRun({ command: SEND, params: plan.params, confirm: plan.token })") == 1
     page = (_TEMPLATES / "page.html").read_text(encoding="utf-8")

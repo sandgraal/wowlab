@@ -1,4 +1,4 @@
-"""`wowlab crew send-records` (M22-04): each player's record, written into
+"""`wowlab crew send` (M22-04): each player's record, written into
 the game account's `WowLab.lua` as `WowLabDeskDB` for the line the
 lab-addon adds to a player's tooltip in game.
 
@@ -84,7 +84,7 @@ _BOOK_OFF = "The line shows only while the crew book is on in game: type /wowlab
 
 
 class CrewSendReport(_Out):
-    """`wowlab crew send-records --json`: the records written, or that
+    """`wowlab crew send --json`: the records written, or that
     would be written, into one game account's `WowLab.lua` for the in-game
     tooltip line.
 
@@ -185,11 +185,11 @@ def _send_write(
 
 
 @crew_app.command(
-    "send-records",
-    short_help="Write each player's record into the game's files for the tooltip (asks first).",
+    "send",
+    short_help="Write your record against each player into the game (asks first).",
 )
 @_handled
-def crew_send_records(
+def crew_send(
     expect: Annotated[
         str | None,
         typer.Option(
@@ -338,7 +338,7 @@ def crew_send_records(
         data,
         new,
         pin=pin,
-        label=f"crew send-records ({_plural(count, 'player')})",
+        label=f"crew send ({_plural(count, 'player')})",
         store=store,
     )
     finished = report(written=True, transaction=record)

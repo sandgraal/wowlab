@@ -3,7 +3,7 @@
 Hovering a player adds one line: how often you fought them, the killing
 blows each way, the matches your side won, and the Nemesis, Rival team and
 kill-on-sight marks. Two sources: the crew book's own match counters, live,
-and the table wowlab writes into `WowLabDeskDB` (`wowlab crew send-records`,
+and the table wowlab writes into `WowLabDeskDB` (`wowlab crew send`,
 `wowlab_core.desktable`), which the game loads at login or `/reload`.
 
 Nothing here runs Lua (L3). Three parts, as in test_m21_12_full_names.py:
@@ -219,7 +219,7 @@ def test_m22_04_the_readme_says_what_the_line_shows() -> None:
     for phrase in (
         "The record line",
         "WowLabDeskDB",
-        "wowlab crew send-records",
+        "wowlab crew send",
         "Fought 7× · kills 1 to 3 · matches won 1 of 4 · Nemesis · Rival team · KOS",
     ):
         assert phrase in readme, phrase

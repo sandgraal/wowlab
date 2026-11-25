@@ -1434,7 +1434,7 @@ EXPECT_FIELDS: dict[tuple[str, ...], tuple[str, ...]] = {
     ("crew", "rate"): ("target_sha256", "written_sha256", "row_sha256"),
     ("crew", "note"): ("target_sha256", "written_sha256", "row_sha256"),
     # M22-04: the records for the in-game tooltip, in WowLab.lua.
-    ("crew", "send-records"): ("target_sha256", "written_sha256"),
+    ("crew", "send"): ("target_sha256", "written_sha256"),
 }
 """For each command that confirms through `_confirm` and declares `--expect`:
 the fields of its `--json` report whose values, joined by `:` and passed

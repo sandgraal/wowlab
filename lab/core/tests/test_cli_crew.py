@@ -477,8 +477,9 @@ print(json.dumps([[n for n in _common._PART_NAMES if f"wowlab_core.cli.{{n}}" in
 
 
 def test_crew_loads_its_own_module_and_no_other_command_loads_the_reader() -> None:
+    # M22-04: the crew group's second module, `crew send`, comes with it.
     assert _child(_LOADED.format(argv=["crew", "list", "--help"])) == [
-        ["_common", "_cmd_crew"],
+        ["_common", "_cmd_crew", "_cmd_crewsend"],
         True,
     ]
     for argv in (

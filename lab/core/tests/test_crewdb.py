@@ -1329,7 +1329,7 @@ def test_only_the_crew_commands_import_crewdb() -> None:
         "import importlib, pkgutil, sys\n"
         "import wowlab_core.cli as cli\n"
         "for m in pkgutil.iter_modules(cli.__path__):\n"
-        "    if m.name != '_cmd_crew':\n"
+        "    if m.name not in ('_cmd_crew', '_cmd_crewsend'):\n"
         "        importlib.import_module('wowlab_core.cli.' + m.name)\n"
         "import wowlab_core.ui\n"
         "print('wowlab_core.crewdb' in sys.modules)\n"

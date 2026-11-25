@@ -1875,7 +1875,7 @@ Dated entries, newest last. Each names the fixture that prompted it.
   is graded on constructed tables).** The account `WowLab.lua` may hold a
   third top-level table, `WowLabDeskDB` (the TOC's `## SavedVariables:
   WowLabDB, WowLabCrewDB, WowLabDeskDB`), written only by `wowlab crew
-  send-records` through the write gate while the client is closed, and
+  send` through the write gate while the client is closed, and
   never by the addon. Its own `schema` is 1. Keys are written in the
   client's `["name"] = ` form, laid out as the file around it: `schema`
   (1), `day` (text, `YYYY-MM-DD`, the day wowlab wrote it, the computer's

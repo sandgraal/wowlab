@@ -862,7 +862,7 @@ records nothing.
   sources. The book's own match counters (`faced`, `faced_won`), live. And
   `WowLabDeskDB`, a table wowlab writes into the same `WowLab.lua`
   (`## SavedVariables: WowLabDB, WowLabCrewDB, WowLabDeskDB`) with `wowlab
-  crew send-records` or the Crew tab's "Send records to the game", through
+  crew send` or the Crew tab's "Send records to the game", through
   its write gate while the game is closed: the open-world fights read from
   combat logs, the matches wowlab's crew database kept after the game's
   list dropped them, the marks, and the book's counters as they were when

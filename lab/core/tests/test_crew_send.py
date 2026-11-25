@@ -1,4 +1,4 @@
-"""`wowlab crew send-records` and `wowlab_core.desktable` (M22-04): each
+"""`wowlab crew send` and `wowlab_core.desktable` (M22-04): each
 player's record, written into the account's `WowLab.lua` as `WowLabDeskDB`
 for the line the lab-addon adds to a player's tooltip in game.
 
@@ -136,14 +136,14 @@ def _built(make: Any, **kw: Any) -> Env:
 
 def _plan(env: Env) -> cli.CrewSendReport:
     """A plan run: --json, no --yes, no answer (the declined shape)."""
-    result = env.run("crew", "send-records", "--json", input="")
+    result = env.run("crew", "send", "--json", input="")
     assert result.exit_code == 1, (result.stdout, result.stderr)
     assert result.stderr.endswith(f"{cli.CONFIRM_DECLINED}\n")
     return cli.CrewSendReport.model_validate_json(result.stdout)
 
 
 def _send(env: Env, *extra: str) -> cli.CrewSendReport:
-    result = env.run("crew", "send-records", "--yes", "--json", *extra)
+    result = env.run("crew", "send", "--yes", "--json", *extra)
     assert result.exit_code == 0, (result.stdout, result.stderr)
     return cli.CrewSendReport.model_validate_json(result.stdout)
 
@@ -213,7 +213,7 @@ def test_sending_again_the_same_day_changes_nothing_constructed(make: Any) -> No
     assert first.changed and not again.changed and not again.written
     assert again.written_sha256 is None and env.data() == data
     assert again.before is not None and again.before.players == 3
-    assert [r.label for r in guard.history()] == ["crew send-records (3 players)"]
+    assert [r.label for r in guard.history()] == ["crew send (3 players)"]
 
 
 def test_a_second_send_replaces_the_table_in_place_constructed(make: Any) -> None:
@@ -254,23 +254,23 @@ def test_undo_takes_the_records_out_again_constructed(make: Any) -> None:
 
 def test_the_text_plan_and_the_done_line_constructed(make: Any) -> None:
     env = _built(make)
-    result = env.run("crew", "send-records", input="n\n")
+    result = env.run("crew", "send", input="n\n")
     assert result.exit_code == 1
     assert "Write the records of 3 players into WowLab.lua of game account" in result.stdout
     assert "1 Nemesis, 1 Rival team, 1 on a Spy kill-on-sight list" in result.stdout
     assert "  replace  " in result.stdout and guard.history() == ()
-    result = env.run("crew", "send-records", "--yes")
+    result = env.run("crew", "send", "--yes")
     assert result.exit_code == 0, (result.stdout, result.stderr)
     assert "Wrote the records of 3 players." in result.stdout
     assert "notes: --notes shows them" in result.stdout
-    result = env.run("crew", "send-records")
+    result = env.run("crew", "send")
     assert result.exit_code == 0
     assert "The game already holds these records (3 players" in result.stdout
 
 
 def test_a_book_that_is_off_is_written_with_a_caveat_constructed(make: Any) -> None:
     env = _built(make, on=False)
-    result = env.run("crew", "send-records", "--yes")
+    result = env.run("crew", "send", "--yes")
     assert result.exit_code == 0, (result.stdout, result.stderr)
     assert "only while the crew book is on in game" in result.stdout
     assert _send(env).book_state == "off"
@@ -286,7 +286,7 @@ def test_no_records_and_no_spy_writes_an_empty_table_constructed(make: Any) -> N
 def test_no_saved_file_is_refused_constructed(make: Any) -> None:
     env: Env = make(_book())
     env.file.unlink()
-    result = env.run("crew", "send-records", "--yes")
+    result = env.run("crew", "send", "--yes")
     assert result.exit_code == 1
     assert "There is no WowLab.lua" in result.stderr and guard.history() == ()
 
@@ -313,7 +313,7 @@ def test_refused_while_the_client_runs_constructed(
             return "running"
 
     monkeypatch.setattr(psutil, "process_iter", lambda *a, **k: iter([Game()]))
-    result = env.run("crew", "send-records", "--yes")
+    result = env.run("crew", "send", "--yes")
     assert result.exit_code == 3, (result.stdout, result.stderr)
     assert env.data() == before and guard.history() == ()
 
@@ -325,7 +325,7 @@ def test_the_plan_s_pin_lets_the_confirmed_run_write_constructed(make: Any) -> N
     env = _built(make)
     plan = _plan(env)
     assert not plan.written and plan.changed and guard.history() == ()
-    fields = cli.EXPECT_FIELDS[("crew", "send-records")]
+    fields = cli.EXPECT_FIELDS[("crew", "send")]
     assert fields == ("target_sha256", "written_sha256")
     assert set(fields) <= set(cli.CrewSendReport.model_fields)
     pin = ":".join(str(getattr(plan, f)) for f in fields)
@@ -339,7 +339,7 @@ def test_a_file_changed_between_plan_and_confirm_is_refused_constructed(make: An
     pin = f"{plan.target_sha256}:{plan.written_sha256}"
     env.save(_book(c_faced=5))  # a session played in between
     changed = env.data()
-    result = env.run("crew", "send-records", "--yes", f"--expect={pin}")
+    result = env.run("crew", "send", "--yes", f"--expect={pin}")
     assert result.exit_code == 3, (result.stdout, result.stderr)
     assert env.data() == changed and guard.history() == ()
 
@@ -347,12 +347,12 @@ def test_a_file_changed_between_plan_and_confirm_is_refused_constructed(make: An
 @pytest.mark.parametrize("pin", ["a" * 64, "absent:" + "a" * 64, "A" * 64 + ":absent"])
 def test_a_pin_that_is_not_the_report_s_is_a_usage_error(make: Any, pin: str) -> None:
     env = _built(make)
-    result = env.run("crew", "send-records", "--yes", f"--expect={pin}")
+    result = env.run("crew", "send", "--yes", f"--expect={pin}")
     assert result.exit_code == 2, (result.stdout, result.stderr)
 
 
 def test_the_command_is_in_the_ui_s_confirm_step_with_its_pin_constructed(make: Any) -> None:
-    leaf = ui._read_tree(typer.main.get_command(cli.app))[("crew", "send-records")]
+    leaf = ui._read_tree(typer.main.get_command(cli.app))[("crew", "send")]
     assert leaf.excluded is None and leaf.confirm == "declined"
     assert leaf.pin == ("target_sha256", "written_sha256")
     env = _built(make)
@@ -366,14 +366,14 @@ def test_the_journal_names_no_player_constructed(make: Any) -> None:
     env = _built(make)
     _send(env)
     (record,) = guard.history()
-    assert record.label == "crew send-records (3 players)"
+    assert record.label == "crew send (3 players)"
     for key in (KEY_A, KEY_B, KEY_C, KEY_D, KOS_ONLY):
         assert key not in record.label
 
 
 def test_help_names_no_project_vocabulary() -> None:
     result = typer.testing.CliRunner().invoke(
-        cli.app, ["crew", "send-records", "--help"], terminal_width=200
+        cli.app, ["crew", "send", "--help"], terminal_width=200
     )
     assert result.exit_code == 0
     assert not re.search(
@@ -451,6 +451,6 @@ def test_read_table_says_what_the_file_holds() -> None:
 
 
 def test_the_crew_write_labels_include_send_records() -> None:
-    assert crewdb._CREW_WRITE.fullmatch("crew send-records (3 players)")
-    assert crewdb._CREW_WRITE.fullmatch("crew send-records (1 player)")
-    assert not crewdb._CREW_WRITE.fullmatch("crew send-records (3 players) x")
+    assert crewdb._CREW_WRITE.fullmatch("crew send (3 players)")
+    assert crewdb._CREW_WRITE.fullmatch("crew send (1 player)")
+    assert not crewdb._CREW_WRITE.fullmatch("crew send (3 players) x")
