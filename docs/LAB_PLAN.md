@@ -1879,6 +1879,31 @@ never edited. Every capture passes through `scripts/lab_capture.py`, which
   reads `identity-rewritten: path only`. Committed fixtures and their rows
   keep their pseudonyms (ADR-0012).
 
+> **Amendment 2026-11-24 (M22-25).** A file from outside an install, such
+> as an addon manager's records, is captured by the tool's single-file
+> mode: `--file <path> --source <folder>`, written to
+> `<out>/<source>/<platform>/<file name>`. The same detectors run, with the
+> same refusal on a leftover, and the identity map is the install's when
+> `--root` is given (nothing else is read from it). The mode also owns what
+> only such a file holds, byte for byte and never parsing it: a per-user
+> link token in a URL query (WowUp's `?link=`) is blanked to `REDACTED`, an
+> app-install, game-instance or account id under a known JSON key (WowUp's
+> `install_id`, CurseForge's `guid`, `gameInstanceID` and `SyncProfileID`)
+> gets a stand-in, and the capturing machine's home folder becomes
+> `/Volumes/Labdisk`. It refuses a link, a file that is not regular (a FIFO
+> before any open), one past `--max-bytes`, a file inside an install and an
+> `--out` inside one (links resolved, every folder above checked), one
+> whose name or any folder name below the home folder suggests a token,
+> cookie, login, credentials, session or browser-storage file (never
+> opened), a compressed, NUL-holding or non-UTF-8 file, a JSON `\u` escape
+> of a printable character (the detectors read raw bytes), a JSON key that
+> names a secret, a JWT, a percent-encoded home path, an id of a shape it
+> does not replace, more than 64 distinct text ids (a manager's file holds
+> one or two), and two replacements that overlap. The provenance
+> row's flavor cell says `n/a (outside an install)` and its notes give the
+> source path under `~`, the file time, and the size and SHA-256 before
+> the scrub.
+
 > **Amendment 2026-09-21 (M10-02 reviews).** The tool blanks rather than
 > drops: the line is kept as `SET name ""`, so the row says
 > `cvars-blanked: n`, alongside `guids-rewritten: n` and `embedded: n` (the

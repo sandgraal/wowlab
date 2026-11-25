@@ -49,6 +49,7 @@ function sourcesView() {
     items: li.all().filter((e) => has(e, "sources-item")).map((e) => e.textContent),
     clear: li.all().filter((e) => has(e, "sources-clear")).map((e) => e.textContent),
     loose: li.all().filter((e) => has(e, "sources-loose")).map((e) => e.textContent),
+    both: li.all().filter((e) => has(e, "sources-both")).map((e) => e.textContent),
     notes: li.all().filter((e) => has(e, "sources-note")).map((e) => e.textContent),
     errors: li.all().filter((e) => has(e, "sources-error")).map((e) => e.textContent),
   }));
@@ -198,8 +199,8 @@ def test_the_records_the_stale_ones_and_the_folders_no_one_claims_constructed(
     assert beta["what"] == ["In WowUp's list", "In WowUp's list, with none of their folders here"]
     dbm, dungeons, *away = beta["items"]
     assert dbm.startswith(
-        "Deadly Boss Mods (DBM): from Wago, WowUp installed 12.1.11, WowUp's record is out of "
-        "date (not here: DBM-Core, DBM-GUI,"
+        "Deadly Boss Mods (DBM): from Wago, WowUp installed 12.1.11, WowUp's record no longer "
+        "matches this folder (not here: DBM-Core, DBM-GUI,"
     )
     assert dbm.endswith(" Folders: DBM-Brawlers.")
     assert "the TOC" not in dungeons  # r264 agrees with DBM-Dungeons-r264
@@ -207,8 +208,9 @@ def test_the_records_the_stale_ones_and_the_folders_no_one_claims_constructed(
     assert [a.split(":")[0] for a in away] == ["RareScanner", "Pawn", "Baganator", "Syndicator"]
     assert beta["loose"] == []
     assert beta["notes"] == [
-        "An out-of-date record means the addon changed after WowUp last wrote its list, by "
-        "hand or by another app."
+        "A record that no longer matches this folder means the folder changed after the app "
+        "installed it: by another of the app's records that carries the same folder, by hand, "
+        "or by another app."
     ]
     forever = blocks[FOREVER]
     assert forever["items"] == [] and forever["loose"] == [] and forever["notes"] == []
@@ -234,15 +236,14 @@ def test_a_stale_record_and_folders_no_one_claims_constructed(
     forever = _blocks(out["steps"][0]["sources"])[FOREVER]
     [baganator] = [i for i in forever["items"] if i.startswith("Baganator:")]
     assert baganator == (
-        "Baganator: from Wago, WowUp installed 829, WowUp's record is out of date "
-        "(the TOC here says 850). Folders: Baganator."
+        "Baganator: from Wago, WowUp installed 829, WowUp's record no longer matches this "
+        "folder (the TOC here says 850). Folders: Baganator."
     )
     listed = json.loads(_list_run(scenario, FOREVER)["stdout"])["sources"]["folders"]
     loose = [f["folder"] for f in listed if f["unclaimed"] is True]
     assert "Auctionator" in loose and "BanterBlocker" in loose
-    assert forever["what"][-1] == (
-        f"Not in WowUp's list, the only addon manager's list wowlab reads ({len(loose)})"
-    )
+    # CurseForge's list is not in this home (M22-25): only WowUp's judged.
+    assert forever["what"][-1] == f"Not in WowUp's list ({len(loose)})"
     assert forever["loose"] == [", ".join(loose)]
 
 
@@ -264,8 +265,8 @@ def test_with_no_wowup_list_the_panel_says_so_constructed(
     out = _drive(tmp_path / "node", _scenario(server, [{"sources_open": True}]))
     for block in out["steps"][0]["sources"]["blocks"]:
         assert block["clear"] == [
-            "wowlab found no WowUp list on this computer, so it cannot tell where these "
-            "addons came from."
+            "wowlab found no WowUp or CurseForge list on this computer, so it cannot tell "
+            "where these addons came from."
         ]
         assert block["items"] == [] and block["loose"] == [] and block["notes"] == []
 

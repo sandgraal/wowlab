@@ -7028,9 +7028,10 @@
   // ─── where each addon came from (M22-16) ───
   // Per flavor the hub's report lists, the `sources` of `addons list
   // --json`: the records of the addon managers wowlab reads (the WowUp
-  // app's), joined to the addon folders of their own game folder by the
-  // command. Every judgement (which game folder WowUp manages, a record out
-  // of date, an update, a folder not in the list) is the command's;
+  // app's and, since M22-25, the CurseForge app's), joined to the addon
+  // folders of their own game folder by the command. Every judgement
+  // (which game folder an app manages, a record that no longer matches, an update, a
+  // folder in no list or in both) is the command's;
   // the page lays it out. Read the first time the Addons view is shown,
   // after the patch-day reads, one run at a time. Nothing here edits
   // anything, and no address in a record becomes a link.
@@ -7093,7 +7094,18 @@
       scopes: data.scopes.map((s) => (s && typeof s === "object" ? s : {})),
       records: objects(data.records).filter((r) => typeof r.record_id === "string"),
       folders: objects(data.folders).filter((f) => typeof f.folder === "string"),
+      judgedBy: texts(data.judged_by),
     };
+  }
+
+  // The app a record or a list is from, as the command names it.
+  function sourcesApp(item) {
+    return hubStr(item.manager) ? visible(item.manager) : "the app";
+  }
+
+  // "WowUp's list", or "WowUp's or CurseForge's list".
+  function sourcesLists(apps) {
+    return apps.map((a) => visible(a) + "'s").join(" or ") + " list";
   }
 
   function sourcesLine(box, className, text) {
@@ -7118,20 +7130,34 @@
     }).join(", ");
   }
 
-  // One record as a line: its name, the site, the version WowUp installed,
-  // and the update WowUp knew of, that WowUp leaves it alone, or why the
-  // record is out of date.
-  function sourcesRecord(record) {
+  // A version as said: CurseForge's is the name of a file, and one with
+  // no version in it is not compared.
+  function sourcesVersion(record, version) {
+    if (record.version_is_file_name !== true) return visible(version);
+    if (record.version_in_name === false && version === record.installed_version) {
+      return "file " + visible(version) + " names no version; not compared";
+    }
+    return "file " + visible(version);
+  }
+
+  // One record as a line: its name, the site, the version its app
+  // installed, and the update the app knew of, that the app marks it
+  // ignored, or why the record no longer matches this folder.
+  function sourcesRecord(record, all) {
     const item = make("li");
     item.className = "sources-item";
+    const app = sourcesApp(record);
     const name = hubStr(record.name) ? record.name : record.record_id;
     item.appendChild(make("strong", visible(name)));
     const words = [];
-    if (record.provider_known === false) words.push("WowUp does not know where it came from");
+    if (record.provider_known === false) words.push(app + " does not know where it came from");
     else if (hubStr(record.provider)) words.push("from " + visible(record.provider));
     const installed = hubStr(record.installed_version);
     const stale = record.stale === true;
-    if (installed) words.push((stale ? "WowUp installed " : "version ") + visible(installed));
+    if (installed) {
+      words.push((stale ? app + " installed " : record.version_is_file_name === true ? "" : "version ") +
+        sourcesVersion(record, record.installed_version));
+    }
     if (stale) {
       const why = texts(record.stale_why);
       const parts = [];
@@ -7141,11 +7167,23 @@
       if (why.includes("folders_missing") && texts(record.folders_missing).length) {
         parts.push("not here: " + texts(record.folders_missing).map(visible).join(", "));
       }
-      words.push("WowUp's record is out of date" + (parts.length ? " (" + parts.join("; ") + ")" : ""));
-    } else if (record.ignored === true) {
-      words.push("WowUp is set to leave it alone");
-    } else if (record.update_available === true && hubStr(record.latest_version)) {
-      words.push("update " + visible(record.latest_version) + " available when WowUp last checked");
+      // Another record of the same app that installs a folder this one claims.
+      for (const id of texts(record.also_installed_by)) {
+        const other = (all || []).find((r) => r.record_id === id && r.manager === record.manager);
+        if (!other) continue;
+        const otherName = hubStr(other.name) ? other.name : other.record_id;
+        parts.push(app + "'s " + visible(otherName) + " record" +
+          (hubStr(other.installed_version) ? " (" + sourcesVersion(other, other.installed_version) + ")" : "") +
+          " also installs this folder");
+      }
+      words.push(app + "'s record no longer matches this folder" + (parts.length ? " (" + parts.join("; ") + ")" : ""));
+    } else {
+      if (record.ignored === true) words.push(app + " marks it ignored");
+      if (record.update_available === true && hubStr(record.latest_version)) {
+        words.push("update " + sourcesVersion(record, record.latest_version) + " available when " + app + " last checked");
+      } else if (record.other_file_listed === true && hubStr(record.latest_version)) {
+        words.push(app + " lists another file, " + visible(record.latest_version));
+      }
     }
     item.appendChild(make("span", (words.length ? ": " + words.join(", ") : "") + "."));
     const here = texts(record.folders_here);
@@ -7166,17 +7204,19 @@
     box.appendChild(list);
   }
 
-  // Which game folders WowUp's list is for, said first, as the command
+  // Which game folders an app's list is for, said first, as the command
   // reports it.
   function sourcesScope(item, read, file, scope) {
+    const app = sourcesApp(file);
     const others = objects(scope.others).filter((o) => typeof o.folder === "string")
       .map((o) => shown(o.folder) + " (" + sourcesCount(hubNum(o.records), " addon") + ")").join("; ");
-    const hinted = read.folders.filter((f) => objects(f.same_name_as).length > 0).length;
+    const hinted = read.folders.filter((f) =>
+      objects(f.same_name_as).some((c) => c.manager === file.manager)).length;
     const shares = hinted ? ", and " + sourcesCount(hinted, " folder") + " here " +
       (hinted === 1 ? "shares" : "share") + " a name with one of them" : "";
     const byName = hubNum(scope.by_name) || 0;
     if (scope.manages === false && byName === 0) {
-      sourcesLine(item, "sources-clear", "WowUp does not manage this game folder" +
+      sourcesLine(item, "sources-clear", app + " does not manage this game folder" +
         (others ? "; its list is for " + others : "; its list holds no addon") + shares + ".");
       return;
     }
@@ -7185,11 +7225,13 @@
         : file.settings_state === "unreadable"
           ? "its settings file could not be read" + (hubStr(file.settings_error) ? ": " + visible(file.settings_error) : "")
           : sourcesCount(byName, " record") + " " + (byName === 1 ? "names" : "name") +
-            " a game folder its settings do not list";
-      sourcesLine(item, "sources-note", "wowlab cannot tell which game folder WowUp's list is for (" + why +
+            (file.settings_path === file.path
+              ? " a game folder its list does not describe"
+              : " a game folder its settings do not list");
+      sourcesLine(item, "sources-note", "wowlab cannot tell which game folder " + app + "'s list is for (" + why +
         "), so its records are matched to these addons by folder name.");
     }
-    if (others) sourcesLine(item, "sources-note", "WowUp's list also holds addons for " + others + shares + ".");
+    if (others) sourcesLine(item, "sources-note", app + "'s list also holds addons for " + others + shares + ".");
   }
 
   function sourcesBlock(read, several) {
@@ -7207,31 +7249,45 @@
         const n = hubNum(file.written_ns);
         const held = Array.isArray(file.records) ? file.records.length : null;
         sourcesLine(item, "sources-clear",
-          "WowUp's list" + (n === null ? "" : ", last written " + localTime(n)) + ": " +
+          sourcesApp(file) + "'s list" + (n === null ? "" : ", last written " + localTime(n)) + ": " +
           (held === 1 ? "one addon" : (held === null ? "?" : grouped(held)) + " addons") + ".");
       } else if (file.state === "unreadable") {
-        sourcesLine(item, "sources-error", "wowlab could not read WowUp's list: " +
+        sourcesLine(item, "sources-error", "wowlab could not read " + sourcesApp(file) + "'s list: " +
           (hubStr(file.error) ? visible(file.error) : "no reason given") + ".");
       }
     });
     if (!read.error && !anyRead && !read.files.some((f) => f.state === "unreadable")) {
+      const apps = read.files.map(sourcesApp);
       sourcesLine(item, "sources-clear",
-        "wowlab found no WowUp list on this computer, so it cannot tell where these addons came from.");
+        "wowlab found no " + (apps.length ? apps.join(" or ") : "addon manager's") +
+        " list on this computer, so it cannot tell where these addons came from.");
     }
     const records = read.records.filter((r) => r.installation !== "other_folder");
-    sourcesList(item, "In WowUp's list",
-      records.filter((r) => texts(r.folders_here).length > 0).map(sourcesRecord));
-    sourcesList(item, "In WowUp's list, with none of their folders here",
-      records.filter((r) => texts(r.folders_here).length === 0).map(sourcesRecord));
+    const apps = [...new Set(records.map(sourcesApp))];
+    for (const app of apps) {
+      const own = records.filter((r) => sourcesApp(r) === app);
+      sourcesList(item, "In " + app + "'s list",
+        own.filter((r) => texts(r.folders_here).length > 0).map((r) => sourcesRecord(r, records)));
+      sourcesList(item, "In " + app + "'s list, with none of their folders here",
+        own.filter((r) => texts(r.folders_here).length === 0).map((r) => sourcesRecord(r, records)));
+    }
+    const both = read.folders.filter((f) => texts(f.managers).length > 1);
+    if (both.length) {
+      const names = texts(both[0].managers).map(visible);
+      sourcesLine(item, "sources-what",
+        "In both " + names.map((n) => n + "'s").join(" and ") + " lists (" + grouped(both.length) + ")");
+      sourcesLine(item, "sources-both", both.map((f) => visible(f.folder)).join(", "));
+    }
     const loose = read.folders.filter((f) => f.unclaimed === true).map((f) => visible(f.folder));
     if (loose.length) {
-      sourcesLine(item, "sources-what",
-        "Not in WowUp's list, the only addon manager's list wowlab reads (" + grouped(loose.length) + ")");
+      const judged = read.judgedBy.length ? sourcesLists(read.judgedBy) : "the lists wowlab reads";
+      sourcesLine(item, "sources-what", "Not in " + judged + " (" + grouped(loose.length) + ")");
       sourcesLine(item, "sources-loose", loose.join(", "));
     }
     if (anyRead && managed) {
       sourcesLine(item, "sources-note",
-        "An out-of-date record means the addon changed after WowUp last wrote its list, by hand or by another app.");
+        "A record that no longer matches this folder means the folder changed after the app installed it: " +
+        "by another of the app's records that carries the same folder, by hand, or by another app.");
     }
     return item;
   }
