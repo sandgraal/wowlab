@@ -71,6 +71,7 @@ from wowlab_core import (
     links,
     nemesis,
     snapshot,
+    spy,
     worldpvp,
 )
 from wowlab_core.errors import WowlabError
@@ -78,7 +79,7 @@ from wowlab_core.region import Region, region_of
 
 # ─── constants ───────────────────────────────────────────────────────────────
 
-SCHEMA = 7
+SCHEMA = 8
 """The database's own schema (`PRAGMA user_version`)."""
 APPLICATION_ID = 0x574C4342  # "WLCB": wowlab crew book
 """`PRAGMA application_id` of every crew database; `_SQL_SET_APP_ID` holds
@@ -154,6 +155,7 @@ _SQL_SET_VERSION: dict[int, str] = {
     5: "PRAGMA user_version = 5",
     6: "PRAGMA user_version = 6",
     7: "PRAGMA user_version = 7",
+    8: "PRAGMA user_version = 8",
 }
 _SQL_BEGIN = "BEGIN IMMEDIATE"
 _SQL_COMMIT = "COMMIT"
@@ -269,6 +271,50 @@ _SQL_CREATE: tuple[str, ...] = (
     " realm TEXT,"
     " region TEXT"
     ") STRICT",
+    "CREATE TABLE spy_sightings ("
+    " player_key TEXT NOT NULL,"
+    " seen_by TEXT NOT NULL,"
+    " at INTEGER NOT NULL,"
+    " zone TEXT,"
+    " sub_zone TEXT,"
+    " map_id INTEGER,"
+    " map_x REAL,"
+    " map_y REAL,"
+    " level INTEGER,"
+    " level_guessed INTEGER CHECK (level_guessed IN (0, 1)),"
+    " class TEXT,"
+    " race TEXT,"
+    " faction TEXT,"
+    " guild TEXT,"
+    " is_enemy INTEGER CHECK (is_enemy IN (0, 1)),"
+    " PRIMARY KEY (player_key, seen_by, at)"
+    ") STRICT",
+    "CREATE INDEX spy_sightings_key_at ON spy_sightings (player_key, at)",
+    "CREATE TABLE spy_players ("
+    " player_key TEXT NOT NULL,"
+    " seen_by TEXT NOT NULL,"
+    " in_spy INTEGER NOT NULL CHECK (in_spy IN (0, 1)),"
+    " kos INTEGER NOT NULL DEFAULT 0 CHECK (kos IN (0, 1)),"
+    " kos_added INTEGER,"
+    " wins INTEGER NOT NULL DEFAULT 0,"
+    " losses INTEGER NOT NULL DEFAULT 0,"
+    " wins_seen INTEGER NOT NULL DEFAULT 0,"
+    " losses_seen INTEGER NOT NULL DEFAULT 0,"
+    " PRIMARY KEY (player_key, seen_by)"
+    ") STRICT",
+    "CREATE TABLE spy_fights ("
+    " fight_id INTEGER PRIMARY KEY,"
+    " player_key TEXT NOT NULL,"
+    " seen_by TEXT NOT NULL,"
+    " at INTEGER NOT NULL,"
+    " result TEXT NOT NULL CHECK (result IN ('win', 'loss', 'probable_win')),"
+    " how TEXT,"
+    " map_id INTEGER,"
+    " x REAL,"
+    " y REAL"
+    ") STRICT",
+    "CREATE UNIQUE INDEX spy_fights_one ON spy_fights (seen_by, at, player_key, result)",
+    "CREATE INDEX spy_fights_key ON spy_fights (player_key)",
 )
 
 # Statements that move the database from schema n to n + 1, after a copy of
@@ -320,6 +366,30 @@ _SQL_CREATE: tuple[str, ...] = (
 # player's GUID: the name in the in-game form, the realm with it, the eighth
 # value (probably the level, not yet confirmed) and when it was asked. Every
 # new column starts empty. The book's region is a `meta` row, not a column.
+#
+# 7 -> 8 (M22-02): what the Spy addon saw, in three tables of its own,
+# each keyed by the player and the character whose Spy file it came from
+# (`seen_by`: `<realm or digits folder>/<character folder>`), every value
+# Spy's own:
+#
+# - `spy_sightings`: one row per sighting Spy kept, by its time (`at`,
+#   Spy's `time`): the place it recorded (zone, subzone, map and position,
+#   where the recording character stood), the level (and whether Spy only
+#   guessed it), class, race, faction, guild and whether the game called
+#   them hostile. Spy keeps one row per player and moves its time at each
+#   sighting, so each sync that finds a new time adds a row.
+# - `spy_players`: per player and character, whether Spy's list holds them
+#   now (`in_spy`), whether they are on its kill-on-sight list (`kos`, with
+#   when they were added), and Spy's own counts of your killing blows on
+#   them (`wins`) and the deaths it put on them (`losses`), each added up
+#   across syncs beside the value Spy showed at the last one (`*_seen`), as
+#   the crew book's counters are.
+# - `spy_fights`: one row per fight Spy's `Encounters` list kept (its time,
+#   result, how it was counted, and where the recording character stood),
+#   one more source of the record against each player (`nemesis`).
+#
+# Every table starts empty, filled by the next sync. The statements are
+# `_SQL_CREATE`'s own, which a test checks.
 #
 # Keyed by (schema it starts from, order within the step); each value one
 # constant statement, so the static check reads every one.
@@ -386,6 +456,50 @@ _MIGRATIONS: dict[tuple[int, int], str] = {
     (6, 2): "ALTER TABLE players ADD COLUMN resolved_realm TEXT",
     (6, 3): "ALTER TABLE players ADD COLUMN resolved_eighth INTEGER",
     (6, 4): "ALTER TABLE players ADD COLUMN resolved_at INTEGER",
+    (7, 1): "CREATE TABLE spy_sightings ("
+    " player_key TEXT NOT NULL,"
+    " seen_by TEXT NOT NULL,"
+    " at INTEGER NOT NULL,"
+    " zone TEXT,"
+    " sub_zone TEXT,"
+    " map_id INTEGER,"
+    " map_x REAL,"
+    " map_y REAL,"
+    " level INTEGER,"
+    " level_guessed INTEGER CHECK (level_guessed IN (0, 1)),"
+    " class TEXT,"
+    " race TEXT,"
+    " faction TEXT,"
+    " guild TEXT,"
+    " is_enemy INTEGER CHECK (is_enemy IN (0, 1)),"
+    " PRIMARY KEY (player_key, seen_by, at)"
+    ") STRICT",
+    (7, 2): "CREATE INDEX spy_sightings_key_at ON spy_sightings (player_key, at)",
+    (7, 3): "CREATE TABLE spy_players ("
+    " player_key TEXT NOT NULL,"
+    " seen_by TEXT NOT NULL,"
+    " in_spy INTEGER NOT NULL CHECK (in_spy IN (0, 1)),"
+    " kos INTEGER NOT NULL DEFAULT 0 CHECK (kos IN (0, 1)),"
+    " kos_added INTEGER,"
+    " wins INTEGER NOT NULL DEFAULT 0,"
+    " losses INTEGER NOT NULL DEFAULT 0,"
+    " wins_seen INTEGER NOT NULL DEFAULT 0,"
+    " losses_seen INTEGER NOT NULL DEFAULT 0,"
+    " PRIMARY KEY (player_key, seen_by)"
+    ") STRICT",
+    (7, 4): "CREATE TABLE spy_fights ("
+    " fight_id INTEGER PRIMARY KEY,"
+    " player_key TEXT NOT NULL,"
+    " seen_by TEXT NOT NULL,"
+    " at INTEGER NOT NULL,"
+    " result TEXT NOT NULL CHECK (result IN ('win', 'loss', 'probable_win')),"
+    " how TEXT,"
+    " map_id INTEGER,"
+    " x REAL,"
+    " y REAL"
+    ") STRICT",
+    (7, 5): "CREATE UNIQUE INDEX spy_fights_one ON spy_fights (seen_by, at, player_key, result)",
+    (7, 6): "CREATE INDEX spy_fights_key ON spy_fights (player_key)",
 }
 
 _SQL_META_ALL = "SELECT name, value FROM meta"
@@ -487,11 +601,61 @@ class Target(_Model):
     file: str
 
 
-NamesFrom = Literal["game", "log", "borrowed", "key"]
+NamesFrom = Literal["game", "log", "borrowed", "spy", "key"]
 RegionFrom = Literal["log", "book", "borrowed", "settings"]
 
 # One profile link of a player (M21-05): an address, or why there is none.
 type ProfileLink = links.Link | links.NoLink
+
+
+class CrewSpy(_Model):
+    """What the Spy addon saw of a player (M22-02), every value Spy's own
+    (`source` is always `spy`), from the `Spy.lua` of each of the account's
+    characters that a sync read.
+
+    The latest sighting: when Spy last saw them (`last_seen`, Spy's `time`),
+    which character's Spy saw them (`seen_by`, `<realm or digits
+    folder>/<character folder>`), and what Spy kept with that time: the
+    place it recorded (`zone`, `sub_zone`, `map_id` and the position on
+    that map, `map_x` and `map_y`, from 0 to 1), which is where *your*
+    character stood, never theirs, and can be older than `last_seen` (Spy
+    writes it only when it first notices the player after losing sight of
+    them, and inside an instance names the instance as the zone and keeps
+    the map and position it had); their level (`level_guessed`: Spy only
+    guessed it), class, race, faction and guild; and whether the game
+    called them hostile to that character (`is_enemy`, not a faction).
+    `sightings` counts the sightings the database keeps, one for each time
+    a sync found Spy's time moved.
+
+    Across the account's characters: `kos`, on a kill-on-sight list in Spy
+    at the last sync (`kos_added`, the earliest time one of them was
+    added); `wins` and `losses`, Spy's own counts of your killing blows on
+    them and of the deaths it put on them (some guessed from who had you
+    targeted), added up across syncs and never lowered; `in_spy`, whether
+    a Spy list read at the last sync still holds them (Spy drops a player
+    not seen for 90 days by default, and one seen as friendly)."""
+
+    source: Literal["spy"] = "spy"
+    last_seen: int | None = None
+    seen_by: str | None = None
+    zone: str | None = None
+    sub_zone: str | None = None
+    map_id: int | None = None
+    map_x: float | None = None
+    map_y: float | None = None
+    level: int | None = None
+    level_guessed: bool | None = None
+    class_token: str | None = None
+    race: str | None = None
+    faction: str | None = None
+    guild: str | None = None
+    is_enemy: bool | None = None
+    sightings: int = 0
+    kos: bool = False
+    kos_added: int | None = None
+    wins: int = 0
+    losses: int = 0
+    in_spy: bool = False
 
 
 class CrewRow(crewbook.CrewPlayer):
@@ -562,9 +726,10 @@ class CrewRow(crewbook.CrewPlayer):
     # `log`, a combat log's unit name for this player (the launch client's
     # writes one); `book`, the region the lab-addon's crew book recorded
     # from the game (`GetCurrentRegionName()`), for a player the game's
-    # list gave; `borrowed`, a combat-log-only player's, from the row with
-    # the same GUID that the game's list gave (`borrowed_from`); `settings`,
-    # the flavor's Config.wtf; None when there is no region.
+    # list gave or the Spy addon saw (M22-02); `borrowed`, a
+    # combat-log-only player's, from the row with the same GUID that the
+    # game's list gave (`borrowed_from`); `settings`, the flavor's
+    # Config.wtf; None when there is no region.
     region_from: RegionFrom | None = None
     # Where `first_name`, `second_name` and `game_name` came from (M21-12),
     # first that gives them: `game`, the name the game gave for the
@@ -573,7 +738,10 @@ class CrewRow(crewbook.CrewPlayer):
     # combat log's four-part unit name; `borrowed`, a combat-log-only
     # player's, from the row with the same GUID that the game's list gave
     # (`borrowed_from`; `realm` stays the one this row's own key gave);
-    # `key`, the stored key's two parts.
+    # `spy`, the two parts of the key the Spy addon keeps the player under
+    # (`<First>-<Second>` on a flavor whose characters have second names),
+    # for a player the game's list never gave whom Spy saw (M22-02); `key`,
+    # the stored key's two parts.
     names_from: NamesFrom = "key"
     # The stored key the names or the region were borrowed from (M21-12);
     # None when nothing was borrowed.
@@ -593,6 +761,10 @@ class CrewRow(crewbook.CrewPlayer):
     # read without one, and in `crew list --json --no-links`. Never a ForeverTwinking link: those are the
     # player's own, pasted for their own characters (M21-03).
     links: list[ProfileLink] = Field(default_factory=list)
+    # What the Spy addon saw of them (M22-02, `CrewSpy`): the latest
+    # sighting and its place, the kill-on-sight mark, Spy's own counts.
+    # None for a player Spy never saw.
+    spy: CrewSpy | None = None
 
 
 class CrewMatchRow(_Model):
@@ -1210,10 +1382,12 @@ class _Naming:
 
 
 def _own_names(
-    row: _Row, second_names: bool, logged: _LogName | None
+    row: _Row, second_names: bool, logged: _LogName | None, spied: bool = False
 ) -> tuple[charname.KeyNames, NamesFrom]:
     """A row's names from what it holds itself: the game's answer for its
-    GUID, else a four-part log name, else its key."""
+    GUID, else a four-part log name, else its key: the key the Spy addon
+    keeps (`spied`: Spy saw a player the game's list never gave, M22-02),
+    else the stored key."""
     if row.resolved_name:
         # The in-game form the game gave (`<First> <Second>` on Forever).
         first, second = charname.split_game_name(row.resolved_name)
@@ -1233,9 +1407,12 @@ def _own_names(
             logged.realm,
         )
         return names, "log"
-    # A key's second part is a second name only where the lab-addon wrote
-    # the key on a second-name flavor; a key only a three-part (beta) unit
-    # name gave keeps it as a realm.
+    # A key's second part is a second name only where the lab-addon or the
+    # Spy addon wrote the key on a second-name flavor (both write
+    # `<First>-<Second>` there); a key only a three-part (beta) unit name
+    # gave keeps it as a realm.
+    if spied and not _from_book(row):
+        return charname.key_names(row.name, row.realm, second_names=second_names), "spy"
     names = charname.key_names(row.name, row.realm, second_names=second_names and _from_book(row))
     return names, "key"
 
@@ -1267,12 +1444,14 @@ def _namings(
     book_region: Region | None,
     second_names: bool,
     book_region_at: int | None = None,
+    spied: frozenset[str] = frozenset(),
 ) -> dict[str, _Naming]:
     """Each row's names and region with their sources (M21-12): its own
     (`_own_names`; the region from a log name, else the book's for a player
-    the game's list gave), then, for a combat-log-only player whose own
-    names are only its key's, what the row with the same GUID has
-    (`_lender`), then the flavor's settings for the region. When the book's
+    the game's list gave or the Spy addon saw, `spied`, M22-02), then, for
+    a combat-log-only player whose own names are only a key's, what the row
+    with the same GUID has (`_lender`), then the flavor's settings for the
+    region. When the book's
     region and the settings' both name a region and differ (fix round 1),
     a row whose region would come from either has none, and says both
     (`region_conflict`): wowlab cannot tell which is right."""
@@ -1283,11 +1462,11 @@ def _namings(
     own: dict[str, tuple[charname.KeyNames, NamesFrom, Region | None, RegionFrom | None]] = {}
     for r in rows:
         logged = log_names.get(r.key)
-        names, names_from = _own_names(r, second_names, logged)
+        names, names_from = _own_names(r, second_names, logged, r.key in spied)
         from_log = region_of(logged.region) if logged is not None else None
         got: Region | None = from_log
         got_from: RegionFrom | None = "log" if from_log else None
-        if got is None and book_region is not None and _from_book(r):
+        if got is None and book_region is not None and (_from_book(r) or r.key in spied):
             got, got_from = book_region, "book"
         own[r.key] = (names, names_from, got, got_from)
     out: dict[str, _Naming] = {}
@@ -1297,7 +1476,7 @@ def _namings(
         borrowed_from = None
         if lender is not None:
             lent_names, _, lent_region, _ = own[lender.key]
-            if names_from == "key" and lent_names.second_name is not None:
+            if names_from in ("key", "spy") and lent_names.second_name is not None:
                 # The lender's first and second name; this row's own realm
                 # (the one its log name gave).
                 names = charname.KeyNames(
@@ -1330,6 +1509,7 @@ def _public(
     world: dict[str, _WorldPart] | None = None,
     naming: _Naming | None = None,
     records: dict[str, nemesis.Record] | None = None,
+    spied: dict[str, CrewSpy] | None = None,
 ) -> CrewRow:
     kept = {p.key: p for p in book.players} if book is not None else {}
     held = kept.get(row.key)
@@ -1394,6 +1574,7 @@ def _public(
         borrowed_from=naming.borrowed_from,
         region_recorded_at=naming.region_recorded_at,
         region_conflict=list(naming.region_conflict),
+        spy=(spied or {}).get(row.key),
     )
 
 
@@ -1428,7 +1609,8 @@ def read(
     its settings, the last fallback for every row's, and `second_names` says
     the flavor's characters have second names, so a key's second part is
     one (M21-02). Each row's names and region say where they came from
-    (M21-12, `_namings`)."""
+    (M21-12, `_namings`), and a player the Spy addon saw carries what it
+    saw (`CrewRow.spy`, M22-02)."""
     path = database_path(flavor_folder, account)
     try:
         conn = _open(path, create=False)
@@ -1445,11 +1627,19 @@ def read(
         meta = _meta(conn)
         book_region = region_of(_text(meta.get(BOOK_REGION_META)))
         book_region_at = _number(meta.get(BOOK_REGION_AT_META))
+        spied = _spy_facts(conn)
         namings = _namings(
-            rows, aliases, _log_names(conn), region, book_region, second_names, book_region_at
+            rows,
+            aliases,
+            _log_names(conn),
+            region,
+            book_region,
+            second_names,
+            book_region_at,
+            frozenset(spied),
         )
         records = _records(conn, world)
-        return [_public(r, book, aliases, world, namings[r.key], records) for r in rows]
+        return [_public(r, book, aliases, world, namings[r.key], records, spied) for r in rows]
     except sqlite3.Error as exc:
         raise CrewDbError(f"The crew database {path} cannot be read ({exc}).") from exc
     finally:
@@ -2681,6 +2871,7 @@ _SQL_COUNT_PLAYERS = "SELECT count(*), coalesce(sum(in_book), 0) FROM players"
 # in the game's map table) is kept, for a later table, but neither counted
 # nor listed: never in the game's list, no group, no match, no rating or
 # note, and no encounter that is not set aside.
+# M22-02: nor a player the Spy addon saw (any of its three tables).
 _SQL_ASIDE_ONLY_KEYS = (
     "SELECT player_key FROM players WHERE in_book = 0 AND met = 0 AND met_seen = 0"
     " AND allied = 0 AND faced = 0 AND allied_seen = 0 AND faced_seen = 0"
@@ -2690,6 +2881,9 @@ _SQL_ASIDE_ONLY_KEYS = (
     " JOIN world_encounters AS e ON e.encounter_id = p.encounter_id WHERE e.by_map = 2)"
     " AND player_key NOT IN (SELECT p.player_key FROM world_encounter_players AS p"
     " JOIN world_encounters AS e ON e.encounter_id = p.encounter_id WHERE e.by_map != 2)"
+    " AND player_key NOT IN (SELECT player_key FROM spy_sightings)"
+    " AND player_key NOT IN (SELECT player_key FROM spy_players)"
+    " AND player_key NOT IN (SELECT player_key FROM spy_fights)"
 )
 _SQL_COUNT_PLAYERS_6 = (
     "SELECT count(*), coalesce(sum(in_book), 0) FROM players WHERE player_key NOT IN"
@@ -2701,6 +2895,21 @@ _SQL_COUNT_PLAYERS_6 = (
     " JOIN world_encounters AS e ON e.encounter_id = p.encounter_id WHERE e.by_map = 2)"
     " AND player_key NOT IN (SELECT p.player_key FROM world_encounter_players AS p"
     " JOIN world_encounters AS e ON e.encounter_id = p.encounter_id WHERE e.by_map != 2))"
+)
+# The same from schema 8 on (M22-02): a player the Spy addon saw counts.
+_SQL_COUNT_PLAYERS_8 = (
+    "SELECT count(*), coalesce(sum(in_book), 0) FROM players WHERE player_key NOT IN"
+    " (SELECT player_key FROM players WHERE in_book = 0 AND met = 0 AND met_seen = 0"
+    " AND allied = 0 AND faced = 0 AND allied_seen = 0 AND faced_seen = 0"
+    " AND pvp_last IS NULL AND rating IS NULL AND note IS NULL"
+    " AND player_key NOT IN (SELECT player_key FROM match_players)"
+    " AND player_key IN (SELECT p.player_key FROM world_encounter_players AS p"
+    " JOIN world_encounters AS e ON e.encounter_id = p.encounter_id WHERE e.by_map = 2)"
+    " AND player_key NOT IN (SELECT p.player_key FROM world_encounter_players AS p"
+    " JOIN world_encounters AS e ON e.encounter_id = p.encounter_id WHERE e.by_map != 2)"
+    " AND player_key NOT IN (SELECT player_key FROM spy_sightings)"
+    " AND player_key NOT IN (SELECT player_key FROM spy_players)"
+    " AND player_key NOT IN (SELECT player_key FROM spy_fights))"
 )
 _SQL_COUNT_MATCHES = "SELECT count(*) FROM matches"
 
@@ -2741,7 +2950,9 @@ def _counts(path: Path) -> tuple[int, int, int, tuple[int, int, int] | None] | s
         version = conn.execute(_SQL_READ_VERSION).fetchone()[0]
         if version > SCHEMA:
             return "a newer wowlab wrote it; update wowlab to read it"
-        if version >= 6:
+        if version >= 8:
+            players, in_book = conn.execute(_SQL_COUNT_PLAYERS_8).fetchone()
+        elif version >= 6:
             players, in_book = conn.execute(_SQL_COUNT_PLAYERS_6).fetchone()
         else:
             players, in_book = conn.execute(_SQL_COUNT_PLAYERS).fetchone()
@@ -2813,6 +3024,12 @@ _SQL_FORGET_IN_MATCHES = "DELETE FROM match_players WHERE player_key = ?"
 _SQL_PLAYER_COLUMNS = "PRAGMA table_info(players)"
 _SQL_SCORES = "SELECT player_key, score FROM players WHERE score IS NOT NULL"
 _SQL_DROP_SCORE = "UPDATE players SET score = NULL, score_at = NULL WHERE player_key = ?"
+# M22-02: a player's rows of what the Spy addon saw (never Spy's own file).
+_SQL_FORGET_IN_SPY = (
+    "DELETE FROM spy_sightings WHERE player_key = ?",
+    "DELETE FROM spy_players WHERE player_key = ?",
+    "DELETE FROM spy_fights WHERE player_key = ?",
+)
 
 
 def _gone(path: Path) -> None:
@@ -2835,6 +3052,7 @@ def _forget_rows(conn: sqlite3.Connection, keys: Sequence[str]) -> None:
     not the row), so no copy of the name stays in another player's data."""
     world = _has_world(conn)
     names = _has_log_names(conn)
+    spied = _has_spy(conn)
     for key in keys:
         conn.execute(_SQL_FORGET_PLAYER, (key,))
         conn.execute(_SQL_FORGET_IN_MATCHES, (key,))
@@ -2842,6 +3060,9 @@ def _forget_rows(conn: sqlite3.Connection, keys: Sequence[str]) -> None:
             conn.execute(_SQL_FORGET_IN_WORLD, (key,))
         if names:  # M21-02: what a log's unit name gave besides the key
             conn.execute(_SQL_FORGET_LOG_NAMES, (key,))
+        if spied:  # M22-02: what the Spy addon saw of them
+            for statement in _SQL_FORGET_IN_SPY:
+                conn.execute(statement, (key,))
     if world:
         _forget_in_log_states(conn, keys)
     if not _has_score(conn):
@@ -2945,12 +3166,15 @@ def holds(flavor_folder: str, account: str) -> list[str]:
     """The keys of every player wowlab's crew database keeps for this book:
     its players, any key a match it keeps names (a player the game's list
     dropped before a sync saw them may be in a match only), any key in an
-    open-world encounter, and any key a read log's saved state names
-    (M20-18: a hostile player kept to name a pet's owner)."""
+    open-world encounter, any key a read log's saved state names (M20-18: a
+    hostile player kept to name a pet's owner), and any key the Spy addon's
+    rows name (M22-02)."""
     keys = [r.key for r in read(flavor_folder, account)]
 
     def use(conn: sqlite3.Connection) -> list[str]:
         held = [str(r[0]) for r in conn.execute(_SQL_MATCH_KEYS)]
+        if _has_spy(conn):  # M22-02
+            held += [str(r[0]) for r in conn.execute(_SQL_SPY_KEYS)]
         if _has_world(conn):
             held += [str(r[0]) for r in conn.execute(_SQL_WORLD_KEYS)]
             for _, text in conn.execute(_SQL_WORLD_LOG_STATES).fetchall():
@@ -3269,6 +3493,19 @@ _SQL_REQUEUE_DROP_LOG_ONLY_PLAYER = (
     " AND pvp_last IS NULL AND rating IS NULL AND note IS NULL"
     " AND player_key NOT IN (SELECT player_key FROM world_encounter_players)"
     " AND player_key NOT IN (SELECT player_key FROM match_players)"
+)
+# The same for `recheck_world`, which runs on a database at this schema
+# (M22-02): nor a player the Spy addon saw. The 4 -> 5 step above runs
+# before the Spy tables exist, and keeps its own.
+_SQL_DROP_LOG_ONLY_PLAYER_8 = (
+    "DELETE FROM players WHERE player_key = ? AND in_book = 0 AND met = 0 AND met_seen = 0"
+    " AND allied = 0 AND faced = 0 AND allied_seen = 0 AND faced_seen = 0"
+    " AND pvp_last IS NULL AND rating IS NULL AND note IS NULL"
+    " AND player_key NOT IN (SELECT player_key FROM world_encounter_players)"
+    " AND player_key NOT IN (SELECT player_key FROM match_players)"
+    " AND player_key NOT IN (SELECT player_key FROM spy_sightings)"
+    " AND player_key NOT IN (SELECT player_key FROM spy_players)"
+    " AND player_key NOT IN (SELECT player_key FROM spy_fights)"
 )
 # What a scan says once (M21-02): logs the 4 -> 5 step could not read again.
 _SQL_NOT_REREAD_COUNT = "SELECT count(*) FROM world_logs WHERE scanned_at = -1"
@@ -4010,7 +4247,7 @@ def recheck_world(target: Target, maps: Mapping[int, int]) -> WorldRecheck:
                     conn.execute(_SQL_RECHECK_DROP_ENCOUNTER, (encounter_id,))
                     removed += 1
             for key in sorted(held):
-                players_removed += conn.execute(_SQL_REQUEUE_DROP_LOG_ONLY_PLAYER, (key,)).rowcount
+                players_removed += conn.execute(_SQL_DROP_LOG_ONLY_PLAYER_8, (key,)).rowcount
                 conn.execute(_SQL_RECHECK_DROP_ORPHAN_NAMES, (key,))
         return WorldRecheck(
             checked=checked,
@@ -4079,6 +4316,645 @@ def world_encounters(
 
     got = _read_with(flavor_folder, account, use)
     return got if isinstance(got, list) else []
+
+
+# ─── what the Spy addon saw (M22-02) ─────────────────────────────────────────
+
+SPY_SAME_FIGHT_SECONDS = 60
+"""A fight Spy counted is the same fight as an open-world encounter a
+combat log gave with that player as a foe when Spy's time falls within the
+encounter, or this many seconds before or after it: the record then counts
+it once, from the log."""
+
+_SQL_HAS_SPY = "SELECT count(*) FROM sqlite_master WHERE type = 'table' AND name = 'spy_players'"
+_SQL_PLAYER_KEYS = "SELECT player_key FROM players"
+_SQL_SPY_SIGHTING_OF = (
+    "SELECT zone, sub_zone, map_id, map_x, map_y, level, level_guessed, class, race, faction,"
+    " guild, is_enemy FROM spy_sightings WHERE player_key = ? AND seen_by = ? AND at = ?"
+)
+_SQL_SPY_SIGHTING_INSERT = (
+    "INSERT INTO spy_sightings (zone, sub_zone, map_id, map_x, map_y, level, level_guessed,"
+    " class, race, faction, guild, is_enemy, player_key, seen_by, at)"
+    " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+)
+_SQL_SPY_SIGHTING_UPDATE = (
+    "UPDATE spy_sightings SET zone = ?, sub_zone = ?, map_id = ?, map_x = ?, map_y = ?,"
+    " level = ?, level_guessed = ?, class = ?, race = ?, faction = ?, guild = ?, is_enemy = ?"
+    " WHERE player_key = ? AND seen_by = ? AND at = ?"
+)
+_SQL_SPY_PLAYERS_ALL = (
+    "SELECT player_key, seen_by, in_spy, kos, kos_added, wins, losses, wins_seen, losses_seen"
+    " FROM spy_players"
+)
+_SQL_SPY_PLAYER_SET = (
+    "INSERT INTO spy_players (player_key, seen_by, in_spy, kos, kos_added, wins, losses,"
+    " wins_seen, losses_seen) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"
+    " ON CONFLICT (player_key, seen_by) DO UPDATE SET in_spy = excluded.in_spy,"
+    " kos = excluded.kos, kos_added = excluded.kos_added, wins = excluded.wins,"
+    " losses = excluded.losses, wins_seen = excluded.wins_seen,"
+    " losses_seen = excluded.losses_seen"
+)
+_SQL_SPY_FIGHT_HELD = (
+    "SELECT count(*) FROM spy_fights WHERE seen_by = ? AND at = ? AND player_key = ? AND result = ?"
+)
+_SQL_SPY_FIGHT_INSERT = (
+    "INSERT INTO spy_fights (player_key, seen_by, at, result, how, map_id, x, y)"
+    " VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
+)
+# The latest sighting of each player (ties: by character), and how many
+# the database keeps.
+_SQL_SPY_LATEST = (
+    "SELECT s.player_key, s.seen_by, s.at, s.zone, s.sub_zone, s.map_id, s.map_x, s.map_y,"
+    " s.level, s.level_guessed, s.class, s.race, s.faction, s.guild, s.is_enemy"
+    " FROM spy_sightings AS s JOIN"
+    " (SELECT player_key, max(at) AS at FROM spy_sightings GROUP BY player_key) AS m"
+    " ON m.player_key = s.player_key AND m.at = s.at"
+    " ORDER BY s.player_key, s.seen_by"
+)
+_SQL_SPY_COUNTS = "SELECT player_key, count(*) FROM spy_sightings GROUP BY player_key"
+_SQL_SPY_KEYS = (
+    "SELECT player_key FROM spy_players UNION SELECT player_key FROM spy_sightings"
+    " UNION SELECT player_key FROM spy_fights"
+)
+# The record's Spy source (M22-03's `nemesis`): each fight Spy's list kept,
+# and the open-world encounters a combat log gave with each foe, counted as
+# `_SQL_FIGHTS_WORLD_*` counts them, to leave out a fight the log also kept.
+_SQL_SPY_FIGHTS_ALL = (
+    "SELECT fight_id, player_key, at, result FROM spy_fights ORDER BY at, fight_id"
+)
+_SQL_SPY_FIGHTS_OF = (
+    "SELECT fight_id, player_key, at, result FROM spy_fights WHERE player_key = ?"
+    " ORDER BY at, fight_id"
+)
+_SQL_WORLD_FOE_SPANS_ALL = (
+    "SELECT p.player_key, e.start_at, e.end_at FROM world_encounter_players AS p"
+    " JOIN world_encounters AS e ON e.encounter_id = p.encounter_id"
+    " WHERE p.side = 'foe'"
+    " AND (e.instance_id IS NULL OR e.instance_id NOT IN (SELECT map_id FROM matches))"
+    " AND e.by_map != 2"
+)
+_SQL_WORLD_FOE_SPANS_OF = (
+    "SELECT p.player_key, e.start_at, e.end_at FROM world_encounter_players AS p"
+    " JOIN world_encounters AS e ON e.encounter_id = p.encounter_id"
+    " WHERE p.side = 'foe' AND p.player_key = ?"
+    " AND (e.instance_id IS NULL OR e.instance_id NOT IN (SELECT map_id FROM matches))"
+    " AND e.by_map != 2"
+)
+
+
+def _has_spy(conn: sqlite3.Connection) -> bool:
+    """Whether this file has the Spy tables (a copy kept before schema 8
+    does not)."""
+    return bool(conn.execute(_SQL_HAS_SPY).fetchone()[0])
+
+
+SpyState = Literal["synced", "unchanged", "none", "skipped", "elsewhere"]
+
+
+class SpySyncOutcome(_Model):
+    """What a sync took from the Spy addon's saved data (M22-02). `state`:
+    `synced` (written), `unchanged` (the database already held it all),
+    `none` (no character of the game account has Spy data: nothing read,
+    nothing written), `skipped` (another wowlab held the database), or
+    `elsewhere` (the database is another install's: `crew sync --adopt`).
+    `words` is one sentence in the player's words. `characters`: the
+    characters whose Spy data was read; `files_unread`: Spy files that could
+    not be read (the others were). The counts are of this sync: sightings
+    added (`sightings_added`; one changed in place, `sightings_updated`),
+    fights added, players new to the database, players whose kill-on-sight
+    mark or Spy's counts changed (`marks_changed`), entries of Spy's data
+    left out (`left_out`: a name that is not First-Second, text or a number
+    outside what a sync takes, a fight with no time or result) and players
+    left out past the database's bound (`players_left_out`)."""
+
+    state: SpyState
+    words: str
+    database: str | None = None
+    characters: int = 0
+    files_unread: int = 0
+    sightings_added: int = 0
+    sightings_updated: int = 0
+    fights_added: int = 0
+    players_added: int = 0
+    marks_changed: int = 0
+    left_out: int = 0
+    players_left_out: int = 0
+
+
+@dataclasses.dataclass(frozen=True)
+class _SpySight:
+    """One sighting as `spy_sightings` keeps it."""
+
+    key: str
+    seen_by: str
+    at: int
+    zone: str | None
+    sub_zone: str | None
+    map_id: int | None
+    map_x: float | None
+    map_y: float | None
+    level: int | None
+    level_guessed: int | None
+    class_token: str | None
+    race: str | None
+    faction: str | None
+    guild: str | None
+    is_enemy: int | None
+
+    def values(self) -> tuple[object, ...]:
+        """The columns after the key: what a sighting's row holds."""
+        return (
+            self.zone,
+            self.sub_zone,
+            self.map_id,
+            self.map_x,
+            self.map_y,
+            self.level,
+            self.level_guessed,
+            self.class_token,
+            self.race,
+            self.faction,
+            self.guild,
+            self.is_enemy,
+        )
+
+
+@dataclasses.dataclass(frozen=True)
+class _SpyMark:
+    """What Spy's list shows of one player for one character now: the
+    kill-on-sight mark and Spy's two counts."""
+
+    key: str
+    seen_by: str
+    kos: int
+    kos_added: int | None
+    wins: int
+    losses: int
+
+
+@dataclasses.dataclass(frozen=True)
+class _SpyFight:
+    """One entry of Spy's `Encounters` list, as `spy_fights` keeps it."""
+
+    key: str
+    seen_by: str
+    at: int
+    result: str
+    how: str | None
+    map_id: int | None
+    x: float | None
+    y: float | None
+
+
+@dataclasses.dataclass
+class _SpyTaken:
+    """What a sync takes from Spy's saved data: the characters whose data
+    was read (`read`), each one's keys Spy holds (`held`, the ones left out
+    too), and the sightings, marks and fights within bounds."""
+
+    read: set[str] = dataclasses.field(default_factory=set)
+    held: set[tuple[str, str]] = dataclasses.field(default_factory=set)
+    sights: list[_SpySight] = dataclasses.field(default_factory=list)
+    marks: dict[tuple[str, str], _SpyMark] = dataclasses.field(default_factory=dict)
+    fights: list[_SpyFight] = dataclasses.field(default_factory=list)
+    left_out: int = 0
+
+
+def _text_ok(text: str | None) -> bool:
+    if text is None:
+        return True
+    size = _bytes_of(text)
+    return size is not None and size <= TEXT_MAX_BYTES
+
+
+def _spy_time_ok(t: int | None) -> bool:
+    return t is None or TIME_MIN <= t <= _latest()
+
+
+def _spy_row_ok(key: str, p: spy.SpyPlayer) -> bool:
+    """Whether one of Spy's `PlayerData` rows is within what a sync takes:
+    a First-Second key, each text within `TEXT_MAX_BYTES`, the level from 0
+    to `LEVEL_MAX`, the time within the sync's range, and each count from
+    0 to `COUNTER_MAX`. Never quotes the row."""
+    texts = (p.zone, p.sub_zone, p.guild, p.class_token, p.race, p.faction)
+    return (
+        _key_ok(key)
+        and all(_text_ok(t) for t in texts)
+        and (p.level is None or 0 <= p.level <= LEVEL_MAX)
+        and _spy_time_ok(p.time)
+        and all(n is None or 0 <= n <= COUNTER_MAX for n in (p.wins, p.loses))
+    )
+
+
+def _spy_taken(survey: spy.SpySurvey) -> _SpyTaken:
+    """What a sync takes from every character's Spy data (`SpyPerCharDB`)
+    the survey read. The player's key is the row's `name` (Spy's own,
+    `<First>-<Second>` on Forever), else its table key. A row with no time
+    gives no sighting, only its mark and counts. A player on the
+    kill-on-sight list (`KOSData`) whom `PlayerData` does not hold still
+    gets a mark."""
+    taken = _SpyTaken()
+    for c in survey.characters:
+        seen_by = c.source.character
+        if not c.present or seen_by is None:
+            continue
+        taken.read.add(seen_by)
+        taken.left_out += sum(1 for u in c.unread if u.table in ("PlayerData", "Encounters"))
+        kos = {k.key: k.added for k in c.kos}
+        in_rows = {p.key for p in c.players}
+        for p in c.players:
+            key = p.name or p.key
+            taken.held.add((key, seen_by))
+            if not _spy_row_ok(key, p):
+                taken.left_out += 1
+                continue
+            if p.time is not None:
+                taken.sights.append(
+                    _SpySight(
+                        key,
+                        seen_by,
+                        p.time,
+                        p.zone,
+                        p.sub_zone,
+                        p.map_id,
+                        p.map_x,
+                        p.map_y,
+                        p.level,
+                        None if p.is_guess is None else int(p.is_guess),
+                        p.class_token,
+                        p.race,
+                        p.faction,
+                        p.guild,
+                        None if p.is_enemy is None else int(p.is_enemy),
+                    )
+                )
+            listed = p.key in kos or key in kos
+            added = kos.get(p.key, kos.get(key)) if listed else None
+            taken.marks[(key, seen_by)] = _SpyMark(
+                key,
+                seen_by,
+                int(listed),
+                added if _spy_time_ok(added) else None,
+                p.wins or 0,
+                p.loses or 0,
+            )
+        for k, added in kos.items():
+            taken.held.add((k, seen_by))
+            if k in in_rows or (k, seen_by) in taken.marks:
+                continue  # its row was taken, or left out, above
+            if not _key_ok(k):
+                taken.left_out += 1
+                continue
+            taken.marks[(k, seen_by)] = _SpyMark(
+                k, seen_by, 1, added if _spy_time_ok(added) else None, 0, 0
+            )
+        for e in c.encounters:
+            name = e.name
+            if (
+                name is None
+                or not _key_ok(name)
+                or e.time is None
+                or not _spy_time_ok(e.time)
+                or e.result is None
+                or not _text_ok(e.how)
+            ):
+                taken.left_out += 1
+                continue
+            taken.held.add((name, seen_by))
+            taken.fights.append(
+                _SpyFight(name, seen_by, e.time, e.result, e.how, e.map_id, e.x, e.y)
+            )
+    return taken
+
+
+@dataclasses.dataclass
+class _SpyPlan:
+    """What a sync of Spy's data would write."""
+
+    new_players: list[str] = dataclasses.field(default_factory=list)
+    sight_inserts: list[_SpySight] = dataclasses.field(default_factory=list)
+    sight_updates: list[_SpySight] = dataclasses.field(default_factory=list)
+    marks: list[tuple[object, ...]] = dataclasses.field(default_factory=list)
+    fights: list[_SpyFight] = dataclasses.field(default_factory=list)
+    players_left_out: int = 0
+
+    def empty(self) -> bool:
+        return not (
+            self.new_players
+            or self.sight_inserts
+            or self.sight_updates
+            or self.marks
+            or self.fights
+        )
+
+
+def _spy_plan(conn: sqlite3.Connection, taken: _SpyTaken) -> _SpyPlan:
+    """What taking `taken` into the database would change: each player new
+    to the database (within `MAX_PLAYERS`; one past it is left out with all
+    Spy saw of them), each sighting not kept yet or kept with other values,
+    each player's mark and counts that differ (the counts added up as the
+    crew book's are, `_added`: by the difference from what Spy showed at
+    the last sync, or the whole value when Spy's is lower), each player a
+    read character's list no longer holds (off its list, so off its
+    kill-on-sight list too; the counts kept), and each fight not kept yet."""
+    plan = _SpyPlan()
+    known = {str(k) for (k,) in conn.execute(_SQL_PLAYER_KEYS)}
+    wanted = sorted(
+        {s.key for s in taken.sights} | {k for k, _ in taken.marks} | {f.key for f in taken.fights}
+    )
+    room = MAX_PLAYERS - len(known)
+    out: set[str] = set()
+    for key in wanted:
+        if key in known:
+            continue
+        if room <= 0:
+            out.add(key)
+            continue
+        plan.new_players.append(key)
+        room -= 1
+    plan.players_left_out = len(out)
+    for sight in taken.sights:
+        if sight.key in out:
+            continue
+        held = conn.execute(_SQL_SPY_SIGHTING_OF, (sight.key, sight.seen_by, sight.at)).fetchone()
+        if held is None:
+            plan.sight_inserts.append(sight)
+        elif tuple(held) != sight.values():
+            plan.sight_updates.append(sight)
+    kept = {
+        (str(r[0]), str(r[1])): tuple(int(v) if v is not None else None for v in r[2:])
+        for r in conn.execute(_SQL_SPY_PLAYERS_ALL).fetchall()
+    }
+    for (key, seen_by), m in sorted(taken.marks.items()):
+        if key in out:
+            continue
+        old = kept.get((key, seen_by))
+        if old is None:
+            new: tuple[int | None, ...] = (
+                1,
+                m.kos,
+                m.kos_added,
+                m.wins,
+                m.losses,
+                m.wins,
+                m.losses,
+            )
+        else:
+            wins, losses, wins_seen, losses_seen = (int(v or 0) for v in old[3:])
+            new = (
+                1,
+                m.kos,
+                m.kos_added,
+                min(_added(wins, wins_seen, m.wins, "normal"), COUNTER_MAX),
+                min(_added(losses, losses_seen, m.losses, "normal"), COUNTER_MAX),
+                m.wins,
+                m.losses,
+            )
+        if new != old:
+            plan.marks.append((key, seen_by, *new))
+    for (key, seen_by), old in sorted(kept.items()):
+        if seen_by not in taken.read or (key, seen_by) in taken.held:
+            continue
+        gone = (0, 0, None, old[3], old[4], 0, 0)
+        if gone != old:
+            plan.marks.append((key, seen_by, *gone))
+    seen: set[tuple[str, int, str, str]] = set()
+    for f in taken.fights:
+        one = (f.seen_by, f.at, f.key, f.result)
+        if f.key in out or one in seen:
+            continue
+        seen.add(one)
+        if not conn.execute(_SQL_SPY_FIGHT_HELD, one).fetchone()[0]:
+            plan.fights.append(f)
+    return plan
+
+
+def _spy_write(conn: sqlite3.Connection, plan: _SpyPlan) -> None:
+    now = time.time_ns()
+    for key in plan.new_players:
+        # A player only Spy saw: a row of their own, in no group and no
+        # match, never in the game's list (as one a combat log named).
+        name, _, realm = key.partition("-")
+        row = _Row(
+            key, name, realm, None, None, None, None, 0, None, None, None, None, None, None,
+            0, 0, now, now,
+        )  # fmt: skip
+        conn.execute(_SQL_PLAYER_INSERT, (row.key, *row.values()))
+    conn.executemany(
+        _SQL_SPY_SIGHTING_INSERT,
+        [(*s.values(), s.key, s.seen_by, s.at) for s in plan.sight_inserts],
+    )
+    conn.executemany(
+        _SQL_SPY_SIGHTING_UPDATE,
+        [(*s.values(), s.key, s.seen_by, s.at) for s in plan.sight_updates],
+    )
+    conn.executemany(_SQL_SPY_PLAYER_SET, plan.marks)
+    conn.executemany(
+        _SQL_SPY_FIGHT_INSERT,
+        [(f.key, f.seen_by, f.at, f.result, f.how, f.map_id, f.x, f.y) for f in plan.fights],
+    )
+
+
+def _spy_words(outcome: SpySyncOutcome) -> str:
+    """The sentence a Spy sync says: counts only, never a name."""
+
+    def n(count: int, one: str, many: str) -> str:
+        return f"{count:,} {one if count == 1 else many}"
+
+    if outcome.state == "none" and outcome.files_unread:
+        files = n(outcome.files_unread, "Spy file", "Spy files")
+        return f"{files} could not be read, so nothing was taken from Spy."
+    if outcome.state == "none":
+        return "No character of this game account has Spy data, so nothing was taken from Spy."
+    if outcome.state == "unchanged":
+        words = "wowlab's crew database already holds everything in Spy's saved data."
+    else:
+        words = (
+            "Took Spy's saved data into wowlab's crew database: "
+            f"{n(outcome.sightings_added, 'new sighting', 'new sightings')}, "
+            f"{n(outcome.fights_added, 'fight', 'fights')}, and "
+            f"{n(outcome.players_added, 'player', 'players')} new to the database."
+        )
+    left = outcome.left_out + outcome.players_left_out
+    if left:
+        verb = "was" if left == 1 else "were"
+        words += f" {n(left, 'entry', 'entries')} of Spy's data {verb} outside what wowlab takes."
+    if outcome.files_unread:
+        files = n(outcome.files_unread, "Spy file", "Spy files")
+        words += f" {files} could not be read; the others were."
+    return words
+
+
+def sync_spy(target: Target, survey: spy.SpySurvey) -> SpySyncOutcome:
+    """Take what the Spy addon saw (`survey`: the game account's Spy files,
+    read read-only by `spy.survey`) into wowlab's crew database (M22-02),
+    every value kept as Spy's own: each sighting (when, where, level, guild,
+    hostile or not), each player's kill-on-sight mark and Spy's counts, and
+    each fight Spy's list kept. A player only Spy saw gets a players row.
+    Spy's files are never written. Run again, it changes nothing, and a sync
+    that would change nothing writes nothing. One transaction under the
+    write lock, after today's copy. Never raises for a skipped or misplaced
+    sync: the outcome says why. With no character's Spy data, no database
+    is made."""
+    path = database_path(target.flavor_folder, target.account)
+    taken = _spy_taken(survey)
+    base: dict[str, object] = {
+        "database": str(path),
+        "characters": len(taken.read),
+        "files_unread": len(survey.errors),
+        "left_out": taken.left_out,
+    }
+
+    def outcome(state: SpyState, words: str | None = None, **counts: int) -> SpySyncOutcome:
+        made = SpySyncOutcome.model_validate({"state": state, "words": "", **base, **counts})
+        return made.model_copy(update={"words": words or _spy_words(made)})
+
+    if not taken.read:
+        return outcome("none")
+    exists = os.path.lexists(path)
+    if not exists:
+        orphan = _orphans(target)
+        if orphan:
+            root, folder, found = orphan[0]
+            return outcome("elsewhere", _elsewhere(found, root, folder, target.account).words)
+    try:
+        conn = _open(path, create=True)
+    except sqlite3.OperationalError as exc:
+        if _locked(exc):
+            return outcome("skipped", _skipped(path).words)
+        raise CrewDbError(f"The crew database {path} cannot be opened ({exc}).") from exc
+    assert conn is not None
+    try:
+        meta = _meta(conn)
+        if "install_root" in meta and meta.get("install_root") != target.install_root:
+            words = _elsewhere(
+                path, meta.get("install_root"), meta.get("flavor_folder"), target.account
+            ).words
+            return outcome("elsewhere", words)
+        if _spy_plan(conn, taken).empty():
+            return outcome("unchanged")
+        ident = _ident(path)
+        with _transaction(conn):
+            _still(path, ident)
+            if exists:
+                _daily_copy(conn, path)
+            plan = _spy_plan(conn, taken)
+            _spy_write(conn, plan)
+        return outcome(
+            "synced",
+            sightings_added=len(plan.sight_inserts),
+            sightings_updated=len(plan.sight_updates),
+            fights_added=len(plan.fights),
+            players_added=len(plan.new_players),
+            marks_changed=len(plan.marks),
+            players_left_out=plan.players_left_out,
+        )
+    except _Replaced:
+        return outcome(
+            "skipped",
+            "wowlab's crew database was deleted or replaced while Spy's data was taken (a "
+            "forget of every player does that), so nothing was kept; run the command again.",
+        )
+    except sqlite3.OperationalError as exc:
+        if _locked(exc):
+            return outcome("skipped", _skipped(path).words)
+        raise CrewDbError(f"The crew database {path} could not be synced ({exc}).") from exc
+    except sqlite3.Error as exc:
+        raise CrewDbError(f"The crew database {path} could not be synced ({exc}).") from exc
+    finally:
+        conn.close()
+
+
+def _spy_facts(conn: sqlite3.Connection) -> dict[str, CrewSpy]:
+    """What the Spy addon saw of each player the database keeps it for:
+    the latest sighting, how many it keeps, and across the characters the
+    kill-on-sight mark and Spy's counts (`CrewSpy`)."""
+    if not _has_spy(conn):
+        return {}
+    latest: dict[str, tuple[object, ...]] = {}
+    for row in conn.execute(_SQL_SPY_LATEST):
+        latest.setdefault(str(row[0]), tuple(row))
+    counts = {str(k): int(n) for k, n in conn.execute(_SQL_SPY_COUNTS)}
+    marks: dict[str, list[tuple[object, ...]]] = {}
+    for row in conn.execute(_SQL_SPY_PLAYERS_ALL):
+        marks.setdefault(str(row[0]), []).append(tuple(row))
+    out: dict[str, CrewSpy] = {}
+    for key in sorted(set(latest) | set(marks)):
+        fields: dict[str, object] = {"sightings": counts.get(key, 0)}
+        seen = latest.get(key)
+        if seen is not None:
+            (_, by, at, zone, sub, map_id, x, y, level, guessed, cls, race, fac, guild, enemy) = (
+                seen
+            )
+            fields.update(
+                last_seen=at,
+                seen_by=by,
+                zone=zone,
+                sub_zone=sub,
+                map_id=map_id,
+                map_x=x,
+                map_y=y,
+                level=level,
+                level_guessed=None if guessed is None else bool(guessed),
+                class_token=cls,
+                race=race,
+                faction=fac,
+                guild=guild,
+                is_enemy=None if enemy is None else bool(enemy),
+            )
+        held = marks.get(key, [])
+        added = [_number(m[4]) for m in held if m[3]]
+        fields.update(
+            kos=any(bool(m[3]) for m in held),
+            kos_added=min((a for a in added if a is not None), default=None),
+            wins=sum(_number(m[5]) or 0 for m in held),
+            losses=sum(_number(m[6]) or 0 for m in held),
+            in_spy=any(bool(m[2]) for m in held),
+        )
+        out[key] = CrewSpy.model_validate(fields)
+    return out
+
+
+def _spy_fights(conn: sqlite3.Connection, key: str | None) -> list[nemesis.Fight]:
+    """The fights Spy's lists kept (`key`: one player's), one per row, as
+    the record's `spy` source: a win is your killing blow on them, a loss
+    theirs on you, a probable win a fight with neither (Spy only guessed
+    it). A fight within `SPY_SAME_FIGHT_SECONDS` of an open-world encounter
+    a combat log gave with that player as a foe is that encounter, already
+    counted, so it is left out."""
+    if not _has_spy(conn):
+        return []
+    spans: dict[str, list[tuple[int, int]]] = {}
+    if _has_world(conn):
+        found = (
+            conn.execute(_SQL_WORLD_FOE_SPANS_ALL)
+            if key is None
+            else conn.execute(_SQL_WORLD_FOE_SPANS_OF, (key,))
+        )
+        for k, start, end in found:
+            spans.setdefault(str(k), []).append((int(start), int(end)))
+    rows = (
+        conn.execute(_SQL_SPY_FIGHTS_ALL)
+        if key is None
+        else conn.execute(_SQL_SPY_FIGHTS_OF, (key,))
+    )
+    near = SPY_SAME_FIGHT_SECONDS
+    out: list[nemesis.Fight] = []
+    for fight_id, k, at, result in rows:
+        when = int(at)
+        if any(s - near <= when <= e + near for s, e in spans.get(str(k), ())):
+            continue
+        out.append(
+            nemesis.Fight(
+                key=str(k),
+                source="spy",
+                row=int(fight_id),
+                at=when,
+                kills=int(result == "win"),
+                deaths=int(result == "loss"),
+            )
+        )
+    return out
 
 
 # ─── the record against each opponent (M22-03) ───────────────────────────────
@@ -4169,17 +5045,18 @@ def _world_tallies(world: dict[str, _WorldPart]) -> list[nemesis.Tally]:
 
 def _records(conn: sqlite3.Connection, world: dict[str, _WorldPart]) -> dict[str, nemesis.Record]:
     """Each player's record against you, by stored key, from every source's
-    tallies; a player with no fight has none. A source added later (Spy,
-    M22-02) adds its tallies here."""
-    return nemesis.records_from([*_match_tallies(conn), *_world_tallies(world)])
+    tallies; a player with no fight has none. Spy's fights (M22-02) are few
+    and each one is checked against the combat log's encounters, so they
+    are totalled from their rows (`_spy_fights`)."""
+    spied = nemesis.tally_of(_spy_fights(conn, None))
+    return nemesis.records_from([*_match_tallies(conn), *_world_tallies(world), *spied])
 
 
 def _fights(conn: sqlite3.Connection, key: str | None) -> list[nemesis.Fight]:
     """The fights the database keeps (`key`: one player's), one per source
-    row, oldest first within each source: the rows `_records` totals. A
-    source added later (Spy, M22-02) adds its reader here too; a
-    battleground's kill pairs (M22-15) fold into the match's fight, as its
-    `kills` and `deaths`, in both places."""
+    row, oldest first within each source: the rows `_records` totals,
+    Spy's fights (M22-02) last; a battleground's kill pairs (M22-15) fold
+    into the match's fight, as its `kills` and `deaths`, in both places."""
     in_matches = (
         conn.execute(_SQL_FIGHTS_MATCHES_ALL)
         if key is None
@@ -4197,7 +5074,7 @@ def _fights(conn: sqlite3.Connection, key: str | None) -> list[nemesis.Fight]:
         for k, match_id, at, map_name, won in in_matches
     ]
     if not _has_world(conn):
-        return out
+        return out + _spy_fights(conn, key)
     in_world = (
         conn.execute(_SQL_FIGHTS_WORLD_ALL)
         if key is None
@@ -4215,13 +5092,14 @@ def _fights(conn: sqlite3.Connection, key: str | None) -> list[nemesis.Fight]:
         )
         for k, encounter_id, start, zone, killed_by_you, killed_you in in_world
     ]
-    return out
+    return out + _spy_fights(conn, key)
 
 
 def fights(flavor_folder: str, account: str, key: str | None = None) -> list[nemesis.Fight]:
     """The fights wowlab's crew database keeps (`key`: only that player's,
     by stored key), each one source row: a kept match with the player on the
-    other side, or a kept open-world encounter in which they fought you.
+    other side, a kept open-world encounter in which they fought you, or a
+    fight the Spy addon counted that no such encounter already holds.
     Their record (`CrewRow.record`) is these added up. Empty when there is
     no database yet."""
 
@@ -4242,16 +5120,19 @@ __all__ = [
     "MAX_PLAYERS",
     "MAX_WORLD_ENCOUNTERS",
     "SCHEMA",
+    "SPY_SAME_FIGHT_SECONDS",
     "AdoptOutcome",
     "CrewDbError",
     "CrewMatchRow",
     "CrewRow",
+    "CrewSpy",
     "CrewWorldEncounterRow",
     "DatabaseSummary",
     "Forgetting",
     "MarkField",
     "Marking",
     "RowChanged",
+    "SpySyncOutcome",
     "SyncOutcome",
     "SyncPlan",
     "Target",
@@ -4279,6 +5160,7 @@ __all__ = [
     "scanned_words",
     "summaries",
     "sync",
+    "sync_spy",
     "world_encounters",
     "world_maps",
     "world_resume",

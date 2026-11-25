@@ -4958,18 +4958,22 @@
     ["faced", "Most matches against you first"], ["allied", "Most matches with you first"],
     ["world", "Latest open-world fight first"],
     ["deaths", "Most killed by them"], ["team_losses", "Most team losses to them"],
+    ["spy", "Latest seen by Spy first"],
   ];
   // `crew list --faced` and `--allied` (M20-09): players met in a match.
   // `crew list --world` (M20-18): players met in the open world, from a combat log.
   // `crew list --nemeses` and `--rivals` (M22-03): your nemeses (by killing
   // blows), and rival teams (by battleground and arena results).
+  // `crew list --spy` (M22-02): players the Spy addon saw.
   const CREW_PVP = [
     ["", "Everyone"], ["faced", "Against you in a match"], ["allied", "With you in a match"],
     ["world", "Met in the open world"], ["nemeses", "Your nemeses"], ["rivals", "Rival teams"],
+    ["spy", "Seen by Spy"],
   ];
   const CREW_RATE = [["good", "good"], ["bad", "bad"], ["none", "none (take it away)"]];
   const CREW_COLUMNS = [
     "Player", "Class", "Record against them", "Groups", "Last grouped", "Last instance", "Your rating", "Your note",
+    "Last seen by Spy",
   ];
 
   function fillSelect(select, choices) {
@@ -5035,6 +5039,27 @@
       "; team won " + (hubNum(team.wins) || 0) + ", lost " + (hubNum(team.losses) || 0);
   }
 
+  // What the Spy addon saw (M22-02), from `crew list --json`'s `spy`: when
+  // it last saw them and the place it recorded (where your character
+  // stood), as the command gave them; "never" for a player Spy never saw.
+  function crewSpySeen(p) {
+    const seen = p.spy && typeof p.spy === "object" ? p.spy : null;
+    if (!seen) return "never";
+    const day = crewDay(seen.last_seen);
+    if (!day) return "on Spy's list, never seen";
+    const place = [seen.zone, seen.sub_zone].filter((x) => hubStr(x)).map((x) => visible(x)).join(", ");
+    return place ? day + " in " + place : day;
+  }
+
+  // A player only Spy saw has no class from the crew book: Spy's, said as Spy's.
+  function crewSpyWho(p) {
+    const seen = p.spy && typeof p.spy === "object" ? p.spy : null;
+    if (!seen) return "";
+    const level = hubNum(seen.level);
+    const who = [crewClass(seen.class_token), level === null ? null : "level " + level].filter(Boolean).join(", ");
+    return who ? who + " (as Spy saw them)" : "";
+  }
+
   function crewCells(p) {
     const level = hubNum(p.level);
     const klass = crewClass(p.class_token);
@@ -5043,13 +5068,14 @@
     const who = [klass, level === null ? null : "level " + level, spec].filter(Boolean).join(", ");
     const met = hubNum(p.met);
     return [
-      who || NOT_RECORDED,
+      who || crewSpyWho(p) || NOT_RECORDED,
       crewRecord(p.record),
       met === null ? NOT_RECORDED : String(met),
       crewDay(p.last) || NOT_RECORDED,
       hubStr(p.where) ? visible(p.where) : "none",
       hubStr(p.rating) ? visible(p.rating) : "none",
       hubStr(p.note) ? visible(p.note) : "none",
+      crewSpySeen(p),
     ];
   }
 
@@ -5079,6 +5105,12 @@
     if (record.team && record.team.rival === true) {
       const badge = make("span", "Rival team");
       badge.className = "badge badge-rival";
+      name.appendChild(badge);
+    }
+    // Spy's kill-on-sight mark (M22-02), Spy's own, as the command gave it.
+    if (p.spy && typeof p.spy === "object" && p.spy.kos === true) {
+      const badge = make("span", "Kill on sight");
+      badge.className = "badge badge-kos";
       name.appendChild(badge);
     }
     tr.appendChild(name);
@@ -5162,6 +5194,7 @@
     if (pvp === "world") params.world = true;
     if (pvp === "nemeses") params.nemeses = true;
     if (pvp === "rivals") params.rivals = true;
+    if (pvp === "spy") params.spied = true; // `--spy`, by the command's parameter name
     const map = byId("crew-map").value;
     if (map.trim() !== "") params.map_text = map;
     const since = byId("crew-since").value;

@@ -43,6 +43,7 @@ from wowlab_core import (
     nemesis,
     region,
     snapshot,
+    spy,
     worldpvp,
 )
 
@@ -99,6 +100,10 @@ _CREW_NOTES = [
     "The class is the game's internal name for it (MAGE, PRIEST, ...), as the game gave it.",
     "Dates are in this computer's time zone.",
     nemesis.HOW_COUNTED,
+    "What the Spy addon saw is Spy's own: the place is where your character stood when Spy "
+    "last placed the player, which can be earlier than when it last saw them, and the "
+    "kill-on-sight list and counts are the ones Spy keeps. wowlab reads Spy's files and never "
+    "changes them.",
 ]
 _MATCH_NOTE = (
     "A match is kept only when you stayed in it until the scoreboard showed its end. With you "
@@ -116,7 +121,10 @@ _SHOW_NOTES = [*_CREW_NOTES, _LINKS_NOTE]
 # database's: `faced` and `allied` (M20-09), `world`, latest open-world
 # encounter first (M20-18), and `deaths` and `team_losses`, most killed by
 # them and most team losses to them first (M22-03).
-CrewSort = Literal["last", "met", "name", "faced", "allied", "world", "deaths", "team_losses"]
+# M22-02 adds `spy`, the latest sighting by the Spy addon first.
+CrewSort = Literal[
+    "last", "met", "name", "faced", "allied", "world", "deaths", "team_losses", "spy"
+]
 
 
 class CrewPlace(_Out):
@@ -185,6 +193,12 @@ class CrewReport(_Out):
     nemesis_rule: str = nemesis.NEMESIS_RULE
     rival_rule: str = nemesis.RIVAL_RULE
     sync: crewdb.SyncOutcome | None = None
+    # M22-02: what taking the Spy addon's saved data did (None when it did
+    # not run: no book, or a book never turned on), and the filter `spy`:
+    # only players Spy saw, latest sighting first unless `sort` says
+    # otherwise. Each player's `spy` is what Spy saw of them, or null.
+    spy_sync: crewdb.SpySyncOutcome | None = None
+    spy: bool = False
     # The match filters (§21.3, "Reading", M20-09): only players who were
     # against you (`faced`) or with you (`allied`) in a match the database
     # counts, in a match on a map whose name holds `map`, and whose latest
@@ -231,6 +245,8 @@ class CrewShowReport(_Out):
     nemesis_rule: str = nemesis.NEMESIS_RULE
     rival_rule: str = nemesis.RIVAL_RULE
     sync: crewdb.SyncOutcome | None = None
+    # M22-02: as in `CrewReport`; what Spy saw of them is `player.spy`.
+    spy_sync: crewdb.SpySyncOutcome | None = None
     # M21-02: as in `CrewReport`.
     region: Region | None = None
     region_absent: str | None = None
@@ -254,6 +270,9 @@ class _Opened:
         self.where = where
         # The bytes of the chosen book's WowLab.lua, as read (None: no file).
         self.data = data
+        # What the sync of the Spy addon's data did (M22-02); None when it
+        # did not run.
+        self.spy_sync: crewdb.SpySyncOutcome | None = None
 
 
 _READ_ERRORS = (WowlabError, luadata.LuaDataError, OSError)
@@ -495,6 +514,7 @@ def _from_database(
     outcome: crewdb.SyncOutcome | None = None
     if opened.book.state != "not_turned_on" and opened.data is not None:
         outcome = crewdb.sync(target, opened.data, opened.book, reread=_rereader(opened))
+    opened.spy_sync = _crew_sync_spy(opened, target)
     return outcome, crewdb.read(
         target.flavor_folder,
         target.account,
@@ -502,6 +522,17 @@ def _from_database(
         region=reading.region if reading is not None else None,
         second_names=_crew_second_names(opened),
     )
+
+
+def _crew_sync_spy(opened: _Opened, target: crewdb.Target) -> crewdb.SpySyncOutcome | None:
+    """Take what the Spy addon saved for the chosen book's game account
+    (every character's `Spy.lua`, read read-only) into wowlab's crew
+    database (M22-02). Only once the crew book was turned on: nothing is
+    recorded before that, Spy's data included. None when it did not run."""
+    if opened.book.state == "not_turned_on" or opened.where is None or opened.place is None:
+        return None
+    _, lay = opened.where
+    return crewdb.sync_spy(target, spy.survey(lay, account=opened.place.account))
 
 
 def _crew_version(opened: _Opened) -> str | None:
@@ -589,6 +620,12 @@ def _row(p: crewbook.CrewPlayer) -> str:
     """One player's line in `crew list`."""
     level = str(p.level) if p.level is not None else None
     who = " ".join(x for x in (p.class_token, level, p.spec) if x)
+    if not who and isinstance(p, crewdb.CrewRow) and p.spy is not None:
+        # A player only the Spy addon saw: what Spy saw, said as Spy's.
+        seen = p.spy
+        level = str(seen.level) if seen.level is not None else None
+        who = " ".join(x for x in (seen.class_token, level) if x)
+        who = f"{who} (as Spy saw them)" if who else ""
     parts = [who or "class not recorded"]
     if p.met is not None:
         parts.append(f"grouped {p.met} {'time' if p.met == 1 else 'times'}")
@@ -607,11 +644,37 @@ def _row(p: crewbook.CrewPlayer) -> str:
         world = _world_row(p)
         if world is not None:
             parts.append(world)
+        if p.spy is not None:
+            parts.append(_crew_spy_row(p.spy))
         if not p.in_game_list:
             parts.append(_NOT_LISTED)
         if p.also_known_as:
             parts.append(_also_seen(p.also_known_as))
     return f"  {p.key}: " + "; ".join(parts)
+
+
+def _crew_spy_place(seen: crewdb.CrewSpy) -> str | None:
+    """The place Spy last recorded, in words: the zone and subzone, and the
+    map and position on it (Spy's 0 to 1, as percent of the map); None for
+    none."""
+    names = [x for x in (seen.zone, seen.sub_zone) if x]
+    where = ", ".join(names)
+    if seen.map_id is not None:
+        at = ""
+        if seen.map_x is not None and seen.map_y is not None:
+            at = f" at {seen.map_x * 100:.0f}, {seen.map_y * 100:.0f}"
+        spot = f"map {seen.map_id}{at}"
+        where = f"{where} ({spot})" if where else spot
+    return where or None
+
+
+def _crew_spy_row(seen: crewdb.CrewSpy) -> str:
+    """What the Spy addon saw, in `crew list`'s line (M22-02)."""
+    words = "known to Spy"
+    if seen.last_seen is not None:
+        place = _crew_spy_place(seen)
+        words = f"seen by Spy {_date(seen.last_seen)}" + (f" in {place}" if place else "")
+    return words + ("; kill on sight in Spy" if seen.kos else "")
 
 
 def _record_words(r: nemesis.Record) -> str:
@@ -679,6 +742,8 @@ def _sorted(players: Sequence[crewdb.CrewRow], by: CrewSort) -> list[crewdb.Crew
         return sorted(players, key=lambda p: nemesis.nemesis_order(p.record, p.key))
     if by == "team_losses":
         return sorted(players, key=lambda p: nemesis.rival_order(p.record, p.key))
+    if by == "spy":
+        return sorted(players, key=lambda p: (-_crew_spy_last(p), p.key))
     return crewbook.ordered(players, by)
 
 
@@ -690,25 +755,32 @@ SortOpt = Annotated[
     CrewSort | None,
     typer.Option(
         "--sort",
-        help="last: newest group first (the default, except with --nemeses, --rivals or "
-        "--world, which have their own); met: most groups first; name: by name; faced: most "
+        help="last: newest group first (the default, except with --nemeses, --rivals, "
+        "--world or --spy, which have their own); met: most groups first; name: by name; faced: most "
         "matches against you first; allied: most matches with you first; world: latest "
         "open-world encounter first; deaths: most killed by them first; team_losses: most "
-        "team losses to them first.",
+        "team losses to them first; spy: latest seen by the Spy addon first.",
     ),
 ]
 
 
-def _default_sort(*, nemeses: bool, rivals: bool, world: bool) -> CrewSort:
+def _crew_spy_last(p: crewdb.CrewRow) -> int:
+    """When the Spy addon last saw the player (-1 for never)."""
+    return p.spy.last_seen if p.spy is not None and p.spy.last_seen is not None else -1
+
+
+def _default_sort(*, nemeses: bool, rivals: bool, world: bool, spied: bool = False) -> CrewSort:
     """The order `crew list` uses when no --sort is given: a view's own
-    (nemeses, then rival teams, then the open world), else newest group
-    first."""
+    (nemeses, then rival teams, then the open world, then Spy's), else
+    newest group first."""
     if nemeses:
         return "deaths"
     if rivals:
         return "team_losses"
     if world:
         return "world"
+    if spied:
+        return "spy"
     return "last"
 
 
@@ -784,6 +856,13 @@ def crew_list(
             f"otherwise. {nemesis.RIVAL_RULE}",
         ),
     ] = False,
+    spied: Annotated[
+        bool,
+        typer.Option(
+            "--spy",
+            help="Only players the Spy addon saw, latest seen first unless --sort says otherwise.",
+        ),
+    ] = False,
     sort: SortOpt = None,
     no_links: NoLinksOpt = False,
     account: AccountOpt = None,
@@ -808,7 +887,7 @@ def crew_list(
     since_at = _since(since)
     # With no --sort, a view's own order; an explicit --sort always wins.
     if sort is None:
-        sort = _default_sort(nemeses=nemeses, rivals=rivals, world=world)
+        sort = _default_sort(nemeses=nemeses, rivals=rivals, world=world, spied=spied)
     opened = _open_book(root, flavor, account)
     book = opened.book
     reading = _crew_region(opened)
@@ -831,6 +910,7 @@ def crew_list(
         and (not world or p.world_faced > 0 or p.world_allied > 0)
         and (not nemeses or (p.record is not None and p.record.personal.nemesis))
         and (not rivals or (p.record is not None and p.record.team.rival))
+        and (not spied or p.spy is not None)
     ]
     shown = _sorted(picked, sort)
     place = opened.place
@@ -866,6 +946,8 @@ def crew_list(
         nemeses=nemeses,
         rivals=rivals,
         sync=outcome,
+        spy_sync=opened.spy_sync,
+        spy=spied,
         faced=faced,
         allied=allied,
         map=map_text,
@@ -894,6 +976,7 @@ def crew_list(
         or world
         or nemeses
         or rivals
+        or spied
     )
     if filtered:
         _say(f"{len(shown)} of {_plural(len(kept), 'player')} match.")
@@ -938,7 +1021,7 @@ def _fights_of(opened: _Opened, player: crewdb.CrewRow | None) -> list[nemesis.F
 
 # Where a fight came from, in words (M22-03); a source not named here is
 # shown by its name.
-_SOURCE_WORDS = {"match": "in matches", "world": "in the open world"}
+_SOURCE_WORDS = {"match": "in matches", "world": "in the open world", "spy": "counted by Spy"}
 
 
 def _against_lines(r: nemesis.Record | None) -> list[str]:
@@ -959,6 +1042,58 @@ def _against_lines(r: nemesis.Record | None) -> list[str]:
         f"{team.losses}",
         f"  Rival team: {'yes' if team.rival else 'no'} ({nemesis.RIVAL_RULE})",
     ]
+
+
+def _crew_spy_lines(seen: crewdb.CrewSpy | None) -> list[str]:
+    """What the Spy addon saw of the player, in `crew show` (M22-02): the
+    latest sighting, the place Spy recorded (where your character stood),
+    what Spy saw of them, its kill-on-sight mark and its own counts. None
+    for a player Spy never saw."""
+    if seen is None:
+        return []
+    lines: list[str] = []
+    if seen.last_seen is not None:
+        by = (seen.seen_by or "").rsplit("/", 1)[-1]
+        kept = _plural(seen.sightings, "sighting")
+        lines.append(
+            f"  Seen by Spy: last on {_date(seen.last_seen)} {_hour_minute(seen.last_seen)}"
+            + (f", by your character {by}" if by else "")
+            + f" ({kept} kept)"
+        )
+        place = _crew_spy_place(seen)
+        lines.append(f"  Where you stood when Spy last placed them: {place or 'not recorded'}")
+        level = None
+        if seen.level is not None:
+            level = f"level {seen.level}" + (" (a guess)" if seen.level_guessed else "")
+        what = [level, seen.class_token, seen.race, seen.faction]
+        if seen.guild:
+            what.append(f"guild {seen.guild}")
+        hostile = {True: "yes", False: "no", None: "not recorded"}[seen.is_enemy]
+        lines.append(
+            "  As Spy last saw them: "
+            + (", ".join(x for x in what if x) or "nothing recorded")
+            + f"; hostile to you: {hostile}"
+        )
+    kos = "no"
+    if seen.kos:
+        kos = "yes" + (f", since {_date(seen.kos_added)}" if seen.kos_added is not None else "")
+    lines.append(f"  On Spy's kill-on-sight list: {kos}")
+    if seen.wins or seen.losses:
+        lines.append(
+            f"  Spy's own counts: your killing blows on them {seen.wins}, deaths it put on "
+            f"them {seen.losses}"
+        )
+    if not seen.in_spy:
+        lines.append("  In Spy's list now: no; Spy dropped them, and wowlab keeps what it saw")
+    return lines
+
+
+def _hour_minute(seconds: int) -> str:
+    """A time's hour and minute in this computer's time zone."""
+    try:
+        return time.strftime("%H:%M", time.localtime(seconds))
+    except (OverflowError, OSError, ValueError):
+        return ""
 
 
 def _score_value(value: crewbook.ScoreValue) -> str:
@@ -1063,6 +1198,7 @@ def crew_show(
             )
         lines += _record_lines(player)
         lines += _world_lines(player)
+        lines += _crew_spy_lines(player.spy)
         if not player.in_game_list:
             lines.append(
                 "  In the game's list: no; only wowlab's crew database keeps them now "
@@ -1086,6 +1222,7 @@ def crew_show(
         notes=_SHOW_NOTES,
         fights=_fights_of(opened, player),
         sync=outcome,
+        spy_sync=opened.spy_sync,
         region=_region_fields(reading)[0],
         region_absent=_region_fields(reading)[1],
     )
@@ -1354,7 +1491,8 @@ class CrewSyncReport(_Out):
     into wowlab's crew database did (`sync`; None when the book was never
     turned on), what `--adopt` did first (`adopted`; None without it), and
     how many players the database keeps afterwards (`total`). `words` is
-    the sentence the text output opens with."""
+    the sentence the text output opens with; `spy`, what the same run took
+    from the Spy addon's saved data."""
 
     flavor_folder: str | None
     account: str | None
@@ -1364,6 +1502,9 @@ class CrewSyncReport(_Out):
     adopted: crewdb.AdoptOutcome | None
     total: int
     words: str
+    # M22-02: what taking the Spy addon's saved data did; None when it did
+    # not run (a book never turned on, or a held sync declined).
+    spy: crewdb.SpySyncOutcome | None = None
 
 
 def _sync_plan_line(plan: crewdb.SyncPlan) -> str:
@@ -1401,8 +1542,11 @@ def crew_sync(
 ) -> None:
     """Copy what is new in the crew book (WowLab.lua, as of your last logout
     or /reload) into wowlab's own crew database, which keeps every player
-    for good, even once the game's list has dropped them. Nothing in the
-    game folder is changed. crew list and crew show do this first.
+    for good, even once the game's list has dropped them, and with it what
+    the Spy addon saved for each of the account's characters: each sighting
+    (when, where, level, guild, hostile or not), its kill-on-sight list and
+    its counts. Nothing in the game folder is changed, Spy's files
+    included. crew list and crew show do this first.
 
     When the book is not the one the database was filled from, or wowlab put
     WowLab.lua back since the last sync (a snapshot restore, an undo or a
@@ -1449,6 +1593,7 @@ def crew_sync(
 
     data = opened.data
     outcome = crewdb.sync(target, data, book, by_hand=True, confirm=ask, reread=_rereader(opened))
+    spied = _crew_sync_spy(opened, target) if outcome.state != "declined" else None
     total = len(crewdb.read(target.flavor_folder, target.account))
     words = f"{outcome.words} ({_place_words(place)}, {_AS_OF})" if place else outcome.words
     report = CrewSyncReport(
@@ -1460,6 +1605,7 @@ def crew_sync(
         adopted=adopted,
         total=total,
         words=words,
+        spy=spied,
     )
     failed = outcome.state in ("declined", "skipped", "refused", "elsewhere")
     if json_out:
@@ -1470,6 +1616,14 @@ def crew_sync(
         _say_err(words)
     else:
         _say(words)
+    # The same refusal as the book's is said once.
+    repeated = (
+        spied is not None
+        and spied.state in ("skipped", "elsewhere")
+        and spied.state == outcome.state
+    )
+    if not json_out and spied is not None and spied.state != "none" and not repeated:
+        (_say_err if spied.state in ("skipped", "elsewhere") else _say)(spied.words)
     if failed:
         raise typer.Exit(EXIT_ERROR)
 
@@ -2159,7 +2313,9 @@ class CrewEditReport(_Out):
 
     `also_known_as` (forget of one name): the other stored keys wowlab
     keeps for the same character by the game's id, which the plan and the
-    result name; they are not forgotten with it."""
+    result name; they are not forgotten with it. `spy_keeps` (forget): the
+    players forgotten whom the Spy addon's own saved data still holds, which
+    wowlab never changes."""
 
     command: CrewCommand
     flavor_folder: str
@@ -2188,6 +2344,10 @@ class CrewEditReport(_Out):
     # character by the game's id (§21.3). Named in the plan and the result;
     # never forgotten with it.
     also_known_as: list[str] = pydantic.Field(default_factory=list)
+    # `forget` (M22-02): the players forgotten whom the Spy addon's saved
+    # data still holds. wowlab never changes Spy's files, so the next sync
+    # takes what Spy holds of them again; the plan and the result say so.
+    spy_keeps: list[str] = pydantic.Field(default_factory=list)
 
 
 def _sha(data: bytes) -> str:
@@ -2355,6 +2515,32 @@ def _other_names(chosen: str, edit: _Edit) -> list[str]:
     held += [(r.key, r.guid) for r in crewdb.read(edit.place.flavor_folder, edit.place.account)]
     ids = {g for k, g in held if k == chosen and crewdb.guid_kept(g)}
     return sorted({k for k, g in held if k != chosen and g in ids})
+
+
+def _crew_spy_keeps(edit: _Edit, keys: Sequence[str]) -> list[str]:
+    """Which of `keys` the Spy addon's saved data for the account holds
+    (M22-02): a player row, a kill-on-sight entry or a fight naming them,
+    in any character's `Spy.lua`, read read-only. A file that cannot be
+    read holds none."""
+    held: set[str] = set()
+    for c in spy.survey(edit.lay, account=edit.place.account).characters:
+        held.update(p.name or p.key for p in c.players)
+        held.update(k.key for k in c.kos)
+        held.update(e.name for e in c.encounters if e.name is not None)
+    return [k for k in keys if k in held]
+
+
+def _crew_spy_keeps_words(keys: Sequence[str], *, one: bool) -> str | None:
+    """The sentence a forget adds when the Spy addon still keeps some of
+    the players (M22-02); None when it keeps none."""
+    if not keys:
+        return None
+    who = "this player" if one else f"{len(keys)} of these players"
+    return (
+        f"The Spy addon still keeps {who} in its own saved data, which wowlab never changes, so "
+        "the next sync takes what Spy holds of them into wowlab's crew database again; remove "
+        "them in Spy to keep them out."
+    )
 
 
 def _not_reached(store: snapshot.SnapshotStore, n: int, *, done: bool, one: bool) -> str:
@@ -2672,6 +2858,7 @@ def crew_forget(
             notes=[],
             database_forgotten=(written and db_has) if database is None else database,
             also_known_as=others,
+            spy_keeps=in_spy,
         )
 
     # The same character under other names (§21.3): said, never taken.
@@ -2682,6 +2869,8 @@ def crew_forget(
         else None
     )
     named = ", ".join(keys)
+    in_spy = _crew_spy_keeps(edit, keys)
+    spy_words = _crew_spy_keeps_words(in_spy, one=name is not None)
 
     if not changed and db_has and (name is None or keys[0] in in_db):
         # Only wowlab's crew database (and its copies) hold them: no file of
@@ -2698,6 +2887,8 @@ def crew_forget(
         )
         if also_seen is not None:
             show(also_seen)
+        if spy_words is not None:
+            show(spy_words)
         try:
             _confirm("Forget this player?" if name is not None else "Forget every player?", yes)
         except typer.Exit:
@@ -2711,6 +2902,8 @@ def crew_forget(
         _say(f"Forgot {who}: wowlab's crew database and its copies no longer hold them.")
         if also_seen is not None:
             _say(also_seen)
+        if spy_words is not None:
+            _say(spy_words)
         return
 
     if not changed:
@@ -2740,6 +2933,8 @@ def crew_forget(
             show("  remove them from wowlab's crew database and every copy it keeps")
         if also_seen is not None:
             show(also_seen)
+        if spy_words is not None:
+            show(spy_words)
         show(_not_reached(store, count, done=False, one=name is not None))
 
     def done(finished: CrewEditReport) -> None:
@@ -2752,6 +2947,8 @@ def crew_forget(
         )
         if also_seen is not None:
             _say(also_seen)
+        if spy_words is not None:
+            _say(spy_words)
         assert finished.not_reached is not None
         _say(finished.not_reached)
 

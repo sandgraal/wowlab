@@ -16,8 +16,8 @@ The record keeps two parts apart (owner ruling, 2026-11-23):
   the matches you played against them. It decides the **rival team**
   (`is_rival`, `RIVAL_RULE`), and never the nemesis.
 
-Two sources feed it today; each is read by `crewdb` from wowlab's own crew
-database:
+Three sources feed it today; each is read by `crewdb` from wowlab's own
+crew database:
 
 - **A battleground or arena match** (`match`), from the game's scoreboard:
   one fight with every player on the other side, carrying only its team
@@ -26,6 +26,13 @@ database:
 - **An open-world encounter** (`world`), from a combat log `crew scan-log`
   read: one fight with each player who fought you in it, carrying only
   killing blows: yours on them and theirs on you. A trade counts both.
+
+- **A fight the Spy addon counted** (`spy`, M22-02), from its saved
+  `Encounters` list: one fight with the player Spy named, carrying only a
+  killing blow: a win is yours on them, a loss theirs on you, a probable
+  win (Spy only guessed it) neither. `crewdb` leaves out one that falls
+  within an open-world encounter a combat log gave with that player, so the
+  same fight is not counted twice.
 
 A further source plugs in as one more list of fights: a reader that turns
 its rows into `Fight`s with a new `Source` value, handed to `records` with
@@ -78,10 +85,12 @@ def is_rival(wins: int, losses: int) -> bool:
 
 # What counts, in words, for the notes that explain a record.
 HOW_COUNTED = (
-    "A fight is a battleground or arena match with them on the other side, or an open-world "
-    "encounter from a combat log in which they fought you. Killing blows between the two of "
-    "you decide a nemesis; the matches your side won or lost against theirs decide a rival "
-    "team, and never a nemesis."
+    "A fight is a battleground or arena match with them on the other side, an open-world "
+    "encounter from a combat log in which they fought you, or a fight the Spy addon counted "
+    "(once only, when a combat log also kept it). Killing blows between the two of you decide "
+    "a nemesis, Spy's wins and losses counting as yours and theirs, and its probable wins as "
+    "neither; the matches your side won or lost against theirs decide a rival team, and never "
+    "a nemesis."
 )
 
 # ─── the input ───────────────────────────────────────────────────────────────
@@ -90,7 +99,7 @@ HOW_COUNTED = (
 # The kill pairs of a battleground's combat log (M22-15) are not a new
 # fight: they fold into that match's fight (its `kills` and `deaths`
 # beside its `team`), so a match stays one fight per player.
-Source = Literal["match", "world"]
+Source = Literal["match", "world", "spy"]
 Result = Literal["win", "loss"]
 
 
@@ -100,10 +109,10 @@ class _Model(BaseModel):
 
 class Fight(_Model):
     """One player against you in one source row: the player's stored key,
-    the source (`match` or `world`), the row's id in that source (a match's
-    or an open-world encounter's id in wowlab's crew database), when it
-    started (`at`, seconds since the epoch), the map or zone as the client
-    named it; the personal part, your killing blows on them (`kills`) and
+    the source (`match`, `world` or `spy`), the row's id in that source (a
+    match's, an open-world encounter's or a Spy fight's id in wowlab's crew
+    database), when it started (`at`, seconds since the epoch), the map or
+    zone as the client named it (none for a Spy fight); the personal part, your killing blows on them (`kills`) and
     theirs on you (`deaths`); and the team part, your side's result against
     theirs (`team`: `win`, `loss`, or None when the row has no team result
     or the client gave no winner)."""
@@ -151,7 +160,7 @@ class Record(_Model):
     """One player's record against you, for a player with at least one
     fight (a player with none has no record: None, `null` in JSON): the
     fights, the start of the first and of the latest (`first`, `last`), how many fights
-    each source gave (`sources`, by source name: `match`, `world`), and the
+    each source gave (`sources`, by source name: `match`, `world`, `spy`), and the
     two parts, `personal` and `team`, kept apart."""
 
     fights: int = 0

@@ -372,7 +372,7 @@ def test_a_schema_6_database_gains_the_columns_after_a_copy_constructed(make: An
     assert copy.exists()
     conn = sqlite3.connect(env.db())
     try:
-        assert conn.execute("PRAGMA user_version").fetchone()[0] == crewdb.SCHEMA == 7
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == crewdb.SCHEMA == 8
         columns = {r[1] for r in conn.execute("PRAGMA table_info(players)")}
     finally:
         conn.close()

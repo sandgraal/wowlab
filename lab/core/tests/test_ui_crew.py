@@ -555,7 +555,7 @@ def _bodies(step: dict[str, Any]) -> list[dict[str, Any]]:
 
 
 # `badge badge-nemesis` and `badge badge-rival` (M22-03): the two marks, each
-# a fixed class and text.
+# a fixed class and text; `badge badge-kos`, Spy's kill-on-sight mark (M22-02).
 _DRAWN_CLASSES = {
     "",
     "char-table hub crew",
@@ -564,6 +564,7 @@ _DRAWN_CLASSES = {
     "hub-open",
     "badge badge-nemesis",
     "badge badge-rival",
+    "badge badge-kos",
 }
 
 
@@ -649,6 +650,7 @@ def test_the_list_searches_filters_and_orders_through_the_command_constructed(
         "Last instance",
         "Your rating",
         "Your note",
+        "Last seen by Spy",
     ]
     # The CLI's order: newest group first.
     assert [r[0] for r in tab["rows"]] == [KEY_A, KEY_C, KEY_B]
@@ -660,6 +662,7 @@ def test_the_list_searches_filters_and_orders_through_the_command_constructed(
         WHERE,
         "none",
         NOTE,
+        "never",
     ]
     assert tab["status"] == "3 players." and tab["toolsHidden"] is False
     assert _bodies(by_met) == [

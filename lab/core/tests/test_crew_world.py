@@ -187,7 +187,7 @@ def test_a_schema_3_database_is_copied_then_migrated_and_scanned_constructed(
         conn.close()
     conn = sqlite3.connect(env.db())
     try:
-        assert conn.execute("PRAGMA user_version").fetchone()[0] == crewdb.SCHEMA == 7
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == crewdb.SCHEMA == 8
         assert conn.execute("SELECT count(*) FROM world_encounters").fetchone()[0] == 1
     finally:
         conn.close()
