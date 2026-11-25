@@ -28,7 +28,7 @@ TEMPLATES = Path(ui.__file__).parent / "templates"
 INSTALL = ROOT / "docs" / "INSTALL.md"
 
 SENTENCE = (
-    "Reading never changes anything. Ten commands can change game files; each shows "
+    "Reading never changes anything. Eleven commands can change game files; each shows "
     "a plan and runs only when you confirm, after a snapshot."
 )
 
@@ -46,6 +46,8 @@ SIX = {
     ("crew", "forget"),
     ("crew", "rate"),
     ("crew", "note"),
+    # M22-04: the records for the in-game tooltip, into WowLab.lua.
+    ("crew", "send"),
 }
 
 # What the places said before, each contradicting the sentence.

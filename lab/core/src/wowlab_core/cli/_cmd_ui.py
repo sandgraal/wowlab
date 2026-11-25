@@ -18,7 +18,7 @@ _BROWSER_WAIT_S = 1.0
 def ui_command() -> None:
     """Open the local UI in your browser and serve it until Ctrl-C.
 
-    Reading never changes anything. Ten commands can change game files;
+    Reading never changes anything. Eleven commands can change game files;
     each shows a plan and runs only when you confirm, after a snapshot.
 
     The server listens on 127.0.0.1 only, at a port the system picks, and
@@ -40,9 +40,9 @@ def ui_command() -> None:
     under it. snap gc and doctor change only wowlab's own store. The
     commands that change game files are snap restore, undo, profile apply,
     sv merge, macros fix, addon install, addon remove, crew forget, crew
-    rate and crew note, and `wowlab undo` reverses each of them. Of these,
-    undo, sv merge, macros fix, crew forget, crew rate and crew note refuse
-    when something changed after the plan;
+    rate, crew note and crew send, and `wowlab undo` reverses each of them.
+    Of these, undo, sv merge, macros fix, crew forget, crew rate, crew note
+    and crew send refuse when something changed after the plan;
     the others apply what is there when you confirm. ui itself, log tail
     --follow, looks page --out, casc cat --out, char model --out, char
     sim-export --out, crew scan-log PATH, snap export, snap rm, blizzard

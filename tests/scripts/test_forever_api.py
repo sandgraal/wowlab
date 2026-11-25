@@ -346,11 +346,12 @@ def test_live_fetch_and_generate_reproduce_the_committed_list(tmp_path: Path) ->
 
 
 def test_the_addon_s_own_globals_are_the_ones_it_writes_whole() -> None:
-    """Four names, none of them the client's: the SavedVariables and the slash
-    command. (Read from the property, so this file names none of them.)"""
+    """Five names, none of them the client's: the SavedVariables (M22-04 added
+    the desk's records) and the slash command. (Read from the property, so
+    this file names none of them.)"""
     std = fa.STD.read_text(encoding="utf-8")
     own = set(fa.std_globals(std)) - fa.client_globals(std)
-    assert len(own) == 4
+    assert len(own) == 5
     assert all(name.startswith(("WowLab", "SLASH_WOWLAB")) for name in own)
 
 

@@ -798,7 +798,7 @@
     box.appendChild(make("h3", "Commands to copy"));
     const note = make(
       "p",
-      "Run them yourself in a terminal. Reading never changes anything. Ten commands can change game files; each shows a plan and runs only when you confirm, after a snapshot.",
+      "Run them yourself in a terminal. Reading never changes anything. Eleven commands can change game files; each shows a plan and runs only when you confirm, after a snapshot.",
     );
     note.className = "hint-note";
     box.appendChild(note);
@@ -5596,7 +5596,9 @@
     box.hidden = !text;
   }
 
+  // Only for a book the list read: the plan names its account and flavor.
   async function crewSendPlan() {
+    if (!crew.report || crew.report.state === "not_turned_on") return;
     const seq = ++crew.sendSeq;
     clearCrewSend();
     crewSendSay("Adding up the records…", false);

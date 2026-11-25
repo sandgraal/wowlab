@@ -244,8 +244,10 @@ def test_install_writes_the_crew_book_file_and_its_toc_line(flavor: Path) -> Non
     files = [line.path for line in toc.files]
     assert "Crew.lua" in files and files.index("Crew.lua") > files.index("Core.lua")
     assert toc.saved_variables == source.saved_variables
-    assert len(toc.saved_variables) == 2 and toc.saved_variables[0] == "WowLabDB"
+    # M22-04: and the records wowlab writes for the in-game tooltip.
+    assert len(toc.saved_variables) == 3 and toc.saved_variables[0] == "WowLabDB"
     assert toc.saved_variables[1].endswith("CrewDB")
+    assert toc.saved_variables[2].endswith("DeskDB")
     assert toc.saved_variables_per_character == ("WowLabCharDB",)
 
 

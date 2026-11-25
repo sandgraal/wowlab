@@ -96,6 +96,8 @@ def test_expect_fields_name_fields_of_the_reports() -> None:
         # M20-02: the player's row in wowlab's crew database joins the pin.
         ("crew", "rate"): ("target_sha256", "written_sha256", "row_sha256"),
         ("crew", "note"): ("target_sha256", "written_sha256", "row_sha256"),
+        # M22-04: the records for the in-game tooltip (test_crew_send.py).
+        ("crew", "send"): ("target_sha256", "written_sha256"),
     }
     assert "undone" in cli.UndoReport.model_fields
     assert {"target_sha256", "merged_sha256"} <= set(cli.SvMergeReport.model_fields)

@@ -41,6 +41,8 @@ ASKS_FIRST = {
     "wowlab crew forget",
     "wowlab crew rate",
     "wowlab crew note",
+    # M22-04: the records for the in-game tooltip.
+    "wowlab crew send",
     "wowlab snap gc",
     # M19-09: removes snapshots from the Lab's store.
     "wowlab snap rm",
