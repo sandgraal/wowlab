@@ -4947,6 +4947,8 @@
     mapsFlavor: "", // the flavor whose map table a read said is missing (M22-22)
     key: null, // the stored key of the player shown
     pending: null, // the plan Confirm would run: { command, params, token }
+    sendSeq: 0, // the latest send-records plan or confirmed run (M22-04)
+    sendPending: null, // the send-records plan Confirm would run: { params, token }
     searchTimer: null,
     // The Matches filter just changed (M22-03): the next read sends no order,
     // so the command uses that view's own, and the Order box then shows it.
@@ -5100,6 +5102,7 @@
     notes.replaceChildren(...(Array.isArray(report.notes) ? report.notes : [])
       .filter((n) => typeof n === "string").map((n) => make("li", visible(n))));
     byId("crew-tools").hidden = !on;
+    byId("crew-send").hidden = !on;
     // The nemeses and rival-team views say the rule they apply, in Python's
     // words (M22-03).
     const rule = byId("crew-rule");
@@ -5183,6 +5186,7 @@
       byId("crew-table").replaceChildren();
       byId("crew-table").hidden = true;
       byId("crew-tools").hidden = true;
+      byId("crew-send").hidden = true;
       byId("crew-words").textContent = "";
       byId("crew-offer").hidden = true;
       crewSay(reply.error ? shown(reply.error) : "The crew book's list came back in a shape this page does not know.", true);
@@ -5559,6 +5563,110 @@
       byId("crew-act-status").focus();
     }
   }
+
+  // ─── the record on the in-game tooltip (M22-04) ───
+  // `crew send-records`: its plan run, then Confirm with the server's token,
+  // exactly as a change to one player goes (crewPlan, crewConfirm). The
+  // records are what the command adds up; the page only shows its words.
+  const SEND = ["crew", "send-records"];
+
+  function crewSendSay(text, isError) {
+    const node = byId("crew-send-status");
+    announce(node, text, Boolean(isError));
+    node.classList.toggle("error", Boolean(isError));
+  }
+
+  function clearCrewSend() {
+    crew.sendPending = null;
+    byId("crew-send-box").hidden = true;
+    byId("crew-send-lines").textContent = "";
+    byId("crew-send-lines").hidden = true;
+    byId("crew-send-note").textContent = "";
+    const button = byId("crew-send-confirm");
+    button.hidden = true;
+    button.disabled = true;
+    button.textContent = "Confirm";
+    byId("crew-send-said").textContent = "";
+    byId("crew-send-said").hidden = true;
+  }
+
+  function crewSendSaid(text) {
+    const box = byId("crew-send-said");
+    box.textContent = shown(text);
+    box.hidden = !text;
+  }
+
+  async function crewSendPlan() {
+    const seq = ++crew.sendSeq;
+    clearCrewSend();
+    crewSendSay("Adding up the records…", false);
+    const params = withFlavor(SEND, crewParams({}));
+    const reply = await postRun({ command: SEND, params: params });
+    if (seq !== crew.sendSeq) return;
+    if (reply.error) {
+      crewSendSay(reply.error, true);
+      return;
+    }
+    const result = reply.result;
+    const outcome = result.outcome && typeof result.outcome.text === "string" ? result.outcome : null;
+    const offer = result.confirm && result.confirm.stage === "plan" ? result.confirm : null;
+    const token = offer && typeof offer.token === "string" && offer.token ? offer.token : null;
+    if (!token) {
+      let nothing = false;
+      try {
+        const report = JSON.parse(result.stdout);
+        nothing = result.exit_code === 0 && Boolean(report) && report.changed === false;
+      } catch (_) {
+        // no report: the command's own words say why
+      }
+      crewSendSay(nothing ? "Nothing to send: the game already holds these records." : outcome ? outcome.text : "", !nothing);
+      crewSendSaid(String(result.stderr || "").trim());
+      return;
+    }
+    crew.sendPending = { params: params, token: token };
+    crewSendSay(outcome ? outcome.text : "", false);
+    const lines = Array.isArray(offer.plan_lines) ? offer.plan_lines.filter((l) => typeof l === "string") : [];
+    const planLines = byId("crew-send-lines");
+    planLines.textContent = lines.map(shown).join("\n");
+    planLines.hidden = lines.length === 0;
+    byId("crew-send-box").hidden = false;
+    byId("crew-send-note").textContent = typeof offer.note === "string" ? shown(offer.note) : "";
+    const button = byId("crew-send-confirm");
+    if (typeof offer.label === "string" && offer.label) button.textContent = offer.label;
+    button.hidden = false;
+    button.disabled = false;
+    byId("crew-send-heading").focus();
+  }
+
+  // The confirmed run of the plan shown: its parameters as the plan ran
+  // them, and the server's token; one click, one run.
+  async function crewSendConfirm() {
+    const plan = crew.sendPending;
+    if (plan === null) return;
+    crew.sendPending = null;
+    const seq = ++crew.sendSeq;
+    const button = byId("crew-send-confirm");
+    button.disabled = true;
+    button.hidden = true;
+    crewSendSay("Writing…", false);
+    const reply = await postRun({ command: SEND, params: plan.params, confirm: plan.token });
+    // The store and the install may have changed: the backup line reads again.
+    backup.stale = true;
+    if (seq !== crew.sendSeq) return;
+    byId("crew-send-box").hidden = true;
+    if (reply.error) {
+      crewSendSay(reply.error, true);
+      return;
+    }
+    const result = reply.result;
+    const outcome = result.outcome && typeof result.outcome.text === "string" ? result.outcome : null;
+    const note = result.confirm && typeof result.confirm.note === "string" ? result.confirm.note : "";
+    crewSendSay([outcome ? outcome.text : "", shown(note)].filter(Boolean).join(" "), Boolean(outcome && outcome.alert));
+    crewSendSaid(result.exit_code !== 0 ? String(result.stderr || "").trim() : "");
+  }
+
+  byId("crew-send-plan").addEventListener("click", () => crewSendPlan());
+  byId("crew-send-confirm").addEventListener("click", () => crewSendConfirm());
 
   byId("crew-rate").addEventListener("click", () => crewPlan(["crew", "rate"], { rating: byId("crew-rate-value").value || "none" }));
   byId("crew-note").addEventListener("click", () => crewPlan(["crew", "note"], { text: byId("crew-note-text").value }));

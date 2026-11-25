@@ -46,12 +46,16 @@ CREW = g.ADDON / g.CREW_FILE
 BOOK = g.BOOK
 
 # The hook's functions: the handler the client calls and what it reaches.
-HOOK = ("onTooltip", "tipShow", "hoverKey", "tipText")
+# M22-04: and the record line (recordText), whose own rules are in
+# test_m22_04_tooltip_record.py.
+HOOK = ("onTooltip", "tipShow", "hoverKey", "tipText", "recordText")
 # What the hook's functions may call: the pinned helpers, each other, the
 # note's start and the print flattening; nothing that walks the book.
 # M20-17: and homeRealm, the owner's realm for a same-realm key, scanned with
 # the hook's functions (it walks nothing either).
-HOOK_HELPERS = ("homeRealm",)
+# M22-04: and the record line's helpers, which walk nothing: a count read
+# from a saved table, and the desk's table and day, each looked up once.
+HOOK_HELPERS = ("homeRealm", "wholeCount", "deskPlayers", "deskDay")
 HOOK_CALLS = frozenset(
     {"crewOn", "crewBlocked", "secret", "noteStart", "shown", *HOOK, *HOOK_HELPERS}
 )
@@ -75,6 +79,8 @@ HOOK_TESTS = (
     'type ( Enum ) ~= "table" or type ( Enum . TooltipDataType ) ~= "table"',
 )
 TIP_ADD = "GameTooltip : AddLine ( text , 1 , 0.82 , 0 , true )"
+# M22-04: the record line, added after the book's line, the same way.
+TIP_ADD_RECORD = "GameTooltip : AddLine ( record , 1 , 0.82 , 0 , true )"
 NOTE_START = (
     "function noteStart ( note ) "
     'if type ( note ) ~= "string" then return "" end '
@@ -181,13 +187,19 @@ def tooltip_problems(text: str) -> list[str]:
         for k in range(1, len(t))
     ):
         problems.append("hookTooltip is called at file level")
-    # The default tooltip: nothing but AddLine, once, in tipShow.
+    # The default tooltip: nothing but AddLine, once per line (the book's,
+    # and since M22-04 the record line), in tipShow.
     uses = [k for k, x in enumerate(t) if x.kind == "name" and x.text == "GameTooltip"]
     adds = [k for k in uses if g._render(t[k : k + len(TIP_ADD.split(" "))]) == TIP_ADD]
+    records = [
+        k for k in uses if g._render(t[k : k + len(TIP_ADD_RECORD.split(" "))]) == TIP_ADD_RECORD
+    ]
     compared = [k for k in uses if t[k - 1].text == "~=" and t[k - 2].text == "tooltip"]
     if len(adds) != 1 or flow.function_at(adds[0]) is not flow.functions[heads["tipShow"]]:
         problems.append("the line is not added once, by tipShow")
-    if len(uses) != len(adds) + len(compared):
+    if len(records) != 1 or flow.function_at(records[0]) is not flow.functions[heads["tipShow"]]:
+        problems.append("the record line is not added once, by tipShow")
+    if len(uses) != len(adds) + len(records) + len(compared):
         problems.append("the game's tooltip is used other than for AddLine")
     # Cheap: the hook reaches only its own helpers and walks nothing.
     for label in (*HOOK, *HOOK_HELPERS):

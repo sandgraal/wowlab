@@ -86,6 +86,17 @@ local NOTE_MAX_BYTES = 2000
 -- cut before a character's first byte (noteStart), never inside one. Only the
 -- line is cut; the stored note is not.
 local TIP_NOTE_CHARS = 60
+-- M22-04: the records wowlab writes for the tooltip's record line, in the
+-- account-wide saved variable WowLabDeskDB (its own schema, DESK_SCHEMA).
+-- The game loads the table at login or /reload; nothing here writes it, so
+-- the game saves it back as it loaded it. The line's parts are joined by
+-- TIP_SEP (" · ") and the fight count ends in TIP_TIMES ("×"), both written
+-- as UTF-8 escapes. A day wowlab wrote is shown only in its own form,
+-- DESK_DAY (YYYY-MM-DD).
+local DESK_SCHEMA = 1
+local TIP_SEP = " \194\183 "
+local TIP_TIMES = "\195\151"
+local DESK_DAY = "^%d%d%d%d%-%d%d%-%d%d$"
 -- The debounce the sections use, and the first pass's wait (Core.lua).
 local DEBOUNCE = 2
 local FIRST_PASS_DELAY = 15
@@ -709,6 +720,146 @@ local function tipText(key)
     return "Crew book:" .. text
 end
 
+-- A count from a saved table (the book's or wowlab's): a whole number from 0
+-- to below a billion; anything else (another type, NaN, a negative or a
+-- larger number) counts as 0.
+local function wholeCount(value)
+    if type(value) ~= "number" or value ~= value or value < 0 or value >= 1000000000 then
+        return 0
+    end
+    return value - value % 1
+end
+
+-- The players table wowlab wrote (M22-04), when the game loaded one of the
+-- schema this file reads; nil otherwise, and while the book is off or in
+-- combat.
+local function deskPlayers()
+    if not crewOn() then
+        return
+    end
+    if crewBlocked() then
+        return
+    end
+    if type(WowLabDeskDB) ~= "table" or WowLabDeskDB.schema ~= DESK_SCHEMA then
+        return nil
+    end
+    if type(WowLabDeskDB.players) ~= "table" then
+        return nil
+    end
+    return WowLabDeskDB.players
+end
+
+-- The day wowlab wrote the table, when it is in DESK_DAY's form; nil
+-- otherwise (so nothing else from the file reaches the line).
+local function deskDay()
+    if not crewOn() then
+        return
+    end
+    if crewBlocked() then
+        return
+    end
+    if deskPlayers() == nil or type(WowLabDeskDB.day) ~= "string" then
+        return nil
+    end
+    if string.find(WowLabDeskDB.day, DESK_DAY) == nil then
+        return nil
+    end
+    return WowLabDeskDB.day
+end
+
+-- The record line (M22-04): how often you fought the player, the killing
+-- blows each way (yours first), the matches your side won against theirs,
+-- and the Nemesis, Rival team and kill-on-sight marks; nil when there is
+-- none of them. Two sources, one lookup each. The book's own counters of
+-- matches against the player, live. And the row wowlab wrote, which holds
+-- the record as wowlab added it up (the open-world fights from combat logs,
+-- the matches its database kept) and the book's counters as they were when
+-- it wrote them (`book_faced`, `book_won`), so only the matches recorded
+-- since are added: the difference, or the whole counter when it is lower
+-- (the book dropped the player and started again), as wowlab adds them up.
+-- The marks are wowlab's (their rules live there), and the line ends with
+-- the day it wrote them. Every value comes from a saved table, none from the
+-- client.
+local function recordText(key)
+    if not crewOn() then
+        return
+    end
+    if crewBlocked() then
+        return
+    end
+    local kept = WowLabCrewDB.players[key]
+    local row = nil
+    local desk = deskPlayers()
+    if desk ~= nil and type(desk[key]) == "table" then
+        row = desk[key]
+    end
+    local faced = 0
+    local won = 0
+    if type(kept) == "table" then
+        faced = wholeCount(kept.faced)
+        won = wholeCount(kept.faced_won)
+    end
+    local fights = 0
+    local kills = 0
+    local deaths = 0
+    local matches = 0
+    local wins = 0
+    if row ~= nil then
+        local sentFaced = wholeCount(row.book_faced)
+        local sentWon = wholeCount(row.book_won)
+        if faced >= sentFaced then
+            faced = faced - sentFaced
+        end
+        if won >= sentWon then
+            won = won - sentWon
+        end
+        fights = wholeCount(row.fights)
+        kills = wholeCount(row.kills)
+        deaths = wholeCount(row.deaths)
+        matches = wholeCount(row.matches)
+        wins = wholeCount(row.won)
+    end
+    if won > faced then
+        won = faced
+    end
+    fights = fights + faced
+    matches = matches + faced
+    wins = wins + won
+    local text = ""
+    local sep = ""
+    if fights > 0 then
+        text = text .. "Fought " .. fights .. TIP_TIMES
+        sep = TIP_SEP
+    end
+    if kills > 0 or deaths > 0 then
+        text = text .. sep .. "kills " .. kills .. " to " .. deaths
+        sep = TIP_SEP
+    end
+    if matches > 0 then
+        text = text .. sep .. "matches won " .. wins .. " of " .. matches
+        sep = TIP_SEP
+    end
+    if row ~= nil and row.nemesis == true then
+        text = text .. sep .. "Nemesis"
+        sep = TIP_SEP
+    end
+    if row ~= nil and row.rival == true then
+        text = text .. sep .. "Rival team"
+        sep = TIP_SEP
+    end
+    if row ~= nil and row.kos == true then
+        text = text .. sep .. "KOS"
+    end
+    if text == "" then
+        return nil
+    end
+    local day = deskDay()
+    if row ~= nil and day ~= nil then
+        text = text .. " (wowlab, " .. shown(day) .. ")"
+    end
+    return text
+end
+
 -- The key of the player under the mouse, built as the roster pass builds a
 -- member's (name-realm, a missing realm being the owner's own); nil for
 -- anything else, and when the name or realm is a secret value.
@@ -750,7 +901,8 @@ local function hoverKey()
     return nil
 end
 
--- Adds the line to the game's tooltip when the book holds the player.
+-- Adds the lines to the game's tooltip: the book's line when the book holds
+-- the player, then the record line (M22-04) when there is a record.
 local function tipShow()
     if not crewOn() then
         return
@@ -763,10 +915,13 @@ local function tipShow()
         return
     end
     local text = tipText(key)
-    if type(text) ~= "string" then
-        return
+    if type(text) == "string" then
+        GameTooltip:AddLine(text, 1, 0.82, 0, true)
     end
-    GameTooltip:AddLine(text, 1, 0.82, 0, true)
+    local record = recordText(key)
+    if type(record) == "string" then
+        GameTooltip:AddLine(record, 1, 0.82, 0, true)
+    end
 end
 
 -- The tooltip hook (M20-14). Installed only while the book is on (hookTooltip);
@@ -1841,6 +1996,37 @@ local function reasons()
     end
 end
 
+-- `/wowlab crew`'s line about the records wowlab wrote (M22-04), as the game
+-- loaded them at login or /reload.
+local function deskSaid()
+    if not crewOn() then
+        return
+    end
+    if crewBlocked() then
+        return
+    end
+    if type(WowLabDeskDB) ~= "table" then
+        return
+    end
+    if deskPlayers() == nil then
+        say("the records from wowlab were written by another version of wowlab, so the tooltip does not show them.")
+        return
+    end
+    local day = deskDay()
+    local held = ns.Number(wholeCount(WowLabDeskDB.count)) or 0
+    if day == nil then
+        say("records from wowlab: " .. plural(held, "player", "players") .. "; the tooltip adds the matches recorded since.")
+        return
+    end
+    say(
+        "records from wowlab: "
+            .. plural(held, "player", "players")
+            .. ", written "
+            .. shown(day)
+            .. "; the tooltip adds the matches recorded since."
+    )
+end
+
 ns.On("ADDON_LOADED", crewLoaded)
 ns.On("PLAYER_ENTERING_WORLD", onWorld)
 
@@ -1976,6 +2162,7 @@ function ns.CrewCommand(word)
             )
         end
         reasons()
+        deskSaid()
         say("/wowlab crew on | off | who | good | bad | clear | note  (a name-realm, or your target)")
         return
     end

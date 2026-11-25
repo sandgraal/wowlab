@@ -1,7 +1,7 @@
 ## Interface: @WOWLAB_INTERFACE@
 ## Title: WowLab
 ## Notes: Records this character's gear, talents, appearance choices, collections, currencies, professions, spellbook, action bars, key bindings, macros, name, realm, guild, race, body type and class for the local wowlab tools, on this computer only; nothing is sent anywhere. Other players only if you turn the crew book on (/wowlab crew on).
-## SavedVariables: WowLabDB, WowLabCrewDB
+## SavedVariables: WowLabDB, WowLabCrewDB, WowLabDeskDB
 ## SavedVariablesPerCharacter: WowLabCharDB
 
 # Template (ADR-0026): `wowlab addon install lab` replaces the Interface

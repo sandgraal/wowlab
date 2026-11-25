@@ -55,6 +55,9 @@ def _load_constructed() -> ModuleType:
 # M19-01: every constructed source that names the crew book lives there.
 _CONSTRUCTED = _load_constructed()
 BOOK: str = _CONSTRUCTED.BOOK
+# M22-04: the records wowlab writes for the tooltip's record line, an
+# account-wide saved variable Crew.lua reads and nothing in the addon writes.
+DESK_DB = "WowLabDeskDB"
 CREW_ON: str = _CONSTRUCTED.CREW_ON
 CREW_PROBE_1: str = _CONSTRUCTED.CREW_PROBE_1
 CREW_PROBE: str = _CONSTRUCTED.CREW_PROBE_2  # M20-04: schema 2
@@ -165,7 +168,7 @@ UNIT_TOKEN = re.compile(
 KIT_STATUS = "confirmed by forever-addon-kit on 69893, re-verify in M11-03"
 VERIFY_STATUS = "[verify]"
 # Globals the addon defines itself.
-OWN_GLOBALS = frozenset({"WowLabCharDB", "WowLabDB", "SLASH_WOWLAB1", BOOK})
+OWN_GLOBALS = frozenset({"WowLabCharDB", "WowLabDB", "SLASH_WOWLAB1", BOOK, DESK_DB})
 
 # --- M19-01: the one per-file relaxation, for Crew.lua (docs/LAB_PLAN.md §20.1) --
 #
@@ -189,7 +192,10 @@ OWN_GLOBALS = frozenset({"WowLabCharDB", "WowLabDB", "SLASH_WOWLAB1", BOOK})
 #   call, field or other literal may sit in it.
 # - SAVED_VARIABLES: `BOOK`, the crew book, beside `WowLabDB` on the
 #   TOC's `## SavedVariables:` line, which is then pinned to both; and the
-#   name `BOOK` itself, which no other file may write or read.
+#   name `BOOK` itself, which no other file may write or read. M22-04: and
+#   `DESK_DB`, the records wowlab writes for the tooltip, on the same line
+#   (tests/addon/test_m22_04_tooltip_record.py keeps it to Crew.lua, read
+#   only).
 # - SECTION_SCAN: the M11-37 scan accepts a client reference outside every
 #   section in Crew.lua only inside a gated function, inside the pinned
 #   helpers `crewBlocked` and `secret`, and, for the typed text only, inside
@@ -312,7 +318,7 @@ CREW_RELAXED: dict[str, frozenset[str]] = {
         {"party", "raid", "target", NON_LITERAL_UNIT, *CREW_COMPARANDS, *CREW_CALL_UNITS}
     ),
     "CONCAT_INDEX": frozenset({"-"}),
-    "SAVED_VARIABLES": frozenset({CREW_DB}),
+    "SAVED_VARIABLES": frozenset({CREW_DB, DESK_DB}),
     "SECTION_SCAN": frozenset(
         {GATED, "crewBlocked", "secret", "crewLoaded", CREW_COMMAND, CREW_ON_CALLS}
     ),
@@ -642,7 +648,7 @@ def _toc_saved_variables_problems(
     per_character: tuple[str, ...], account: tuple[str, ...], sources: list[Path]
 ) -> list[str]:
     """With a Crew.lua among the sources the account line is pinned to
-    WowLabDB and BOOK (M19-01); without one, no BOOK."""
+    WowLabDB and BOOK (M19-01), and DESK_DB (M22-04); without one, neither."""
     problems = []
     if per_character != ("WowLabCharDB",):
         problems.append(f"## SavedVariablesPerCharacter: {per_character}")
@@ -667,7 +673,7 @@ def test_toc_saved_variables_constructed() -> None:
     """Constructed inputs (M19-01 boundary cases): the TOC rule with and
     without a Crew.lua among the sources."""
     char = ("WowLabCharDB",)
-    both = ("WowLabDB", CREW_DB)
+    both = ("WowLabDB", CREW_DB, DESK_DB)  # M22-04: and the desk's records
     crew = [Path("Core.lua"), Path(CREW_FILE)]
     plain = [Path("Core.lua"), Path("Gear.lua")]
     assert _toc_saved_variables_problems(char, both, crew) == []
@@ -8472,7 +8478,13 @@ def _crew_installed_failures(crew: str, source: Path | None = None) -> list[str]
                     tokens = _tokens(path)
                     others |= _fn_lookups(tokens) | _dotted_references(tokens)
             real_refs = _fn_lookups(real) | _dotted_references(real)
-            real_only = (_std_globals(root / "wow_client.yml") & real_refs) - others - OWN_GLOBALS
+            # M22-04: the desk's table is the addon's own, but only the real
+            # Crew.lua reads it, so it leaves with it like a client name.
+            real_only = (
+                (_std_globals(root / "wow_client.yml") & real_refs)
+                - others
+                - (OWN_GLOBALS - {DESK_DB})
+            )
         std_text = _std_without((root / "wow_client.yml").read_text(encoding="utf-8"), real_only)
         (root / "wow_client.yml").write_text(std_text, encoding="utf-8")
         readme_text = _readme_without((root / "README.md").read_text(encoding="utf-8"), real_only)
@@ -8581,7 +8593,9 @@ def _pretend_tree(tmp: str, crew_extra: str, name: str) -> Path:
             others |= _fn_lookups(tokens) | _dotted_references(tokens)
     real_only = (_std_globals() & (_fn_lookups(real) | _dotted_references(real))) - others
     constructed = tokenize(_CREW_SOURCE)
-    real_only -= _fn_lookups(constructed) | _dotted_references(constructed) | OWN_GLOBALS
+    real_only -= (
+        _fn_lookups(constructed) | _dotted_references(constructed) | (OWN_GLOBALS - {DESK_DB})
+    )
     (source / "WowLab" / CREW_FILE).write_text(_CREW_SOURCE + crew_extra, encoding="utf-8")
     std = source / "wow_client.yml"
     std.write_text(

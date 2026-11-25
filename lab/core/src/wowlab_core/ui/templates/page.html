@@ -280,6 +280,19 @@
 <p id="crew-status" role="status"></p>
 <div id="crew-table" class="panel hub-table" role="region" aria-label="Crew" tabindex="0"></div>
 <ul id="crew-unread" class="crew-unread" hidden></ul>
+<section id="crew-send" class="panel crew-player" aria-labelledby="crew-send-title" hidden>
+<h3 id="crew-send-title" tabindex="-1">The record on the in-game tooltip</h3>
+<p class="crew-words">Hovering a player in game adds a line: how often you fought them, the killing blows each way, the matches your side won, and the Nemesis, Rival team and kill-on-sight marks. The game counts the matches the crew book records; the rest it takes from what wowlab sends here, at your next login or /reload. The game must be closed to send.</p>
+<div class="crew-actions"><button id="crew-send-plan" type="button">Send records to the game</button></div>
+<p id="crew-send-status" role="status"></p>
+<div id="crew-send-box" class="confirm-box" hidden>
+<h4 id="crew-send-heading" tabindex="-1">Plan</h4>
+<pre id="crew-send-lines" class="plan-lines" hidden></pre>
+<p id="crew-send-note" role="status"></p>
+<button id="crew-send-confirm" type="button" hidden>Confirm</button>
+</div>
+<pre id="crew-send-said" class="plan-lines" hidden></pre>
+</section>
 <section id="crew-matches" class="panel crew-player" aria-labelledby="crew-matches-title" hidden>
 <h3 id="crew-matches-title" tabindex="-1">Match history</h3>
 <p id="crew-matches-words" class="crew-words"></p>

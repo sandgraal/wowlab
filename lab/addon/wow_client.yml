@@ -25,6 +25,11 @@ globals:
   # only by `/wowlab crew on`.
   WowLabCrewDB:
     property: full-write
+  # The records wowlab writes for the tooltip's record line (Crew.lua,
+  # M22-04): account-wide, written only by `wowlab crew send-records` while
+  # the game is closed; the addon only reads it.
+  WowLabDeskDB:
+    property: full-write
   SLASH_WOWLAB1:
     property: full-write
   SlashCmdList:

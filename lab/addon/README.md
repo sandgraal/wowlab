@@ -851,9 +851,36 @@ records nothing.
   has the hook, that the tooltip's unit is `mouseover` (in the world and on
   unit frames), that adding a line taints nothing and needs no redraw, and
   whether a name is a secret value in an instance.
+- The record line (M22-04). Under the book's line, the same hook adds one
+  more: your record against the player, for example "Fought 7× · kills 1 to
+  3 · matches won 1 of 4 · Nemesis · Rival team · KOS (wowlab,
+  2026-11-24)". Each part shows only when there is one: how often you
+  fought them; the killing blows between you, yours first; the matches
+  against them and how many your side won; and three marks, Nemesis and
+  Rival team (by the rules `wowlab crew list --notes` prints) and KOS (on a
+  Spy kill-on-sight list of any character of the game account). It has two
+  sources. The book's own match counters (`faced`, `faced_won`), live. And
+  `WowLabDeskDB`, a table wowlab writes into the same `WowLab.lua`
+  (`## SavedVariables: WowLabDB, WowLabCrewDB, WowLabDeskDB`) with `wowlab
+  crew send-records` or the Crew tab's "Send records to the game", through
+  its write gate while the game is closed: the open-world fights read from
+  combat logs, the matches wowlab's crew database kept after the game's
+  list dropped them, the marks, and the book's counters as they were when
+  it wrote them (`book_faced`, `book_won`), so the line adds only the
+  matches the book records since. The game loads the table at login or
+  `/reload`; the addon only reads it, never writes it (the game saves it
+  back as it loaded it), and asks the client nothing for the line: every
+  value comes from the two saved tables. The day at the end is the day
+  wowlab wrote the table; the marks and the open-world fights are as of
+  that day. Like the book's line, it shows only while the book is on and
+  out of combat. `/wowlab crew` says how many players the table holds and
+  its day. A table of another schema is left out. Its layout is in
+  `docs/LAB_FORMATS.md` ("WowLabDeskDB"). **[verify]** in game: that the
+  tooltip's font shows `·` and `×`, and that a second added line needs no
+  redraw.
 
 What it keeps: the account-wide `WowLabCrewDB` in the account's
-`WowLab.lua` (`## SavedVariables: WowLabDB, WowLabCrewDB`), with its own
+`WowLab.lua` (`## SavedVariables: WowLabDB, WowLabCrewDB, WowLabDeskDB`), with its own
 `schema = 3` (2 from M20, 1 before); the per-character schema does not change. "Account-wide" is
 narrower than it sounds: one book per game account folder in one flavor
 folder, and a renamed flavor folder leaves the book where it was. The
@@ -1274,7 +1301,7 @@ on from one, fails the test until someone lists it on purpose.
 | `C_CVar.GetCVar` | combatlog: `advancedCombatLogging` only, `"1"` or `"0"`, read after a switch on when `C_ChatInfo.IsLoggingCombat` gives no advanced flag (M21-11; `advanced_from = "setting"`); never set | [verify] | yes |
 | `C_ChatInfo.IsLoggingCombat` | combatlog (M21-11): its first return, whether the combat log is on, read before `LoggingCombat()` (`state_from = "IsLoggingCombat"`); its second, Advanced Combat Logging, read after a switch on before the setting (`advanced_from = "IsLoggingCombat"`); the documented way to read both (71037 API documentation) | [verify] | yes |
 
-Addon-defined globals: `WowLabCharDB`, `WowLabDB`, `WowLabCrewDB` (the crew book), `SLASH_WOWLAB1`.
+Addon-defined globals: `WowLabCharDB`, `WowLabDB`, `WowLabCrewDB` (the crew book), `WowLabDeskDB` (the records wowlab writes for the tooltip, read only), `SLASH_WOWLAB1`.
 
 Events. `TRAIT_CONFIG_UPDATED`, `TRAIT_CONFIG_LIST_UPDATED`,
 `TRAIT_TREE_CURRENCY_INFO_UPDATED`, `PLAYER_TALENT_UPDATE` and
