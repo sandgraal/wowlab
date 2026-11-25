@@ -152,6 +152,35 @@ marked `@pytest.mark.live`.
 - **Terms:** data is Blizzard's, extracted by the community; personal,
   non-commercial use. Do not mirror tables publicly.
 
+## Blizzard's profile API
+
+Added 2026-11-24 (M22-11, ADR-0040 (2)). `wowlab blizzard fetch` (and the
+Blizzard profile panels of `wowlab ui`) asks it for one character's public
+profile, equipment, character media and guild, with the player's own API
+client from develop.battle.net (client-credentials token from
+`oauth.battle.net/token`; the API at `<region>.api.blizzard.com`), only on
+a command or a click. `wowlab_core.bnet` uses stdlib `urllib`, https only,
+no redirect to another host, and saves each fetch under the user data
+directory.
+
+- **Forever is [verify].** Blizzard documents nothing for it. The namespace
+  `profile-forever-<region>`, the path `/profile/wow/character/<first>-<second>`,
+  `surname` and `ruleset` in the profile and no realm come from community
+  forum threads 59774 and 60334 (read 2026-11-23), and are data in
+  `lab/core/src/wowlab_core/bnet_games.toml`. The same threads report that
+  character media often 404s for hours after a character appears, and that a
+  character below level 10 returns 404. The retail armory gives
+  `"ruleset":{"slug":…}` (seen by M21-03's domain review, 2026-11-24);
+  `bnet` keeps the slug as `ruleset_slug`, the key the Raider.IO link takes.
+  Whether Forever's profile carries it, and the guild's address, are not
+  known.
+- **No recorded reply yet.** The owner had not made the API client
+  (M22-09) when the client was built, so its tests run on constructed
+  replies (`lab/core/tests/test_bnet.py`, provenance in its docstring). The
+  owner's `@live` test (`lab/core/tests/test_bnet_live.py`) is the check.
+- **Terms:** the player's own API client and Blizzard's API terms; the Lab
+  asks for public profiles only and never on a timer.
+
 ## Addon managers' records
 
 - **WowUp** (M22-16, 2026-11-23): the WowUp app's `addons.json` and, of

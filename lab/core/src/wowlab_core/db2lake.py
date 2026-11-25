@@ -1,7 +1,7 @@
 """db2lake: one build's cached game tables, typed, in SQLite.
 
 Spec: docs/LAB_PLAN.md §14.2. Decision: ADR-0028. The tables come from
-``gamedata`` (ADR-0022), which stays the only network client.
+``gamedata`` (ADR-0022), which stays the only client of game tables.
 
 The rules this module exists to hold:
 

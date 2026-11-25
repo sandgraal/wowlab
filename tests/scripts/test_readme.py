@@ -179,14 +179,16 @@ def test_the_trust_model_sentences_name_the_clicked_link() -> None:
     assert '"What leaves your machine"' in row, "the promise row points at the block"
     assert "wago.tools" not in row, "and does not say it a second time"
     security = " ".join(SECURITY.read_text(encoding="utf-8").split())
+    # M22-11 (ADR-0040 (2)): the Blizzard profile fetch is the second kind of
+    # traffic and the second exception, named where the rule is.
     assert (
-        "**Nothing leaves the machine.** The only network traffic is downloading public game "
-        "tables, " + LINK_CLAUSE + "." in security
+        "**Nothing leaves the machine.** The network traffic is downloading public game "
+        "tables, the Blizzard profile fetch (`wowlab blizzard fetch` or the UI's Fetch "
+        "button; ADR-0040 (2)), " + LINK_CLAUSE + "." in security
     )
-    # The rule's one exception is named where the rule is.
     assert (
-        "Anything that transmits data read from an install is a vulnerability, with one "
-        "exception: that link." in security
+        "Anything that transmits data read from an install is a vulnerability, with two "
+        "exceptions: that link and the Blizzard profile fetch." in security
     )
 
 

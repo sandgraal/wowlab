@@ -63,8 +63,13 @@ discovery.
   against their own install. Players install it from a tagged GitHub release
   (ADR-0031); it is never deployed as a service (ADR-0019).
 - **Never uploads anything.** Nothing read from an install leaves the
-  machine. The only network traffic is `gamedata` downloading public game
-  tables (§6.6), which sends nothing about the install beyond a build string.
+  machine. The network traffic is `gamedata` downloading public game tables
+  (§6.6), which sends nothing about the install beyond a build string, and,
+  since 2026-11-24 (M22-11, ADR-0040 (2)), `bnet` asking Blizzard's profile
+  API for one character's public profile, only on a command or a click and
+  only with the player's own API client: it names the region, the game and
+  the character's names, and sends the client ID and secret only to
+  Blizzard's sign-in address.
 - **The repository is public, so fixtures are scrubbed.** Anything captured
   from a real install passes through the scrub tool before it is committed
   (§8).
