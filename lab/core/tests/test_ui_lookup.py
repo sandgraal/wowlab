@@ -274,7 +274,8 @@ def test_the_server_offers_lookup_as_a_leaf_that_runs_directly(served: Any) -> N
 
 def test_the_shell_has_the_tab_in_the_characters_section() -> None:
     html = (_TEMPLATES / "page.html").read_text(encoding="utf-8")
-    assert 'aria-controls="account-view character-view crew-view lookup-view"' in html
+    # M22-20: the Practice view follows it in the section.
+    assert 'aria-controls="account-view character-view crew-view lookup-view practice-view"' in html
     assert '<button id="tab-lookup" class="tab" type="button" role="tab"' in html
     assert '<section id="lookup-view" role="tabpanel" aria-labelledby="tab-lookup" hidden>' in html
 

@@ -441,6 +441,8 @@ def read_commands(root: Path, tmp_path: Path) -> list[list[str]]:
         ["addons", "check"],
         ["addons", "check", "--notes"],
         ["log", "tail"],
+        ["log", "practice"],
+        ["log", "practice", "--segment", "1", "--notes"],
         ["char", "list"],
         ["char", "list", "--summary"],
         ["char", "list", "--summary", "--notes"],

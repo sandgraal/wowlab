@@ -772,8 +772,11 @@ def run_commands(inst: install.Install, sweep: Sweep) -> None:
         sweep.cli("char", "kept", *fl, "--json")
         if _has_combat_log(f.path):
             sweep.cli("log", "tail", "-n", "20", *fl, "--json")
+            sweep.cli("log", "practice", *fl, "--json")
+            sweep.cli("log", "practice", "--segment", "1", *fl, "--json")
         else:
             sweep.skipped.append(f"log tail: {f.folder} has no combat log")
+            sweep.skipped.append(f"log practice: {f.folder} has no combat log")
         accounts = _accounts(f.path)
         for account in accounts:
             sweep.hide("account", account)

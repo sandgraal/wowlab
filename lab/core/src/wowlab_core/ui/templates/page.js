@@ -1513,6 +1513,8 @@
     byId("crew-matches-lines").replaceChildren();
     closeCrewPlayer();
     if (tabShown === "crew") loadCrew();
+    // The Practice tab reads the new flavor's logs (M22-20).
+    resetPractice();
     drawHomeStatus();
   }
 
@@ -7709,5 +7711,241 @@
       if (pending !== null) clearConfirm();
     });
   }
+
+  // ─── practice (M22-20) ───
+  // One stretch of your play from a combat log, from `log practice --json`:
+  // the log's segments as a table, and a row's button reads that segment's
+  // summary (`--segment`). Spell, buff and unit names are the log's own text:
+  // they reach the page only as text, through `visible()`, never in an
+  // attribute, a class or an id. The view adds itself to the tab lists
+  // above, so those lists and `showTab` stay as they were.
+  const practiceView = {
+    seq: 0, // the latest read; an earlier one draws nothing
+    report: null, // the PracticeReport on show
+    filled: false, // the log picker holds the report's logs
+  };
+  SECTIONS.characters.push("practice");
+  TABS.push("practice");
+  VIEWS.push("practice");
+
+  function practiceSay(text, isError) {
+    const node = byId("practice-status");
+    announce(node, text, Boolean(isError));
+    node.classList.toggle("error", Boolean(isError));
+  }
+
+  function practicePct(share) {
+    return typeof share === "number" ? Math.round(share * 100) + "%" : "";
+  }
+
+  function practiceSeconds(value) {
+    return typeof value === "number" ? value.toFixed(1) + " s" : "";
+  }
+
+  function practiceClock(timestamp) {
+    if (typeof timestamp !== "string") return "";
+    const time = timestamp.split(" ").pop() || "";
+    return time.split(".")[0];
+  }
+
+  // A table from rows of cell texts; every cell is text.
+  function practiceTable(caption, heads, rows) {
+    const table = make("table");
+    table.appendChild(make("caption", caption));
+    const head = make("tr");
+    for (const text of heads) head.appendChild(make("th", text));
+    const thead = make("thead");
+    thead.appendChild(head);
+    table.appendChild(thead);
+    const body = make("tbody");
+    for (const cells of rows) {
+      const tr = make("tr");
+      for (const cell of cells) {
+        const td = make("td");
+        if (cell !== null && typeof cell === "object") td.appendChild(cell);
+        else td.textContent = visible(String(cell));
+        tr.appendChild(td);
+      }
+      body.appendChild(tr);
+    }
+    table.appendChild(body);
+    return table;
+  }
+
+  function fillPracticeLogs(report) {
+    const select = byId("practice-log");
+    const logs = listOf(report.logs).filter((name) => typeof name === "string");
+    const chosen = typeof report.file === "string" ? report.file.split("/").pop() : "";
+    select.replaceChildren();
+    for (const name of logs.slice().reverse()) {
+      const option = make("option", visible(name));
+      option.value = name;
+      if (name === chosen) option.selected = true;
+      select.appendChild(option);
+    }
+    practiceView.filled = true;
+  }
+
+  function drawPracticeSegments(report) {
+    const box = byId("practice-segments");
+    box.replaceChildren();
+    const segments = listOf(report.segments);
+    if (!segments.length) {
+      box.appendChild(make("p", report.file ? "Nothing you cast or hit is in this log." : "No combat log yet."));
+      return;
+    }
+    const rows = segments.map((seg) => {
+      const button = make("button", "Show");
+      button.type = "button";
+      button.addEventListener("click", () => loadPractice(seg.index));
+      return [
+        String(seg.index),
+        practiceClock(seg.start) + " to " + practiceClock(seg.end),
+        practiceSeconds(seg.seconds),
+        grouped(seg.casts),
+        grouped(seg.damage),
+        listOf(seg.targets).join(", "),
+        button,
+      ];
+    });
+    box.appendChild(practiceTable("Segments", ["#", "When", "Length", "Casts", "Damage", "Hit", ""], rows));
+    if (typeof report.gap === "number") {
+      box.appendChild(make("p", "A segment ends after " + report.gap + " s with no cast of yours and no hit by " +
+        "you or your pets; your pets' hits keep it open."));
+    }
+  }
+
+  function drawPracticeSummary(report) {
+    const panel = byId("practice-summary");
+    const body = byId("practice-summary-body");
+    const s = report.summary;
+    body.replaceChildren();
+    if (!s || !s.segment) {
+      panel.hidden = true;
+      return;
+    }
+    panel.hidden = false;
+    const who = typeof s.segment.name === "string" ? ", " + s.segment.name : "";
+    byId("practice-summary-title").textContent = visible(
+      "Segment " + s.segment.index + ": " + practiceSeconds(s.seconds) + who);
+    const d = s.damage || {};
+    const sources = listOf(d.by_source).map((src) => [
+      src.you ? "You" : src.name || src.guid, grouped(src.amount), practicePct(src.share)]);
+    body.appendChild(make("p", "Damage " + grouped(d.total || 0) + ", " + s.dps + " per second" +
+      (d.others_on_targets ? "; left out: " + grouped(d.others_on_targets) +
+        " in other players' hits the log recorded on the same targets." : ".")));
+    if (sources.length) body.appendChild(practiceTable("Damage by source", ["Source", "Damage", "Share"], sources));
+    const g = s.gcd || {};
+    body.appendChild(make("p", "Busy casting or on the global cooldown " + practiceSeconds(g.busy_seconds) +
+      " of " + practiceSeconds(s.seconds) + " (" + practicePct(g.share) + "), " + grouped(g.pauses || 0) +
+      " pauses over 3 s, longest idle " + practiceSeconds(g.longest_pause) +
+      (g.no_gcd_data ? "; " + pluralWord(g.no_gcd_data, " cast") + " with no global cooldown in the spell table, " +
+        "counted as none" : "") +
+      (g.assumed ? ". Every cast, auto-repeat shots included, was taken as a 1.5 s global cooldown." : ".")));
+    body.appendChild(practiceTable("Casts per spell", ["Spell", "Casts", "A minute", "Every", "Global cooldown"],
+      listOf(s.spells).map((sp) => [
+        sp.spell_name, grouped(sp.casts), sp.per_minute,
+        sp.median_gap === null || sp.median_gap === undefined ? "" : practiceSeconds(sp.median_gap),
+        sp.gcd_ms === null || sp.gcd_ms === undefined ? "none in the table" : sp.gcd_ms / 1000 + " s",
+      ])));
+    if (listOf(s.cooldowns).length) {
+      body.appendChild(practiceTable("Cooldown use", ["Spell", "Cooldown", "Used", "At most", "Share"],
+        listOf(s.cooldowns).map((cd) => [
+          cd.spell_name, cd.cooldown_ms / 1000 + " s", grouped(cd.casts), grouped(cd.possible), practicePct(cd.share)])));
+    }
+    if (listOf(s.buffs).length) {
+      body.appendChild(practiceTable("Buffs on you", ["Buff", "Up", "Share"],
+        listOf(s.buffs).map((b) => [b.spell_name, practiceSeconds(b.seconds), practicePct(b.share)])));
+    }
+  }
+
+  function drawPracticeNotes(report) {
+    const list = byId("practice-notes");
+    list.replaceChildren();
+    for (const note of listOf(report.notes)) {
+      if (typeof note === "string") list.appendChild(make("li", visible(note)));
+    }
+    const missing = report.timings === "missing" && Array.isArray(report.fetch);
+    byId("practice-offer").hidden = !missing;
+  }
+
+  // `log practice`'s refusal of a `--file` that is not a log under Logs/.
+  const PRACTICE_LOG_GONE = /no combat log ['"][^\n]*['"] under Logs\//;
+
+  // The picker forgets its log and the view what it showed: the next read
+  // takes the newest log again.
+  function forgetPracticeLog() {
+    practiceView.filled = false;
+    byId("practice-log").replaceChildren();
+  }
+
+  // A new flavor (`switchRunFlavor`): nothing of the old flavor's logs stays.
+  function resetPractice() {
+    practiceView.seq += 1;
+    practiceView.report = null;
+    forgetPracticeLog();
+    byId("practice-segments").replaceChildren();
+    byId("practice-summary").hidden = true;
+    byId("practice-summary-body").replaceChildren();
+    byId("practice-notes").replaceChildren();
+    byId("practice-offer").hidden = true;
+    practiceSay("", false);
+    if (tabShown === "practice") loadPractice(null);
+  }
+
+  async function loadPractice(segment, retried) {
+    const seq = ++practiceView.seq;
+    const params = {};
+    const picked = practiceView.filled ? byId("practice-log").value : "";
+    if (picked) params.file = picked;
+    if (segment) params.segment = segment;
+    practiceSay(segment ? "Reading segment " + segment + "…" : "Reading the combat log…", false);
+    const reply = await runJson(["log", "practice"], params);
+    if (seq !== practiceView.seq) return;
+    const report = reply.data;
+    if (reply.error || !report || !Array.isArray(report.segments)) {
+      if (picked && !retried && PRACTICE_LOG_GONE.test(String(reply.error || ""))) {
+        // The command says the log picked is gone (the client removed or
+        // renamed it): drop the pick and read the newest, which fills the
+        // picker again. Any other failure keeps the pick and is said.
+        forgetPracticeLog();
+        await loadPractice(null, true);
+        return;
+      }
+      practiceSay(reply.error ? shown(reply.error) : "wowlab log practice printed something this page does not know.", true);
+      return;
+    }
+    practiceView.report = report;
+    fillPracticeLogs(report);
+    drawPracticeSegments(report);
+    drawPracticeSummary(report);
+    drawPracticeNotes(report);
+    practiceSay("", false);
+    if (segment) byId("practice-summary-title").focus();
+  }
+
+  async function fetchPracticeTimings() {
+    const report = practiceView.report;
+    if (!report || !Array.isArray(report.fetch) || report.fetch.length < 5) return;
+    const button = byId("practice-fetch");
+    button.disabled = true;
+    practiceSay("Downloading the game's spell timings…", false);
+    const reply = await runJson(["db2", "fetch"], { table: report.fetch[2], build: report.fetch[4] });
+    button.disabled = false;
+    if (reply.error) {
+      practiceSay(shown(reply.error), true);
+      return;
+    }
+    const shownSegment = report.summary && report.summary.segment ? report.summary.segment.index : null;
+    await loadPractice(shownSegment);
+  }
+
+  byId("tab-practice").addEventListener("click", () => {
+    showTab("practice");
+    if (!practiceView.report) loadPractice(null);
+  });
+  byId("practice-read").addEventListener("click", () => loadPractice(null));
+  byId("practice-fetch").addEventListener("click", () => fetchPracticeTimings());
+
   load();
 })();

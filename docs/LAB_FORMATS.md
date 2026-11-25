@@ -1967,7 +1967,8 @@ Dated entries, newest last. Each names the fixture that prompted it.
   are read as before (`worldpvp.unit_parts`). Whether a realm can hold a
   hyphen, which would make a four-part name ambiguous, is **[verify]**; so is
   whether the launch client writes the owner's own unit name in four parts
-  too (the slice holds no line of the owner's).
+  too (the slice holds no line of the owner's). *Answered 2026-11-24 (M22-20):
+  it does; see that date's §8 amendment below.*
 - **2026-11-23, §8, a dungeon's zone line, and logging switched on again
   within one file (M22-22; fixture
   `macos-71037/forever/Logs/WoWCombatLog-012427_232527.txt`, build
@@ -2044,6 +2045,72 @@ Dated entries, newest last. Each names the fixture that prompted it.
   string at this build. A key bound straight to a spell, item or macro
   (`SPELL …`, `ITEM …`, `MACRO …`) or to a frame's button (`CLICK …`) is
   the client's own binding kind, not an addon's command.
+- **2026-11-24, §8, what the practice summary relies on (M22-20; fixture
+  `macos-71037/forever/Logs/WoWCombatLog-053126_104937.txt`, build
+  1.60.1.71037, the first 200 lines of the owner's launch-client log of
+  2026-11-23 20:04; the beta fixture `macos/` for comparison).**
+  - *The advanced block without the header's flag.* All three headers
+    (lines 1, 9, 195) say `ADVANCED_LOG_ENABLED,0`, yet every
+    `SPELL_CAST_SUCCESS`, `SPELL_DAMAGE`, `SWING_DAMAGE` and
+    `SWING_DAMAGE_LANDED` line carries the 19-field block. wowlab finds the
+    block by its shape (two GUID-shaped fields where it starts, room for 19),
+    never by the header. Why the flag says 0 is **[verify]**.
+  - *The owner slot.* A pet's own lines name its owner: on Imaru's 18
+    `SWING_DAMAGE` and its `SPELL_CAST_SUCCESS` (Growl) lines the block is
+    `Pet-…,Player-9998-00000001,…`, the pet and its owner (lines 53, 58). No
+    `SPELL_SUMMON` names Imaru: it was out before the log began. On a spell
+    hitting a pet the block describes the pet and so names its owner while
+    the line's source is the attacker; the owner's 13:30 log shows it (a
+    Dalaran Apprentice's Frostbolt on the owner's voidwalker), no committed
+    slice does **[verify]**. An owner is therefore read only from a block
+    whose unit is the line's source.
+  - *`SPELL_SUMMON`.* Line 115:
+    `SPELL_SUMMON,<summoner GUID>,"<name>",<flags>,<raid flags>,<summoned GUID>,"<name>",<flags>,<raid flags>,<spell id>,"<spell name>",<school>`,
+    no advanced block. The unit summoned there (a Campfire Marker,
+    `Creature-…-260300-…`) writes no line of its own afterwards. The owner's
+    13:30 log shows a summoned Searing Totem naming its owner on its own
+    casts, and a Strength of Earth Totem that writes nothing after its
+    summon.
+  - *Melee is written one-sided on the launch client.* All 27
+    `SWING_DAMAGE` lines are a player's or a pet's swing on a creature, and
+    no `SWING_DAMAGE_LANDED` follows any of them; all 13
+    `SWING_DAMAGE_LANDED` lines are a creature's swing on a player, and no
+    `SWING_DAMAGE` comes before any of them. The beta wrote both lines for
+    one swing (the bullet above, 11 each). So a melee total reads
+    `SWING_DAMAGE` only: on the beta `LANDED` repeats it, and on the launch
+    client a creature's hit on a player is `LANDED` alone. Whether the
+    logging player's own swings are `SWING_DAMAGE` on the launch client
+    (the slice holds none), and how a player's swing on another player is
+    written, are **[verify]**.
+  - *No player spell or ranged damage on creatures.* The slice holds the
+    casts of a hunter (Auto Shot ×12, Arcane Shot ×4, Serpent Sting), a
+    warrior (Rend, Overpower, Hamstring) and a priest (Shadow Word: Pain,
+    wand Shoot), and no `SPELL_DAMAGE`, `SPELL_PERIODIC_DAMAGE`,
+    `RANGE_DAMAGE` or miss line for any of them: its only `SPELL_DAMAGE` is
+    a creature's Shoot on the hunter (line 65). Other players' spell and
+    ranged hits on creatures are not written, or not within range; whether
+    the logging player's own spell damage is written on the launch client
+    is **[verify]** (the beta wrote it: 180 on the Duskbat). The practice
+    summary's damage is the hits the log recorded.
+  - *The owner's own unit name is in four parts too.* Line 6:
+    `Player-9999-00000001,"Sandgraal-Rizzen-Roleplay PvP-US",0x511`. This
+    answers the M21-02 amendment's **[verify]**: the launch client writes
+    the logging player's name as `<First>-<Second>-<Realm>-<Region>`, like
+    every other player's.
+  - *A new log header.* Line 195 is a third `COMBAT_LOG_VERSION` line,
+    36 s after line 194 (`ZONE_CHANGE,33,"Shadowfang Keep",1`) with no line
+    between. What writes it (logging switched off and on, a relog, a
+    reload, an addon that switches logging by zone) is **[verify]**;
+    wowlab treats it as a new log header and nothing more. Line 194 also
+    gives Shadowfang Keep difficulty 1, and lines 2, 10 and 196 are
+    `ZONE_CHANGE,0,"Shadowfang Keep",0` right after each header, each followed
+    within 0.1 s by `ZONE_CHANGE,0,"Silverpine Forest",0` (lines 4, 12, 198).
+  - *The difficulty on entering a dungeon varies (2026-11-24, M22-20).*
+    This fixture's line 194 enters Shadowfang Keep with difficulty 1, while
+    M22-22's slice (the amendment of 2026-11-23 above) entered it with 0, so
+    the third field cannot tell an instance from the open world. Why it
+    differs (the dungeon's difficulty setting, the entry, the build) is
+    **[verify]**.
 - **2026-11-24, §15 and §17, `curseforge/macos/AddonGameInstance.json`
   (M22-25).** §15 said the capture tool cannot take a file outside an
   install; it now can (`scripts/lab_capture.py --file`), and §17's fixture

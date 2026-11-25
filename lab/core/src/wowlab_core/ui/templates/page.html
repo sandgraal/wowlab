@@ -14,7 +14,7 @@
 <div class="bar">
 <h1 class="brand"><svg class="mark" viewBox="0 0 24 24" width="26" height="26" aria-hidden="true" focusable="false"><path d="M12 2l3 7 7 3-7 3-3 7-3-7-7-3 7-3z"/></svg>wowlab</h1>
 <div class="sections" role="tablist" aria-label="Sections">
-<button id="sec-characters" class="sec" type="button" role="tab" aria-selected="true" aria-controls="account-view character-view crew-view lookup-view">Characters</button>
+<button id="sec-characters" class="sec" type="button" role="tab" aria-selected="true" aria-controls="account-view character-view crew-view lookup-view practice-view">Characters</button>
 <button id="sec-backups" class="sec" type="button" role="tab" aria-selected="false" aria-controls="backups-view">Backups</button>
 <button id="sec-addons" class="sec" type="button" role="tab" aria-selected="false" aria-controls="addons-view">Addons</button>
 <button id="sec-keybinds" class="sec" type="button" role="tab" aria-selected="false" aria-controls="character-view">Keybinds</button>
@@ -30,6 +30,7 @@
 <button id="tab-character" class="tab" type="button" role="tab" aria-selected="false" aria-controls="character-view">Character</button>
 <button id="tab-crew" class="tab" type="button" role="tab" aria-selected="false" aria-controls="crew-view">Crew</button>
 <button id="tab-lookup" class="tab" type="button" role="tab" aria-selected="false" aria-controls="lookup-view">Look up</button>
+<button id="tab-practice" class="tab" type="button" role="tab" aria-selected="false" aria-controls="practice-view">Practice</button>
 </nav>
 <nav id="advanced-tabs" class="tabs" role="tablist" aria-label="Advanced" hidden>
 <button id="tab-explorer" class="tab" type="button" role="tab" aria-selected="false" aria-controls="explorer-view">Explorer</button>
@@ -383,6 +384,34 @@
 <p class="intro">Where things are, who sells them and what drops them come from QuestieDB, the addon installed for this game version, read with <code>wowlab lookup</code> as data, never run; it says what Questie's authors recorded, which the game itself may not match. Drop chances are shown only where QuestieDB's drop tables have one; those cover the items quests ask for. Spots are map coordinates, across then down. Item levels come from QuestieDB first, then from the game's item table; zone names from the game's zone table, once it is downloaded. The notes below are the ones <code>wowlab lookup --notes</code> prints.</p>
 <div id="lookup-about" class="lookup-about">
 <ul id="lookup-left-out" class="crew-lines" aria-label="Notes" hidden></ul>
+</div>
+</details>
+</section>
+<section id="practice-view" role="tabpanel" aria-labelledby="tab-practice" hidden>
+<div class="chars-head">
+<h2 class="page-title">Practice</h2>
+<span class="chars-when">one stretch of your play, read from a combat log</span>
+</div>
+<p class="crew-words">Pick a combat log, then a stretch of it, such as a session at a training dummy: your casts of each spell, how busy your global cooldown kept you, how often you used each cooldown, how long each buff was on you, and your damage with your pets'.</p>
+<div class="toolbar panel">
+<label>Combat log <select id="practice-log"></select></label>
+<button id="practice-read" type="button">Read the log</button>
+</div>
+<div id="practice-offer" class="names-offer" hidden>
+<p class="names-say"><strong>Spell timings need a one-time download.</strong> Until then every cast, auto-repeat shots included, is taken as a 1.5 s global cooldown, and cooldown use is not shown.</p>
+<button id="practice-fetch" type="button">Download spell timings</button>
+<p class="names-note">Downloads the game's public spell table from wago.tools, sending your game version.</p>
+</div>
+<p id="practice-status" role="status"></p>
+<div id="practice-segments" class="panel hub-table" role="region" aria-label="Segments" tabindex="0"></div>
+<section id="practice-summary" class="panel crew-player" aria-labelledby="practice-summary-title" hidden>
+<h3 id="practice-summary-title" tabindex="-1"></h3>
+<div id="practice-summary-body"></div>
+</section>
+<details class="about"><summary>About this data</summary>
+<p class="intro">Read only: this page runs <code>wowlab log practice</code> on a combat log in your game folder's Logs, and nothing else, except that <strong>Download spell timings</strong> runs <code>wowlab db2 fetch SpellCooldowns</code> once for your game version. Spell, buff and unit names are the log's own text.</p>
+<div id="practice-about" class="practice-about">
+<ul id="practice-notes" class="crew-notes"></ul>
 </div>
 </details>
 </section>

@@ -242,11 +242,13 @@ def test_account_is_the_first_tab_and_opens_by_default(server: Any) -> None:
     body = _page(server).body.decode("utf-8")
     tabs = re.findall(r'<button id="tab-([a-z]+)" class="tab"[^>]*role="tab"', body)
     # Explorer moves after Character.
+    # M22-20: Practice after Look up.
     assert tabs == [
         "account",
         "character",
         "crew",
         "lookup",
+        "practice",
         "explorer",
         "gaps",
         "commands",
@@ -257,7 +259,7 @@ def test_account_is_the_first_tab_and_opens_by_default(server: Any) -> None:
     assert selected == ["account"]
     assert re.search(r'<section id="account-view"[^>]*role="tabpanel"', body)
     assert not re.search(r'<section id="account-view"[^>]*\bhidden\b', body)
-    for view in ("explorer", "gaps", "commands", "character", "looks"):
+    for view in ("explorer", "gaps", "commands", "character", "looks", "practice"):
         assert re.search(rf'<section id="{view}-view"[^>]*\bhidden\b', body), view
     # The table scrolls in its own labelled, focusable box (WCAG 1.4.10), and
     # the panel starts at an H2; the status line is a status.
