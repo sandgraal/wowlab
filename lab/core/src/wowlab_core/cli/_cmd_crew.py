@@ -34,6 +34,7 @@ from wowlab_core import (
     crewbook,
     crewdb,
     crewedit,
+    desktable,
     guard,
     install,
     labaddon,
@@ -2577,8 +2578,9 @@ def crew_forget(
     json_out: JsonOpt = False,
 ) -> None:
     """Remove a player (or every player, with --all) from the crew book: from
-    WowLab.lua and from the game's backup of it, WowLab.lua.bak, so the name
-    is in neither file afterwards. Whether the book is on, and when it was
+    WowLab.lua and from the game's backup of it, WowLab.lua.bak, and from the
+    records crew send wrote there for the in-game tooltip, so the name is in
+    neither file afterwards. Whether the book is on, and when it was
     started, stay as they are.
 
     Shows the plan and asks first, then writes through the write gate: the
@@ -2602,24 +2604,37 @@ def crew_forget(
     live_keys = crewedit.keys_held(edit.data)
     backup_keys = crewedit.keys_held(edit.backup_data) if edit.backup_data is not None else []
     in_db = crewdb.holds(edit.place.flavor_folder, edit.place.account)
-    known = list(dict.fromkeys([*live_keys, *backup_keys, *in_db]))
+    # M22-04: and the players `crew send` wrote beside the book for the
+    # in-game tooltip (`WowLabDeskDB`), in either file: a forget takes them
+    # out of that table too, in the same change.
+    sent = [
+        *desktable.keys_held(edit.data),
+        *(desktable.keys_held(edit.backup_data) if edit.backup_data is not None else []),
+    ]
+    known = list(dict.fromkeys([*live_keys, *backup_keys, *in_db, *sent]))
     others: list[str] = []
     try:
         if name is None:
             keys = known
-            new = crewedit.forget_all(edit.data)
+            new = desktable.without(crewedit.forget_all(edit.data), None)
             new_backup = (
-                crewedit.forget_all(edit.backup_data) if edit.backup_data is not None else None
+                desktable.without(crewedit.forget_all(edit.backup_data), None)
+                if edit.backup_data is not None
+                else None
             )
         else:
             keys = [_one_key(known, name, edit)]
             others = _other_names(keys[0], edit)
-            new = crewedit.forget(edit.data, keys)
+            new = desktable.without(crewedit.forget(edit.data, keys), keys)
             new_backup = (
-                crewedit.forget(edit.backup_data, keys) if edit.backup_data is not None else None
+                desktable.without(crewedit.forget(edit.backup_data, keys), keys)
+                if edit.backup_data is not None
+                else None
             )
-    except crewedit.CrewEditError as exc:
+    except (crewedit.CrewEditError, desktable.DeskTableError) as exc:
         raise CliError(str(exc)) from None
+    folded = {crewbook.fold(k) for k in keys}
+    sent_left = any(crewbook.fold(k) in folded for k in sent)
     for rel, after in ((edit.rel, new), (edit.backup_rel, new_backup)):
         left = crewedit.names_left(after, keys) if after is not None and rel else []
         if left:
@@ -2738,6 +2753,8 @@ def crew_forget(
             show(f"  There is no {_BACKUP_NAME} beside it.")
         if db_has:
             show("  remove them from wowlab's crew database and every copy it keeps")
+        if sent_left:
+            show("  take them out of the records wowlab sent for the in-game tooltip too")
         if also_seen is not None:
             show(also_seen)
         show(_not_reached(store, count, done=False, one=name is not None))

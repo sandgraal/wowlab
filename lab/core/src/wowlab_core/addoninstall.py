@@ -110,6 +110,7 @@ __all__ = [
     "AddonSourceError",
     "AddonVersionError",
     "InstallPlan",
+    "LabAddonKeeps",
     "LabAddonState",
     "LeftPath",
     "RemovePlan",
@@ -119,6 +120,7 @@ __all__ = [
     "install",
     "installed_toc",
     "interface_version",
+    "lab_addon_declares",
     "lab_addon_state",
     "plan_install",
     "plan_remove",
@@ -252,6 +254,8 @@ class RemovePlan(_Frozen):
 
 
 LabAddonStatus = Literal["not_installed", "current", "stale", "unknown"]
+# Whether the installed lab-addon's TOC declares a saved variable (M22-04).
+LabAddonKeeps = Literal["declared", "not_declared", "not_installed", "unknown"]
 LAB_ADDON_STATUSES: tuple[LabAddonStatus, ...] = ("not_installed", "current", "stale", "unknown")
 
 
@@ -1013,3 +1017,34 @@ def lab_addon_state(flavor: _FlavorLike) -> LabAddonState:
         expected=expected,
         version=version,
     )
+
+
+def lab_addon_declares(flavor: _FlavorLike, variable: str) -> tuple[LabAddonKeeps, str | None]:
+    """Whether the lab-addon installed in the flavor declares `variable` on
+    its TOC's `## SavedVariables:` line (M22-04: the game keeps, and saves
+    back at logout, only the variables an installed addon declares), and
+    why not when that cannot be told. Read only (L1), as `lab_addon_state`
+    reads: the folder is looked at and the TOC opened without following a
+    link; a link on the way, a TOC that cannot be read, or another `*.toc`
+    in the folder (which the client may load instead) is `unknown`."""
+    toc = f"{ADDON_FOLDER}/{TOC_NAME}"
+    try:
+        folder = _addon_folder(flavor.path)
+    except AddonError:
+        return "unknown", f"the way to {toc} is a link, not a folder, or cannot be looked at"
+    if folder is None:
+        return "not_installed", None
+    try:
+        others = _other_tocs(folder)
+    except OSError as exc:
+        return "unknown", f"wowlab could not list {ADDON_FOLDER}/: {exc.strerror or exc}"
+    try:
+        data = _read_regular(folder / TOC_NAME, MAX_SOURCE_BYTES)
+    except _UnreadableError as exc:
+        if isinstance(exc.__cause__, FileNotFoundError) and not others:
+            return "not_installed", None
+        return "unknown", f"{toc} {exc}"
+    if others:
+        return "unknown", _others_detail(others)
+    declared = parse_toc(data).saved_variables
+    return ("declared" if variable in declared else "not_declared"), None

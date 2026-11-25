@@ -111,14 +111,14 @@ RECORD_TEXT = (
     'local text = "" local sep = "" '
     'if fights > 0 then text = text .. "Fought " .. fights .. TIP_TIMES sep = TIP_SEP end '
     "if kills > 0 or deaths > 0 then "
-    'text = text .. sep .. "kills " .. kills .. " to " .. deaths sep = TIP_SEP end '
+    'text = text .. sep .. "your kills " .. kills .. ", theirs " .. deaths sep = TIP_SEP end '
     "if matches > 0 then "
     'text = text .. sep .. "matches won " .. wins .. " of " .. matches sep = TIP_SEP end '
     'if row ~= nil and row . nemesis == true then text = text .. sep .. "Nemesis" '
     "sep = TIP_SEP end "
     'if row ~= nil and row . rival == true then text = text .. sep .. "Rival team" '
     "sep = TIP_SEP end "
-    'if row ~= nil and row . kos == true then text = text .. sep .. "KOS" end '
+    'if row ~= nil and row . kos == true then text = text .. sep .. "on a Spy KOS list" end '
     'if text == "" then return nil end '
     "local day = deskDay ( ) "
     'if row ~= nil and day ~= nil then text = text .. " (wowlab, " .. shown ( day ) .. ")" end '
@@ -220,7 +220,9 @@ def test_m22_04_the_readme_says_what_the_line_shows() -> None:
         "The record line",
         "WowLabDeskDB",
         "wowlab crew send",
-        "Fought 7× · kills 1 to 3 · matches won 1 of 4 · Nemesis · Rival team · KOS",
+        "Fought 7× · your kills 1, theirs 3 · matches won 1 of 4 · Nemesis · Rival team",
+        "on a Spy KOS list (wowlab, 2026-11-24)",
+        "wowlab addon install lab",
     ):
         assert phrase in readme, phrase
 
@@ -329,7 +331,7 @@ def record_text(c: Client, key: str) -> str | None:
         text = text + "Fought " + _n(fights) + TIP_TIMES
         sep = TIP_SEP
     if kills > 0 or deaths > 0:
-        text = text + sep + "kills " + _n(kills) + " to " + _n(deaths)
+        text = text + sep + "your kills " + _n(kills) + ", theirs " + _n(deaths)
         sep = TIP_SEP
     if matches > 0:
         text = text + sep + "matches won " + _n(wins) + " of " + _n(matches)
@@ -341,7 +343,7 @@ def record_text(c: Client, key: str) -> str | None:
         text = text + sep + "Rival team"
         sep = TIP_SEP
     if row is not None and row.get("kos") is True:
-        text = text + sep + "KOS"
+        text = text + sep + "on a Spy KOS list"
     if text == "":
         return None
     day = desk_day(c)
@@ -381,10 +383,10 @@ def test_m22_04_the_desk_table_alone() -> None:
     row |= {"nemesis": True, "rival": True, "kos": True}
     c = Client(desk=_desk({KEY: row, OTHER: {"kos": True}}))
     assert record_text(c, KEY) == (
-        "Fought 7× · kills 1 to 3 · matches won 1 of 4 · Nemesis · Rival team · KOS "
+        "Fought 7× · your kills 1, theirs 3 · matches won 1 of 4 · Nemesis · Rival team · on a Spy KOS list "
         "(wowlab, 2026-11-24)"
     )
-    assert record_text(c, OTHER) == "KOS (wowlab, 2026-11-24)"
+    assert record_text(c, OTHER) == "on a Spy KOS list (wowlab, 2026-11-24)"
 
 
 def test_m22_04_both_add_only_the_matches_recorded_since_the_write() -> None:
@@ -397,17 +399,17 @@ def test_m22_04_both_add_only_the_matches_recorded_since_the_write() -> None:
         desk=_desk({KEY: row}),
     )
     assert record_text(c, KEY) == (
-        "Fought 9× · kills 1 to 3 · matches won 2 of 6 · Nemesis (wowlab, 2026-11-24)"
+        "Fought 9× · your kills 1, theirs 3 · matches won 2 of 6 · Nemesis (wowlab, 2026-11-24)"
     )
     # Nothing new since the write: the desk's numbers as they are.
     c.book = {"players": {KEY: {"faced": 4, "faced_won": 1}}}
     assert record_text(c, KEY) == (
-        "Fought 7× · kills 1 to 3 · matches won 1 of 4 · Nemesis (wowlab, 2026-11-24)"
+        "Fought 7× · your kills 1, theirs 3 · matches won 1 of 4 · Nemesis (wowlab, 2026-11-24)"
     )
     # The book dropped the player and met them again: the whole new counter.
     c.book = {"players": {KEY: {"faced": 1}}}
     assert record_text(c, KEY) == (
-        "Fought 8× · kills 1 to 3 · matches won 1 of 5 · Nemesis (wowlab, 2026-11-24)"
+        "Fought 8× · your kills 1, theirs 3 · matches won 1 of 5 · Nemesis (wowlab, 2026-11-24)"
     )
 
 
@@ -464,8 +466,8 @@ def test_m22_04_a_count_that_is_not_a_whole_number_counts_its_floor_or_nothing(
     assert got == (1 if value == 1.5 else 0)
     c = Client(desk=_desk({KEY: {"fights": value, "kos": True}}))
     assert record_text(c, KEY) in (
-        "Fought 1× · KOS (wowlab, 2026-11-24)",
-        "KOS (wowlab, 2026-11-24)",
+        "Fought 1× · on a Spy KOS list (wowlab, 2026-11-24)",
+        "on a Spy KOS list (wowlab, 2026-11-24)",
     )
 
 
@@ -500,8 +502,8 @@ def test_m22_04_a_table_desktable_writes_reads_back_as_the_line() -> None:
     loaded = luadata.parse(data).to_python()
     c = Client(book={"players": {KEY: {"faced": 4, "faced_won": 1}}}, desk=loaded[DESK])
     assert record_text(c, KEY) == (
-        "Fought 7× · kills 1 to 3 · matches won 1 of 4 · Nemesis · Rival team · KOS "
+        "Fought 7× · your kills 1, theirs 3 · matches won 1 of 4 · Nemesis · Rival team · on a Spy KOS list "
         "(wowlab, 2026-11-24)"
     )
-    assert record_text(c, OTHER) == "KOS (wowlab, 2026-11-24)"
+    assert record_text(c, OTHER) == "on a Spy KOS list (wowlab, 2026-11-24)"
     assert desktable.DESK_VARIABLE == DESK and desktable.DESK_SCHEMA == 1

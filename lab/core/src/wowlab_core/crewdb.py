@@ -137,6 +137,10 @@ _BEFORE_SCHEMA = re.compile(r"\.before-schema-[0-9]+\Z")
 # Also `crew send` with its count (M22-04), which writes only the
 # records for the game's tooltip beside the book and leaves the book as it is.
 _CREW_WRITE = re.compile(r"crew (forget|rate|note|send) \([0-9]+ players?\)\Z")
+# The label of `crew send` alone: its undo takes out only the records it
+# wrote beside the book (guard refuses the undo if the file changed after
+# it), so that undo leaves the book as the last sync saw it too.
+_CREW_SEND = re.compile(r"crew send \([0-9]+ players?\)\Z")
 
 # ─── SQL: constant strings only ──────────────────────────────────────────────
 
@@ -1544,7 +1548,7 @@ def _bytes_of(text: str) -> int | None:
         return None
 
 
-def _key_ok(key: str) -> bool:
+def key_ok(key: str) -> bool:
     """`Name-Realm`: a `-` with text after it (§20.1: a key ending in `-` is
     never written), within `KEY_MAX_BYTES`. The key is otherwise opaque and
     kept as stored (§20.2)."""
@@ -1646,7 +1650,7 @@ def _pvp_problem(pvp: crewbook.CrewPvp | None) -> str | None:
 def _entry_problem(p: crewbook.CrewPlayer, pvp: crewbook.CrewPvp | None = None) -> str | None:
     """Why one player's entry is outside what a sync takes, in wowlab's
     words (as the reader gives its reasons), never quoting the entry."""
-    if not _key_ok(p.key):
+    if not key_ok(p.key):
         return (
             f"the key is not Name-Realm within {KEY_MAX_BYTES} bytes of text, so it is not synced"
         )
@@ -1739,7 +1743,7 @@ def _match_problem(m: crewbook.CrewMatch) -> str | None:
     if len(m.team) > MATCH_SIDE_MAX or len(m.foes) > MATCH_SIDE_MAX:
         return f"a side of it lists more than {MATCH_SIDE_MAX} names, so it is not synced"
     keys = [*m.team, *m.foes]
-    if not all(_key_ok(k) for k in keys):
+    if not all(key_ok(k) for k in keys):
         return (
             f"a name in it is not Name-Realm within {KEY_MAX_BYTES} bytes of text, so it is "
             "not synced"
@@ -1818,12 +1822,18 @@ def _same_folder(a: str, b: str) -> bool:
     return os.path.normcase(os.path.realpath(a)) == os.path.normcase(os.path.realpath(b))
 
 
-def _wrote_book(record: guard.HistoryRecord, target: Target) -> bool:
+def _wrote_book(
+    record: guard.HistoryRecord, target: Target, labels: Mapping[str, str] | None = None
+) -> bool:
     """Whether a journal record changed this account's `WowLab.lua` and is
-    not a crew write command's own (an undo counts whatever it undoes)."""
+    not a crew write command's own (an undo counts whatever it undoes, but
+    the undo of a `crew send`, which only takes out the records it wrote
+    beside the book; `labels` maps each record's id to its label)."""
     if record.rolled_back:
         return False
     if record.undoes is None and _CREW_WRITE.fullmatch(record.label):
+        return False
+    if record.undoes is not None and _CREW_SEND.fullmatch((labels or {}).get(record.undoes, "")):
         return False
     if not _same_folder(record.flavor_path, target.flavor_path):
         return False
@@ -1850,7 +1860,8 @@ def _journal(
         if since not in ids:
             return ["journal_record_gone"], newest
         later = records[ids.index(since) + 1 :]
-    if any(_wrote_book(r, target) for r in later):
+    labels = {r.id: r.label for r in records}
+    if any(_wrote_book(r, target, labels) for r in later):
         return ["put_back"], newest
     return [], newest
 
@@ -3651,7 +3662,7 @@ def _world_players(e: worldpvp.WorldEncounter) -> tuple[list[worldpvp.WorldPlaye
     left_out = e.players_left_out
     sides = {"foe": 0, "ally": 0}
     for p in e.players:
-        if not _key_ok(p.key):
+        if not key_ok(p.key):
             left_out += 1
             continue
         held = by_key.get(p.key)

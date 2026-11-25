@@ -72,9 +72,14 @@ from wowlab_core.luaquote import lua_quote
 
 DESK_VARIABLE: Final = "WowLabDeskDB"
 DESK_SCHEMA: Final = 1
-# The most players the table holds: about 100 bytes each, so about 500 KB
-# in the saved file, which the game loads whole at login.
+# The most players the table holds. A row is about 90 bytes with a few
+# fields and about 160 with every one (measured on constructed rows), so
+# about 0.5 to 0.8 MB at the cap with short keys, and up to about 1.4 MB
+# with long non-ASCII ones (keys are at most 256 bytes, the crew database's
+# rule). The game loads the file whole at login, so the table's bytes are
+# capped too: `with_table` refuses one over MAX_TABLE_BYTES.
 MAX_PLAYERS: Final = 5000
+MAX_TABLE_BYTES: Final = 4 * 1024 * 1024
 _DAY = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}\Z", re.ASCII)
 # The fields of a row, in the order they are written.
 _NUMBERS: Final = ("fights", "kills", "deaths", "matches", "won", "book_faced", "book_won")
@@ -290,16 +295,140 @@ def with_table(data: bytes, rows: Iterable[DeskRow], day: str) -> bytes:
     want = table_python(listed, day)
     if index is not None and loaded.get(DESK_VARIABLE) == want:
         return data
+    alone = luadata.serialize(
+        LuaDocument((Assignment(lead=None, name=DESK_VARIABLE, eq_lead=None, value=value),), None)
+    )
+    if len(alone) > MAX_TABLE_BYTES:
+        raise DeskTableError(
+            f"The records would take {len(alone):,} bytes, more than the "
+            f"{MAX_TABLE_BYTES:,} wowlab writes into a file the game loads whole at login; "
+            "nothing was changed."
+        )
     out = luadata.serialize(document._replace(assignments=tuple(assignments)))
-    again = luadata.parse(out).to_python()
     expected = {k: v for k, v in loaded.items() if k != DESK_VARIABLE}
     expected[DESK_VARIABLE] = want
-    if again != expected:  # pragma: no cover - a guard against a serializer bug
+    return _checked(out, expected)
+
+
+def _checked(out: bytes, expected: dict[str, object]) -> bytes:
+    """`out`, when it loads back as `expected`, every variable of it."""
+    if luadata.parse(out).to_python() != expected:  # pragma: no cover - a serializer bug
         raise DeskTableError(
-            "The records could not be written without changing something else in the file; "
+            "The records could not be changed without changing something else in the file; "
             "nothing was changed."
         )
     return out
+
+
+# ─── a forget reaches the table too ──────────────────────────────────────────
+
+
+def _key_text(entry: Entry) -> str | None:
+    """A keyed entry's key as text, else None."""
+    if entry.style == KeyStyle.NAME and isinstance(entry.key, str):
+        return entry.key
+    if entry.style == KeyStyle.STRING and isinstance(entry.key, LuaString):
+        return entry.key.value
+    return None
+
+
+def _field_at(table: LuaTable, name: str) -> int | None:
+    found = [i for i, e in enumerate(table.entries) if _key_text(e) == name]
+    if len(found) > 1:
+        raise DeskTableError(
+            f"The records for the game hold their {name} twice, which wowlab never writes; "
+            "wowlab does not change them. Nothing was changed."
+        )
+    return found[0] if found else None
+
+
+def _trivia(slot: bytes | None) -> bool:
+    return slot is not None and slot.strip(b" \t\r\n\f\v") != b""
+
+
+def _dropped(table: LuaTable, drop: Collection[int]) -> LuaTable:
+    """`table` without the entries at `drop`, laid out as `crewedit` takes
+    entries out: where one held a comment, the slot after it is laid out
+    again, so no comment that stood with it stays."""
+    out: list[Entry] = []
+    close = table.close_lead
+    again = False
+    for i, entry in enumerate(table.entries):
+        if i in drop:
+            again = again or _trivia(entry.lead) or entry.comment is not None
+            continue
+        if again:
+            entry = entry._replace(lead=None)
+            again = False
+        out.append(entry)
+    if again:
+        close = None
+    return table._replace(entries=tuple(out), close_lead=close)
+
+
+def keys_held(data: bytes) -> list[str]:
+    """Every player key the table in `data` holds, in file order; empty
+    when the file holds no table, or one whose players are not a table."""
+    value = luadata.parse(data).to_python().get(DESK_VARIABLE)
+    players = value.get("players") if isinstance(value, dict) else None
+    return [k for k in players if isinstance(k, str)] if isinstance(players, dict) else []
+
+
+def without(data: bytes, keys: Collection[str] | None) -> bytes:
+    """The bytes of `data` with the rows of `keys` (stored keys; each also
+    matched under the crew book's folding rule, `crewbook.fold`) taken out
+    of the table's `players`, and `count` set to the rows left; with `keys`
+    None, every row (a forget of every player). Every other variable, and
+    every other field of the table, keeps its bytes. The same bytes when
+    the file holds no table or none of them. A table whose `players` is not
+    a table is left as it is (a forget then finds the name still there and
+    refuses)."""
+    document = luadata.parse(data)
+    index = _desk_index(document)
+    if index is None:
+        return data
+    table = document.assignments[index].value
+    if not isinstance(table, LuaTable):
+        return data
+    at = _field_at(table, "players")
+    players = table.entries[at].value if at is not None else None
+    if at is None or not isinstance(players, LuaTable):
+        return data
+    wanted = None if keys is None else {crewbook.fold(k) for k in keys}
+    drop = {
+        i
+        for i, e in enumerate(players.entries)
+        if wanted is None or ((t := _key_text(e)) is not None and crewbook.fold(t) in wanted)
+    }
+    if not drop:
+        return data
+    kept = _dropped(players, drop)
+    entries = list(table.entries)
+    entries[at] = entries[at]._replace(value=kept)
+    count_at = _field_at(table, "count")
+    if count_at is not None:
+        old = entries[count_at].value
+        lead = old.lead if isinstance(old, LuaNumber) else None
+        entries[count_at] = entries[count_at]._replace(
+            value=LuaNumber(lead, str(len(kept.entries)))
+        )
+    assignments = list(document.assignments)
+    assignments[index] = assignments[index]._replace(value=table._replace(entries=tuple(entries)))
+    out = luadata.serialize(document._replace(assignments=tuple(assignments)))
+    loaded = document.to_python()
+    expected = dict(loaded)
+    whole = loaded[DESK_VARIABLE]
+    assert isinstance(whole, dict)
+    desk = dict(whole)
+    held = desk.get("players")
+    assert isinstance(held, dict)
+    desk["players"] = {
+        k: v for k, v in held.items() if not (wanted is None or crewbook.fold(str(k)) in wanted)
+    }
+    if count_at is not None:
+        desk["count"] = len(kept.entries)
+    expected[DESK_VARIABLE] = desk
+    return _checked(out, expected)
 
 
 def read_table(data: bytes) -> DeskTableRead | None:

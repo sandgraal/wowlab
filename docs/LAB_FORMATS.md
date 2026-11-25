@@ -1870,24 +1870,6 @@ Dated entries, newest last. Each names the fixture that prompted it.
   ask the client gave no name to; removed once it does). The addon's migration gives a schema 2
   book that is on only the new number. `wowlab` reads schema 1 to 3; at 1
   and 2 the new fields are keys it does not know.
-- **2026-11-24, §4, `WowLabDeskDB` (M22-04; a table wowlab writes, so no
-  capture: `wowlab_core.desktable` builds it and the addon's reading of it
-  is graded on constructed tables).** The account `WowLab.lua` may hold a
-  third top-level table, `WowLabDeskDB` (the TOC's `## SavedVariables:
-  WowLabDB, WowLabCrewDB, WowLabDeskDB`), written only by `wowlab crew
-  send` through the write gate while the client is closed, and
-  never by the addon. Its own `schema` is 1. Keys are written in the
-  client's `["name"] = ` form, laid out as the file around it: `schema`
-  (1), `day` (text, `YYYY-MM-DD`, the day wowlab wrote it, the computer's
-  date), `count` (the players in `players`) and `players`, keyed by the
-  crew book's stored key, each a table of whole numbers `fights`, `kills`,
-  `deaths`, `matches`, `won`, `book_faced`, `book_won` and the booleans
-  `nemesis`, `rival`, `kos`, a zero or false field left out. `book_faced`
-  and `book_won` are the book entry's `faced` and `faced_won` as the file
-  held them when wowlab wrote the table. At most 5,000 players. A file
-  with the table twice is refused, not edited. Whether the client writes
-  the table back unchanged at logout (believed: the addon never touches
-  it, so it saves what it loaded) is **[verify]** until a capture.
 - **2026-11-19, §12, bone tracks and their keys (M15-26,
   `macos-70959/derived/charmodel.json`, rows `sheath_rotation_keys` and
   `hand_bone_keys`; read by `scripts/charmodel_facts.py`, the library
@@ -2071,3 +2053,30 @@ Dated entries, newest last. Each names the fixture that prompted it.
   WowUp's, its list names each game folder by the flavor folder itself
   (one game folder seen), not the client inside it, and records no
   version, only file names.
+- **2026-11-24, §4, `WowLabDeskDB` (M22-04; a table wowlab writes, so no
+  capture: `wowlab_core.desktable` builds it and the addon's reading of it
+  is graded on constructed tables).** The account `WowLab.lua` may hold a
+  third top-level table, `WowLabDeskDB` (the TOC's `## SavedVariables:
+  WowLabDB, WowLabCrewDB, WowLabDeskDB`), written only by `wowlab crew
+  send` through the write gate while the client is closed, and
+  never by the addon. Its own `schema` is 1. Keys are written in the
+  client's `["name"] = ` form, laid out as the file around it: `schema`
+  (1), `day` (text, `YYYY-MM-DD`, the day wowlab wrote it, the computer's
+  date), `count` (the players in `players`) and `players`, keyed by the
+  crew book's stored key, each a table of whole numbers `fights`, `kills`,
+  `deaths`, `matches`, `won`, `book_faced`, `book_won` and the booleans
+  `nemesis`, `rival`, `kos`, a zero or false field left out. `book_faced`
+  and `book_won` are the book entry's `faced` and `faced_won` as the file
+  held them when wowlab wrote the table. At most 5,000 players. A file
+  with the table twice is refused, not edited. Whether the client writes
+  the table back unchanged at logout (believed: the addon never touches
+  it, so it saves what it loaded) is **[verify]** until a capture. The
+  client keeps only the saved variables an installed addon's TOC declares,
+  so `crew send` refuses while the installed lab-addon does not declare
+  `WowLabDeskDB`. The kill-on-sight keys come from Spy's `KOSData` keys
+  (§4.4), assumed to be the crew book's `<First>-<Second>` form on Forever
+  **[verify]** on other game versions; a key that is not a crew key
+  (`Name-Realm` within 256 bytes) is left out. `wowlab crew forget` takes a
+  player's row out of the table, and `--all` empties it, in `WowLab.lua`
+  and `WowLab.lua.bak`, keeping `count` right. The table is refused over
+  4 MiB.

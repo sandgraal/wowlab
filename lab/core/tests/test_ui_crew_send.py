@@ -27,7 +27,7 @@ from wowlab_core import cli, desktable, luadata, ui
 
 sys.path.insert(0, str(Path(__file__).resolve().parent / "parser"))
 
-from _crew_build import KEY_A, KEY_C, T2, book, match, player
+from _crew_build import FLAVOR, KEY_A, KEY_C, T2, book, match, player
 
 SEND = ("crew", "send")
 _TEMPLATES = Path(ui.__file__).resolve().parent / "templates"
@@ -42,12 +42,21 @@ def _book() -> bytes:
     )
 
 
+def _with_addon(crew: Crew) -> Crew:
+    """The lab-addon installed as this wowlab installs it (constructed: the
+    TOC line `crew send` reads)."""
+    toc = crew.root / FLAVOR / "Interface" / "AddOns" / "WowLab" / "WowLab.toc"
+    toc.parent.mkdir(parents=True, exist_ok=True)
+    toc.write_bytes(b"## SavedVariables: WowLabDB, WowLabCrewDB, WowLabDeskDB\n")
+    return crew
+
+
 def _table(crew: Crew) -> Any:
     return luadata.parse(crew.live.read_bytes()).to_python().get(desktable.DESK_VARIABLE)
 
 
 def test_send_records_plans_then_confirms_with_its_pin_constructed(crew_at: Any) -> None:
-    crew = crew_at(_book())
+    crew = _with_addon(crew_at(_book()))
     listed = {tuple(c["path"]): c for c in _commands(crew.server)}
     assert listed[SEND]["confirm"] == "declined" and listed[SEND]["excluded"] is None
     before = crew.live.read_bytes()
@@ -83,7 +92,7 @@ def test_send_records_plans_then_confirms_with_its_pin_constructed(crew_at: Any)
 def test_the_button_shows_the_plan_and_confirm_writes_constructed(
     crew_at: Any, tmp_path: Path
 ) -> None:
-    crew = crew_at(_book())
+    crew = _with_addon(crew_at(_book()))
     steps: list[dict[str, Any]] = [
         {"crew_tab": True},
         {"crew_click": "crew-send-plan"},

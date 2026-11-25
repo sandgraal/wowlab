@@ -19,6 +19,7 @@ import pydantic
 import typer
 
 from wowlab_core import (
+    addoninstall,
     crewbook,
     crewdb,
     desktable,
@@ -70,16 +71,33 @@ SEND_PIN_FIELDS = ("target_sha256", "written_sha256")
 _SYNCED = ("synced", "unchanged", "not_run")
 
 _SEND_NOTES = [
-    "In game, the line adds the matches the crew book records after this write. Everything "
-    "else on it (the open-world fights, the matches the game's list no longer holds, the "
-    "Nemesis and Rival team marks and Spy's kill-on-sight lists) stays as of this write until "
-    "you send the records again.",
+    "The date at the end of the line is the day wowlab wrote these records. In game, the line "
+    "adds the matches the crew book records after that. The rest stays as it was written "
+    "until you send the records again: the open-world fights are those of the combat logs "
+    "`wowlab crew scan-log` had read (run it first for the latest), the matches those of "
+    "wowlab's crew database, synced from the crew book just before, and Spy's kill-on-sight "
+    "lists as each character last saved them.",
     nemesis.NEMESIS_RULE,
     nemesis.RIVAL_RULE,
-    "A player is marked kill on sight when the Spy addon's list of any character of this game "
-    "account holds them.",
+    "A player is marked as on a Spy KOS list when the Spy addon's kill-on-sight list of any "
+    "character of this game account holds them, not only the one you play.",
     "The line shows out of combat only, and only while the crew book is on in game.",
+    "Spy names a player the way the crew book does on Forever (first and second name); "
+    "wowlab assumes the two match, not yet confirmed for other game versions.",
 ]
+# Why a send is refused when the game would not keep the records (M22-04,
+# domain review): the game saves back only the variables an installed
+# addon's TOC declares.
+_ADDON_MISSING = (
+    "The WowLab addon is not installed in this game folder, so the game would not keep these "
+    "records. Close the game, run `wowlab addon install lab`, then send them. Nothing was "
+    "changed."
+)
+_ADDON_OLD = (
+    "The WowLab addon installed in this game folder is an older one that does not keep these "
+    "records: the game would drop them when you next log out. Close the game, run `wowlab "
+    "addon install lab` to update it, then send them. Nothing was changed."
+)
 _BOOK_OFF = "The line shows only while the crew book is on in game: type /wowlab crew on."
 
 
@@ -91,8 +109,14 @@ class CrewSendReport(_Out):
     `day` is the day the table says it was written (this computer's date).
     `players` counts the rows it holds; of them, `nemeses`, `rivals` and
     `kos` the marked ones (Nemesis, Rival team, on a Spy kill-on-sight
-    list). `left_out` counts the players past the table's limit
-    (`limit`). `before` is the table the file holds now (None: none).
+    list). `left_out` counts the players left out: past the table's limit
+    (`limit`), and Spy keys that are not a crew key (`<Name>-<Second>`
+    within the crew database's byte limit; `spy_keys_left_out` counts
+    those alone). `addon` says whether the installed WowLab addon declares
+    the table (`declared`; `unknown` with `addon_detail` saying why: a
+    send then still writes; it is refused when the addon is not installed
+    or does not declare it). `before` is the table the file holds now
+    (None: none).
     `book_state` is the crew book's state in the file; the line shows only
     while it is `on`. `spy_unreadable` counts the Spy files that could not
     be read (their marks are missing). `sync` is the crew database's sync
@@ -113,7 +137,10 @@ class CrewSendReport(_Out):
     rivals: int
     kos: int
     left_out: int
+    spy_keys_left_out: int = 0
     limit: int = desktable.MAX_PLAYERS
+    addon: addoninstall.LabAddonKeeps = "declared"
+    addon_detail: str | None = None
     before: desktable.DeskTableRead | None
     book_state: crewbook.State
     spy_unreadable: int
@@ -212,8 +239,10 @@ def crew_send(
     the line the WowLab addon adds when you hover a player in game: how
     often you fought them, the killing blows each way, the matches your side
     won, and the Nemesis, Rival team and kill-on-sight marks. The game reads
-    them at your next login or /reload; until you send them again, the line
-    adds only the matches the crew book records in game.
+    them when you next log in; until you send them again, the line adds
+    only the matches the crew book records in game. The WowLab addon must
+    be the one this wowlab installs (`wowlab addon install lab`), or the
+    send is refused.
 
     Syncs the crew book into wowlab's crew database first, and reads the
     Spy addon's kill-on-sight lists. Shows the plan and asks first, then
@@ -235,6 +264,11 @@ def crew_send(
         )
     flavor_found, lay = opened.where
     rel = place.file
+    keeps, keeps_why = addoninstall.lab_addon_declares(flavor_found, desktable.DESK_VARIABLE)
+    if keeps == "not_installed":
+        raise CliError(_ADDON_MISSING)
+    if keeps == "not_declared":
+        raise CliError(_ADDON_OLD)
     outcome, rows = _from_database(opened)
     if outcome is not None and outcome.state not in _SYNCED:
         raise CliError(
@@ -245,9 +279,15 @@ def crew_send(
     if opened.data is not None and data != opened.data:
         raise CliError(f"{rel} changed while wowlab read it; run the command again.")
     survey = spy.survey(lay, account=place.account)
-    kos = {k.key for c in survey.characters for k in c.kos}
+    # A Spy key goes in only when it is a crew key (security review): the
+    # crew database's shape and byte limit, so a hand-edited Spy file cannot
+    # put a huge or odd key into the file the game loads at login.
+    spy_keys = {k.key for c in survey.characters for k in c.kos}
+    kos = {k for k in spy_keys if crewdb.key_ok(k)}
+    spy_dropped = len(spy_keys) - len(kos)
     records = [(r.key, r.record, r.record.last if r.record is not None else None) for r in rows]
-    desk_rows, left_out = desktable.rows_from(records, opened.book.pvp, kos)
+    desk_rows, past_limit = desktable.rows_from(records, opened.book.pvp, kos)
+    left_out = past_limit + spy_dropped
     day = time.strftime("%Y-%m-%d", time.localtime())
     before = desktable.read_table(data)
     try:
@@ -277,6 +317,9 @@ def crew_send(
             rivals=rivals,
             kos=marked,
             left_out=left_out,
+            spy_keys_left_out=spy_dropped,
+            addon=keeps,
+            addon_detail=keeps_why,
             before=before,
             book_state=opened.book.state,
             spy_unreadable=len(survey.errors),
@@ -309,10 +352,22 @@ def crew_send(
         if before is not None:
             was = f"written {before.day}" if before.day is not None else "of an unknown day"
             out.append(f"  replaces the records {was} ({_plural(before.players, 'player')})")
-        if left_out:
+        if past_limit:
             out.append(
-                f"  {_plural(left_out, 'player')} left out: the game is given at most "
+                f"  {_plural(past_limit, 'player')} left out: the game is given at most "
                 f"{desktable.MAX_PLAYERS:,}, the marked players and the latest fights first"
+            )
+        if spy_dropped:
+            out.append(
+                f"  {spy_dropped} Spy kill-on-sight "
+                f"{'entry' if spy_dropped == 1 else 'entries'} left out: not a player "
+                f"name as the crew book keeps one, within {crewdb.KEY_MAX_BYTES} bytes"
+            )
+        if keeps == "unknown":
+            out.append(
+                f"  wowlab cannot tell whether the installed WowLab addon keeps these records "
+                f"({keeps_why}); if it does not, the game drops them when you next log out, "
+                "and `wowlab addon install lab` updates it"
             )
         if survey.errors:
             out.append(
@@ -349,7 +404,7 @@ def crew_send(
         for line in lines():
             _say(line)
     _say(
-        f"Wrote the records of {_plural(count, 'player')}. The game reads them at your next "
-        "login or /reload; `wowlab undo` takes them out again."
+        f"Wrote the records of {_plural(count, 'player')}. The game reads them when you next "
+        "log in; `wowlab undo` takes them out again."
     )
     _say_notes(_SEND_NOTES, notes, caveat)

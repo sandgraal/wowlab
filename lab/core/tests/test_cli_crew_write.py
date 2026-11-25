@@ -921,15 +921,19 @@ def test_undo_of_a_crew_write_says_it_brings_the_book_back_without_a_name_constr
 def test_undo_help_names_the_crew_commands() -> None:
     result = runner.invoke(cli.app, ["undo", "--help"], terminal_width=200)
     text = " ".join(result.stdout.split())
-    assert "`crew forget`, `crew rate` or `crew note`" in text
+    # M22-04: and `crew send`.
+    assert "`crew forget`, `crew rate`, `crew note` or `crew send`" in text
 
 
-def test_the_commands_tab_names_all_ten_and_which_refuse_after_a_change() -> None:
+def test_the_commands_tab_names_all_eleven_and_which_refuse_after_a_change() -> None:
     page = (Path(ui.__file__).parent / "templates" / "page.html").read_text(encoding="utf-8")
     (intro,) = [line for line in page.splitlines() if "Runs the commands of the" in line]
-    for command in ("crew forget", "crew rate", "crew note", "macros fix", "addon remove"):
+    commands = ("crew forget", "crew rate", "crew note", "crew send", "macros fix", "addon remove")
+    for command in commands:
         assert f"<code>{command}</code>" in intro, command
-    assert "Six of them refuse to run when something changed after the plan" in intro
+    # M22-04: `crew send` refuses on a changed file too.
+    assert "Seven of them refuse to run when something changed after the plan" in intro
+    assert "<code>crew note</code> and <code>crew send</code>, when the file they change" in intro
 
 
 # ─── fix round 2 (re-check of #630) ──────────────────────────────────────────

@@ -852,32 +852,49 @@ records nothing.
   unit frames), that adding a line taints nothing and needs no redraw, and
   whether a name is a secret value in an instance.
 - The record line (M22-04). Under the book's line, the same hook adds one
-  more: your record against the player, for example "Fought 7× · kills 1 to
-  3 · matches won 1 of 4 · Nemesis · Rival team · KOS (wowlab,
-  2026-11-24)". Each part shows only when there is one: how often you
-  fought them; the killing blows between you, yours first; the matches
+  more: your record against the player, for example "Fought 7× · your
+  kills 1, theirs 3 · matches won 1 of 4 · Nemesis · Rival team · on a Spy
+  KOS list (wowlab, 2026-11-24)". Each part shows only when there is one:
+  how often you fought them (every fight, matches included, so "Fought 7×"
+  and "matches won 1 of 4" are 7 fights, not 11); the killing blows between
+  you that a combat log recorded while it was on, yours first; the matches
   against them and how many your side won; and three marks, Nemesis and
-  Rival team (by the rules `wowlab crew list --notes` prints) and KOS (on a
-  Spy kill-on-sight list of any character of the game account). It has two
-  sources. The book's own match counters (`faced`, `faced_won`), live. And
-  `WowLabDeskDB`, a table wowlab writes into the same `WowLab.lua`
-  (`## SavedVariables: WowLabDB, WowLabCrewDB, WowLabDeskDB`) with `wowlab
-  crew send` or the Crew tab's "Send records to the game", through
-  its write gate while the game is closed: the open-world fights read from
-  combat logs, the matches wowlab's crew database kept after the game's
-  list dropped them, the marks, and the book's counters as they were when
-  it wrote them (`book_faced`, `book_won`), so the line adds only the
-  matches the book records since. The game loads the table at login or
-  `/reload`; the addon only reads it, never writes it (the game saves it
-  back as it loaded it), and asks the client nothing for the line: every
-  value comes from the two saved tables. The day at the end is the day
-  wowlab wrote the table; the marks and the open-world fights are as of
-  that day. Like the book's line, it shows only while the book is on and
-  out of combat. `/wowlab crew` says how many players the table holds and
-  its day. A table of another schema is left out. Its layout is in
-  `docs/LAB_FORMATS.md` ("WowLabDeskDB"). **[verify]** in game: that the
-  tooltip's font shows `·` and `×`, and that a second added line needs no
-  redraw.
+  Rival team (by the rules `wowlab crew list --notes` prints) and "on a Spy
+  KOS list" (the Spy kill-on-sight list of any character of the game
+  account, not only the one you play). It has two sources. The book's own
+  match counters (`faced`, `faced_won`), live. And `WowLabDeskDB`, a table
+  wowlab writes into the same `WowLab.lua` (`## SavedVariables: WowLabDB,
+  WowLabCrewDB, WowLabDeskDB`) with `wowlab crew send` or the Crew tab's
+  "Send records to the game", through its write gate while the game is
+  closed: the open-world fights of the combat logs `wowlab crew scan-log`
+  had read, the matches wowlab's crew database keeps (synced from the book
+  just before, and kept after the game's list dropped them), the marks,
+  Spy's kill-on-sight lists as each character last saved them, and the
+  book's counters as they were when it wrote them (`book_faced`,
+  `book_won`), so the line adds only the matches the book records since.
+  The day at the end is the day wowlab wrote the table, not how fresh each
+  part is. The book's line and this one count differently: "Battlegrounds:
+  2 with you, 4 against" is the matches the game's list holds now, while
+  "matches won 1 of 6" also counts arenas and the matches wowlab's database
+  kept after the list dropped them. The game loads the table when you log
+  in (a `/reload` in a session that began before the send first saves that
+  session's copy over it); the addon only reads it, never writes it, and
+  asks the client nothing for the line: every value comes from the two
+  saved tables. The game is believed to save the table back as it loaded
+  it, since the addon never touches it **[verify]**: send, log in, log
+  out, and check that `WowLabDeskDB` is unchanged. The game keeps only the
+  saved variables the installed addon declares, so after updating wowlab
+  run `wowlab addon install lab` (game closed); `wowlab crew send` refuses
+  while the installed addon is missing or older and does not declare
+  `WowLabDeskDB`. Spy is assumed to name a player as the crew book does
+  (`<First>-<Second>` on Forever) **[verify]** on other game versions.
+  Like the book's line, it shows only while the book is on and out of
+  combat. `/wowlab crew` says how many players the table holds and its
+  day. A table of another schema is left out. A `wowlab crew forget` takes
+  the player out of the table too, in `WowLab.lua` and its backup. Its
+  layout is in `docs/LAB_FORMATS.md` ("WowLabDeskDB"). **[verify]** in
+  game: that the tooltip's font shows `·` and `×`, and that a second added
+  line needs no redraw.
 
 What it keeps: the account-wide `WowLabCrewDB` in the account's
 `WowLab.lua` (`## SavedVariables: WowLabDB, WowLabCrewDB, WowLabDeskDB`), with its own

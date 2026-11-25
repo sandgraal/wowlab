@@ -125,8 +125,25 @@ def _spy(env: Env, key: str = KOS_ONLY) -> None:
     path.write_bytes(text.encode())
 
 
+# The installed lab-addon's TOC, as `wowlab addon install lab` writes it
+# (constructed: only the line `crew send` reads, and an older addon's).
+TOC = "Interface/AddOns/WowLab/WowLab.toc"
+TOC_NOW = b"## Interface: 11508\n## SavedVariables: WowLabDB, WowLabCrewDB, WowLabDeskDB\n"
+TOC_OLD = b"## Interface: 11508\n## SavedVariables: WowLabDB, WowLabCrewDB\n"
+
+
+def _addon(env: Env, toc: bytes | None = TOC_NOW) -> None:
+    path = env.flavor / TOC
+    if toc is None:
+        path.unlink(missing_ok=True)
+        return
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(toc)
+
+
 def _built(make: Any, **kw: Any) -> Env:
     env: Env = make(_book(**kw))
+    _addon(env)
     out = env.sync()
     assert out.state == "synced", out.words
     _world(env)
@@ -278,6 +295,7 @@ def test_a_book_that_is_off_is_written_with_a_caveat_constructed(make: Any) -> N
 
 def test_no_records_and_no_spy_writes_an_empty_table_constructed(make: Any) -> None:
     env: Env = make(book({KEY_A: player()}, schema=2, matches=[]))
+    _addon(env)
     done = _send(env)
     assert done.players == 0 and done.written
     assert _table(env)["players"] in ({}, [])
@@ -285,6 +303,7 @@ def test_no_records_and_no_spy_writes_an_empty_table_constructed(make: Any) -> N
 
 def test_no_saved_file_is_refused_constructed(make: Any) -> None:
     env: Env = make(_book())
+    _addon(env)
     env.file.unlink()
     result = env.run("crew", "send", "--yes")
     assert result.exit_code == 1
@@ -454,3 +473,167 @@ def test_the_crew_write_labels_include_send_records() -> None:
     assert crewdb._CREW_WRITE.fullmatch("crew send (3 players)")
     assert crewdb._CREW_WRITE.fullmatch("crew send (1 player)")
     assert not crewdb._CREW_WRITE.fullmatch("crew send (3 players) x")
+
+
+# ─── review fixes (M22-04 fix round 1) ───────────────────────────────────────
+
+
+@pytest.mark.parametrize(
+    ("toc", "words"),
+    [(None, "The WowLab addon is not installed"), (TOC_OLD, "an older one")],
+    ids=["not_installed", "old_toc"],
+)
+def test_a_send_the_installed_addon_would_not_keep_is_refused_constructed(
+    make: Any, toc: bytes | None, words: str
+) -> None:
+    """The game saves back only the variables the installed addon's TOC
+    declares: with no addon, or an older one, the records would be dropped
+    at the next logout, so the send is refused and says how to fix it."""
+    env = _built(make)
+    _addon(env, toc)
+    before = env.data()
+    result = env.run("crew", "send", "--yes")
+    assert result.exit_code == 1, (result.stdout, result.stderr)
+    assert words in result.stderr and "wowlab addon install lab" in result.stderr
+    assert env.data() == before and guard.history() == ()
+    result = env.run("crew", "send", "--yes", "--json")
+    assert result.exit_code == 1 and words in json.loads(result.stdout)["message"]
+
+
+def test_an_addon_wowlab_cannot_judge_is_said_in_the_plan_constructed(make: Any) -> None:
+    """Another TOC in the addon's folder (the client may load it instead):
+    wowlab cannot tell, so the plan says so and the send still writes."""
+    env = _built(make)
+    (env.flavor / "Interface/AddOns/WowLab/WowLab_Vanilla.toc").write_bytes(TOC_OLD)
+    result = env.run("crew", "send", input="n\n")
+    assert "wowlab cannot tell whether the installed WowLab addon keeps these records" in (
+        result.stdout
+    )
+    done = _send(env)
+    assert done.addon == "unknown" and done.addon_detail and done.written
+
+
+def test_a_spy_key_that_is_not_a_crew_key_is_left_out_constructed(make: Any) -> None:
+    """Security review: a hand-edited Spy file's huge or odd key never
+    reaches the file the game loads at login; it is counted."""
+    env = _built(make)
+    huge = "Inventedf-" + "x" * 300_000  # constructed: past the crew key byte limit
+    text = (env.flavor / SPY_CHAR).read_bytes().decode("utf-8")
+    text = text.replace(
+        '["KOSData"] = {\r\n',
+        f'["KOSData"] = {{\r\n["{huge}"] = 1795400050,\r\n["Nodash"] = 1795400051,\r\n',
+    )
+    (env.flavor / SPY_CHAR).write_bytes(text.encode("utf-8"))
+    done = _send(env)
+    assert done.spy_keys_left_out == 2 and done.left_out == 2 and done.kos == 1
+    assert len(env.data()) < 20_000 and b"xxxxxxxxxx" not in env.data()
+    result = env.run("crew", "send", input="n\n")
+    assert "2 Spy kill-on-sight entries left out" not in result.stdout  # nothing new to write
+
+
+def test_a_table_over_the_byte_ceiling_is_refused_constructed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(desktable, "MAX_TABLE_BYTES", 200)
+    rows = [desktable.DeskRow(key=f"Invented{i}-Fakerealm", kos=True) for i in range(10)]
+    with pytest.raises(desktable.DeskTableError, match="more than the 200"):
+        desktable.with_table(b"WowLabDB = {\n}\n", rows, "2026-11-24")
+    assert desktable.MAX_TABLE_BYTES == 200
+
+
+def test_the_real_ceiling_holds_5000_full_rows_of_the_longest_keys() -> None:
+    """At the row cap, with every field and 256-byte keys, the table stays
+    under the byte ceiling (so the cap, not the ceiling, decides)."""
+    rows = [
+        desktable.DeskRow(
+            key=f"{i:05d}" + "é" * 120 + "-Fakerealm"[: 256 - 245],
+            fights=999,
+            kills=999,
+            deaths=999,
+            matches=999,
+            won=999,
+            nemesis=True,
+            rival=True,
+            kos=True,
+            book_faced=999,
+            book_won=999,
+        )
+        for i in range(desktable.MAX_PLAYERS)
+    ]
+    assert all(len(r.key.encode()) <= crewdb.KEY_MAX_BYTES for r in rows)
+    out = desktable.with_table(b"", rows, "2026-11-24")
+    assert len(out) < desktable.MAX_TABLE_BYTES
+
+
+def test_forget_takes_the_player_out_of_the_records_in_both_files_constructed(
+    make: Any,
+) -> None:
+    """Code and domain review: after a send, a forget removes the player's
+    row from the records too, in WowLab.lua and in the game's backup (which
+    holds the table after the next logout), in one change, and `count`
+    follows."""
+    env = _built(make)
+    _send(env)
+    bak = env.file.with_name("WowLab.lua.bak")
+    bak.write_bytes(env.data())
+    result = env.run("crew", "forget", KEY_C, input="n\n")
+    assert "take them out of the records wowlab sent for the in-game tooltip too" in (result.stdout)
+    result = env.run("crew", "forget", KEY_C, "--yes")
+    assert result.exit_code == 0, (result.stdout, result.stderr)
+    for data in (env.data(), bak.read_bytes()):
+        assert KEY_C.encode() not in data
+        table = luadata.parse(data).to_python()[desktable.DESK_VARIABLE]
+        assert table["count"] == 2 and set(table["players"]) == {KEY_D, KOS_ONLY}
+    (record,) = [r for r in guard.history() if r.label.startswith("crew forget")]
+    assert {c.path.rsplit("/", 1)[-1] for c in record.paths} == {"WowLab.lua", "WowLab.lua.bak"}
+
+
+def test_forget_of_a_player_only_the_records_hold_constructed(make: Any) -> None:
+    """A Spy-only kill-on-sight player is in the records alone: a forget
+    reaches them by name."""
+    env = _built(make)
+    _send(env)
+    result = env.run("crew", "forget", KOS_ONLY, "--yes")
+    assert result.exit_code == 0, (result.stdout, result.stderr)
+    assert KOS_ONLY.encode() not in env.data()
+    assert _table(env)["count"] == 2
+
+
+def test_forget_all_empties_the_records_constructed(make: Any) -> None:
+    env = _built(make)
+    _send(env)
+    result = env.run("crew", "forget", "--all", "--yes", "--json")
+    assert result.exit_code == 0, (result.stdout, result.stderr)
+    assert KOS_ONLY in json.loads(result.stdout)["players"]
+    table = _table(env)
+    assert table["count"] == 0 and table["players"] in ({}, [])
+    for key in (KEY_C, KEY_D, KOS_ONLY):
+        assert key.encode() not in env.data()
+
+
+def test_forget_s_pin_covers_the_records_constructed(make: Any) -> None:
+    """The records' change is in the bytes the pin names: a plan confirmed
+    by its pin writes them; a table changed after the plan is refused."""
+    env = _built(make)
+    _send(env)
+    result = env.run("crew", "forget", KEY_C, "--json", input="")
+    plan = json.loads(result.stdout)
+    pin = ":".join(str(plan[f]) for f in cli.EXPECT_FIELDS[("crew", "forget")])
+    _spy(env, KEY_B)
+    _send(env)  # the records changed after the plan
+    changed = env.data()
+    result = env.run("crew", "forget", KEY_C, "--yes", f"--expect={pin}")
+    assert result.exit_code == 3, (result.stdout, result.stderr)
+    assert env.data() == changed
+
+
+def test_the_undo_of_a_send_does_not_hold_the_next_sync_but_a_merge_s_does_constructed(
+    make: Any,
+) -> None:
+    env = _built(make)
+    done = _send(env)
+    result = env.run_bare("undo", "--yes", f"--expect={done.transaction}")
+    assert result.exit_code == 0, (result.stdout, result.stderr)
+    assert env.sync().held == []
+    env.gate("sv merge (1 file)", env.data() + b"\r\n")
+    assert env.sync().held == ["put_back"]

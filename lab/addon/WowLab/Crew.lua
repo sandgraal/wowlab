@@ -89,7 +89,8 @@ local TIP_NOTE_CHARS = 60
 -- M22-04: the records wowlab writes for the tooltip's record line, in the
 -- account-wide saved variable WowLabDeskDB (its own schema, DESK_SCHEMA).
 -- The game loads the table at login or /reload; nothing here writes it, so
--- the game saves it back as it loaded it. The line's parts are joined by
+-- the game is believed to save it back as it loaded it ([verify]: send, log
+-- in, log out, and the table is unchanged). The line's parts are joined by
 -- TIP_SEP (" · ") and the fight count ends in TIP_TIMES ("×"), both written
 -- as UTF-8 escapes. A day wowlab wrote is shown only in its own form,
 -- DESK_DAY (YYYY-MM-DD).
@@ -832,7 +833,7 @@ local function recordText(key)
         sep = TIP_SEP
     end
     if kills > 0 or deaths > 0 then
-        text = text .. sep .. "kills " .. kills .. " to " .. deaths
+        text = text .. sep .. "your kills " .. kills .. ", theirs " .. deaths
         sep = TIP_SEP
     end
     if matches > 0 then
@@ -848,7 +849,7 @@ local function recordText(key)
         sep = TIP_SEP
     end
     if row ~= nil and row.kos == true then
-        text = text .. sep .. "KOS"
+        text = text .. sep .. "on a Spy KOS list"
     end
     if text == "" then
         return nil
